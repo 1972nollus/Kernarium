@@ -75,6 +75,11 @@ int main()
             idle->droppedFrames == 0 && idle->cpuFallbackFrames == 0,
         "a display no guest has drawn on counted a frame");
 
+    /* The refusals the guest was answered with are the display's too, and
+     * a guest that shows frames and asks for nothing is refused nothing. */
+    require(service->memoryRefusals() == std::optional<std::uint64_t> {0},
+        "a display no guest was refused on counted a refusal");
+
     auto endpoints = takeEndpoints(*service);
     FrameGuest guest {endpoints->transport};
     guest.show(firstFrame);
@@ -92,11 +97,15 @@ int main()
     const auto held = service->displayStatistics();
     require(held.has_value() && held->presentedFrames >= second,
         "holding requests hid or reset the counters");
+    require(service->memoryRefusals() == std::optional<std::uint64_t> {0},
+        "showing frames counted a refusal");
     service->releaseRequests();
 
     endpoints->close();
     service->stop();
     require(!service->displayStatistics().has_value(),
         "a stopped service reported its display's counters");
+    require(!service->memoryRefusals().has_value(),
+        "a stopped service reported its display's refusals");
     return 0;
 }

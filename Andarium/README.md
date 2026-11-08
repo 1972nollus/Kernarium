@@ -253,6 +253,16 @@ requires reopening Andarium.
   runtime's readings ([`Kernarium/README.md`](../Kernarium/README.md#statistics)),
   read only while a view shows them, the application is active and the guest
   runs (`StatsSampling.isWanted`).
+- **Graphics memory.** The runtime counts the graphics allocations the host
+  refused the guest ([`docs/graphics.md`](../docs/graphics.md#device-memory-budget)).
+  While a normal session runs in the foreground the model reads the count every
+  2 s, with or without a statistics view (`AppModel.refreshGraphicsNotice`), and
+  a rise shows `GraphicsNoticeBanner`: a glass banner that takes touches only
+  where it is drawn, dismissible and gone after 30 s. It tells the person to
+  swipe a broken app away in Recents, which restarts the process that lost its
+  graphics. `GraphicsNotice` decides: the first reading is a baseline, and
+  refusals less than a minute apart are one burst, which shows one notice
+  whether or not it was dismissed. Recovery runs no app and is not read.
 
 ## Android operations
 

@@ -15,18 +15,59 @@ RESOURCE_UNREF or an attach-backing and returns -ENOMEM (-EINVAL for any
 other error), which Mesa turns into GL_OUT_OF_MEMORY and gralloc into a
 failed allocation. This costs one control-queue round trip per creation.
 
+The wait sleeps in a state the freezer can freeze (uninterruptible and
+freezable, through virtio_gpu_wait_host_timeout()). A host that holds
+its answers while the guest suspends would otherwise keep a drawing
+task, which waits up to 15 s here, from freezing, and the suspend would
+fail. No lock is held in the wait: the queued command released the
+object's reservation. A wakeup that arrives while the task is frozen is
+kept until the thaw, so the timeout path is unchanged.
+
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
- drivers/gpu/drm/virtio/virtgpu_drv.h    |  8 ++++
- drivers/gpu/drm/virtio/virtgpu_object.c | 58 ++++++++++++++++++++++---
+ drivers/gpu/drm/virtio/virtgpu_drv.h    | 34 ++++++++++++++
+ drivers/gpu/drm/virtio/virtgpu_object.c | 60 ++++++++++++++++++++++---
  drivers/gpu/drm/virtio/virtgpu_vq.c     | 26 ++++++++++-
- 3 files changed, 84 insertions(+), 8 deletions(-)
+ 3 files changed, 112 insertions(+), 8 deletions(-)
 
 diff --git a/drivers/gpu/drm/virtio/virtgpu_drv.h b/drivers/gpu/drm/virtio/virtgpu_drv.h
-index 123d40174886823dd0994e892be6f3d71c4f1c13..12403757ea727a9e4dbeb8221c13af2b16725128 100644
+index 123d40174886823dd0994e892be6f3d71c4f1c13..e2814a09f7b07da670339ab0c7d339bd670ce795 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_drv.h
 +++ b/drivers/gpu/drm/virtio/virtgpu_drv.h
-@@ -118,6 +118,14 @@ struct virtio_gpu_object {
+@@ -56,6 +56,32 @@
+ #define STATE_OK 1
+ #define STATE_ERR 2
+ 
++/*
++ * wait_event_timeout() for a task that waits for the host's answer to a
++ * command it queued, in a sleep the freezer can freeze. A host that holds its
++ * answers while the system suspends would otherwise keep the task, whose sleep
++ * is uninterruptible, from freezing, and the suspend would fail. The wait stays
++ * uninterruptible so that a signal cannot abandon a command the host still
++ * answers. A frozen task keeps what it holds, so the caller must hold no lock
++ * (lockdep warns of it). A wakeup that arrives while the task is frozen is kept
++ * until the thaw, so the timeout behaves as wait_event_timeout()'s does.
++ */
++#define __virtio_gpu_wait_host_timeout(wq_head, condition, timeout)	\
++	___wait_event(wq_head, ___wait_cond_timeout(condition),		\
++		      TASK_UNINTERRUPTIBLE | TASK_FREEZABLE, 0, timeout,	\
++		      __ret = schedule_timeout(__ret))
++
++#define virtio_gpu_wait_host_timeout(wq_head, condition, timeout)	\
++({									\
++	long __ret = timeout;						\
++	might_sleep();							\
++	if (!___wait_cond_timeout(condition))				\
++		__ret = __virtio_gpu_wait_host_timeout(wq_head,		\
++						       condition,	\
++						       timeout);	\
++	__ret;								\
++})
++
+ #define MAX_CAPSET_ID 63
+ #define MAX_RINGS 64
+ 
+@@ -118,6 +144,14 @@ struct virtio_gpu_object {
  	bool host3d_blob, guest_blob;
  	uint32_t blob_mem, blob_flags;
  
@@ -42,17 +83,19 @@ index 123d40174886823dd0994e892be6f3d71c4f1c13..12403757ea727a9e4dbeb8221c13af2b
  	 * Level 0 of a classic 3D resource that a dma-buf can map: a single
  	 * 2D image whose guest pages hold a copy of the host's storage.
 diff --git a/drivers/gpu/drm/virtio/virtgpu_object.c b/drivers/gpu/drm/virtio/virtgpu_object.c
-index d228b5be375a3f30bdb4caaa8478222828746264..8780f860ec6a680bbf367572900b4560baabab91 100644
+index d228b5be375a3f30bdb4caaa8478222828746264..fadc35a371eb88fb39fd82b5898a789cd649c418 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_object.c
 +++ b/drivers/gpu/drm/virtio/virtgpu_object.c
-@@ -200,6 +200,31 @@ static int virtio_gpu_object_shmem_init(struct virtio_gpu_device *vgdev,
+@@ -200,6 +200,33 @@ static int virtio_gpu_object_shmem_init(struct virtio_gpu_device *vgdev,
  	return 0;
  }
  
 +/*
 + * Wait for the host's answer to a fenced creation and report a refusal: the
 + * host creates resources in order, so an object it refused never exists there.
-+ * Returns 0 when the host made the resource or did not answer in time.
++ * Returns 0 when the host made the resource or did not answer in time. No lock
++ * is held here: the creation queued its command and released the object's
++ * reservation, so the freezer may freeze the wait.
 + */
 +static int virtio_gpu_object_wait_created(struct virtio_gpu_device *vgdev,
 +					  struct virtio_gpu_object *bo)
@@ -61,9 +104,9 @@ index d228b5be375a3f30bdb4caaa8478222828746264..8780f860ec6a680bbf367572900b4560
 +
 +	/* Nothing has kicked the queue yet. */
 +	virtio_gpu_notify(vgdev);
-+	if (!wait_event_timeout(vgdev->ctrlq.ack_queue,
-+				smp_load_acquire(&bo->create_answered),
-+				15 * HZ)) {
++	if (!virtio_gpu_wait_host_timeout(vgdev->ctrlq.ack_queue,
++					  smp_load_acquire(&bo->create_answered),
++					  15 * HZ)) {
 +		DRM_ERROR_RATELIMITED("resource %u: no answer to its creation\n",
 +				      bo->hw_res_handle);
 +		return 0;
@@ -77,7 +120,7 @@ index d228b5be375a3f30bdb4caaa8478222828746264..8780f860ec6a680bbf367572900b4560
  int virtio_gpu_object_create(struct virtio_gpu_device *vgdev,
  			     struct virtio_gpu_object_params *params,
  			     struct virtio_gpu_object **bo_ptr,
-@@ -248,19 +273,40 @@ int virtio_gpu_object_create(struct virtio_gpu_device *vgdev,
+@@ -248,19 +275,40 @@ int virtio_gpu_object_create(struct virtio_gpu_device *vgdev,
  
  		virtio_gpu_cmd_resource_create_blob(vgdev, bo, params,
  						    ents, nents);

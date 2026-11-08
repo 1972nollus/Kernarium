@@ -41,6 +41,9 @@ struct SessionView: View {
                     .allowsHitTesting(false)
             }
         }
+        .overlay(alignment: .top) {
+            GraphicsNoticeOverlay()
+        }
         .overlay {
             SideKeysOverlay(
                 mode: mode, lit: screen != .off,

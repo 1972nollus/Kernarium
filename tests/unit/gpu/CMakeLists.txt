@@ -236,7 +236,7 @@ if(TARGET uml_gpu_service)
     # the renderer tells the driver it has gone idle (EGL_MESA_context_trim).
     uml_add_gpu_unit_test(gpu-host-context-trim
         uml_gpu_host_context_trim_tests host_gl_context_trim_tests.cpp
-        LIBRARIES ${_uml_host_gl_libraries}
+        LIBRARIES ${_uml_host_gl_libraries} UML::HostGpuMemory
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY
         TIMEOUT 120)
