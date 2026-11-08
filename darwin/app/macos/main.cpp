@@ -819,6 +819,7 @@ private:
 						.name = holder.name,
 					});
 				reading.graphics_attribution = std::move(attribution);
+				reading.guest_reclaims = memory->guestReclaims;
 			}
 			scanout = gpu_->guestScanoutActive();
 		}
