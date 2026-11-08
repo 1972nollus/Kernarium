@@ -353,9 +353,10 @@ VirglRenderer::VirglRenderer()
                         uml::platform::hostGraphicsFootprintBytes());
                 },
                 static_cast<std::uint64_t>(getpagesize()),
-                /* The ledger follows a release a few milliseconds after the
-                 * counter does; the pool waits for it when this alone shows
-                 * the room. */
+                /* The counter alone follows a release at once, the ledger
+                 * later: the pool tells a release the ledger has yet to
+                 * follow from a full budget by comparing this reading with
+                 * its last, and waits for the ledger. */
                 [] {
                     const std::uint64_t imported =
                         virgl_renderer_get_imported_host_memory();
