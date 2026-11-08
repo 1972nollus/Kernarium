@@ -53,6 +53,47 @@ std::optional<ContextOwner> parseContextOwner(std::string_view debugName)
     };
 }
 
+class ContextMemoryLedger::Change {
+public:
+    explicit Change(ContextMemoryLedger& ledger)
+        : ledger_(ledger)
+        , lock_(ledger.mutex_)
+        , before_(ledger.heldResourceBytes_ + ledger.venusTotal_)
+    {
+    }
+    Change(const Change&) = delete;
+    Change& operator=(const Change&) = delete;
+    ~Change()
+    {
+        const bool changed =
+            ledger_.heldResourceBytes_ + ledger_.venusTotal_ != before_;
+        lock_.unlock();
+        if (changed)
+            ledger_.notify();
+    }
+
+private:
+    ContextMemoryLedger& ledger_;
+    std::unique_lock<std::mutex> lock_;
+    std::uint64_t before_;
+};
+
+void ContextMemoryLedger::setObserver(std::function<void()> observer)
+{
+    std::lock_guard lock(observerMutex_);
+    observed_.store(static_cast<bool>(observer), std::memory_order_relaxed);
+    observer_ = std::move(observer);
+}
+
+void ContextMemoryLedger::notify() noexcept
+{
+    if (!observed_.load(std::memory_order_relaxed))
+        return;
+    std::lock_guard lock(observerMutex_);
+    if (observer_)
+        observer_();
+}
+
 bool ContextMemoryLedger::Resource::holdsBy(
     std::uint32_t contextId) const noexcept
 {
@@ -102,7 +143,7 @@ void ContextMemoryLedger::contextCreated(
     context.owner = parseContextOwner(debugName);
     context.venus = venus;
     context.lastActive = now;
-    std::lock_guard lock(mutex_);
+    Change change(*this);
     destroyLocked(contextId);
     contexts_.emplace(contextId, std::move(context));
 }
@@ -125,7 +166,7 @@ void ContextMemoryLedger::destroyLocked(std::uint32_t contextId) noexcept
 
 void ContextMemoryLedger::contextDestroyed(std::uint32_t contextId) noexcept
 {
-    std::lock_guard lock(mutex_);
+    Change change(*this);
     destroyLocked(contextId);
 }
 
@@ -171,7 +212,7 @@ void ContextMemoryLedger::reserveResource(std::uint32_t resourceId)
 void ContextMemoryLedger::setResourceBytes(
     std::uint32_t resourceId, std::uint64_t bytes) noexcept
 {
-    std::lock_guard lock(mutex_);
+    Change change(*this);
     const auto found = resources_.find(resourceId);
     if (found == resources_.end())
         return;
@@ -185,7 +226,7 @@ void ContextMemoryLedger::blobMade(
     std::uint32_t contextId,
     std::uint64_t bytes) noexcept
 {
-    std::lock_guard lock(mutex_);
+    Change change(*this);
     const auto resource = resources_.find(resourceId);
     const auto context = contexts_.find(contextId);
     if (resource == resources_.end() || context == contexts_.end() ||
@@ -202,7 +243,7 @@ void ContextMemoryLedger::blobMade(
 bool ContextMemoryLedger::resourceAttached(
     std::uint32_t contextId, std::uint32_t resourceId)
 {
-    std::lock_guard lock(mutex_);
+    Change change(*this);
     const auto context = contexts_.find(contextId);
     const auto resource = resources_.find(resourceId);
     if (context == contexts_.end() || resource == resources_.end() ||
@@ -219,7 +260,7 @@ bool ContextMemoryLedger::resourceAttached(
 void ContextMemoryLedger::resourceDetached(
     std::uint32_t contextId, std::uint32_t resourceId) noexcept
 {
-    std::lock_guard lock(mutex_);
+    Change change(*this);
     const auto resource = resources_.find(resourceId);
     if (resource == resources_.end() || !resource->second.remove(contextId))
         return;
@@ -236,7 +277,7 @@ void ContextMemoryLedger::resourceDetached(
 
 void ContextMemoryLedger::resourceReleased(std::uint32_t resourceId) noexcept
 {
-    std::lock_guard lock(mutex_);
+    Change change(*this);
     const auto found = resources_.find(resourceId);
     if (found == resources_.end())
         return;
@@ -260,7 +301,7 @@ void ContextMemoryLedger::resourceReleased(std::uint32_t resourceId) noexcept
 void ContextMemoryLedger::venusMemory(
     std::uint32_t contextId, std::int64_t delta) noexcept
 {
-    std::lock_guard lock(mutex_);
+    Change change(*this);
     const auto found = contexts_.find(contextId);
     if (found == contexts_.end())
         return;
@@ -280,7 +321,7 @@ void ContextMemoryLedger::venusMemory(
 
 void ContextMemoryLedger::clear() noexcept
 {
-    std::lock_guard lock(mutex_);
+    Change change(*this);
     contexts_.clear();
     resources_.clear();
     heldResourceBytes_ = 0;
