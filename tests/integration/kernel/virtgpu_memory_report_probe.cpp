@@ -544,8 +544,10 @@ int main()
 	const uint64_t budget = report.budget;
 	const uint64_t overhead = report.used > report.held ? report.used - report.held : 0;
 	const uint64_t held_now = report.held;
-	/* The pressure condition is held + overhead + 96 MiB >= budget; 8 MiB over
-	 * it fills the pool to a few tens of MiB short of a refusal. */
+	/* The pressure condition is usage + 96 MiB >= budget, and the usage is
+	 * what is held plus the overhead above it; 8 MiB over it fills the pool
+	 * to a few tens of MiB short of a refusal. Memory the host's drivers
+	 * cache is freed before the figure counts, but a holder's is not. */
 	const uint64_t target = budget + 8 * mebibyte > margin + overhead + held_now
 				? budget + 8 * mebibyte - margin - overhead - held_now
 				: 8 * mebibyte;
