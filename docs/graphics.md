@@ -321,6 +321,18 @@ larger of Metal's allocation less the imported host memory and the graphics
 footprint, plus the reservations in flight, memory the drivers keep for reuse
 included. The macOS launchers print them as `gpu-memory <used>/<B> MiB`.
 
+The display also keeps who holds the budget (`context_memory_ledger.*`): a
+Virgl resource or blob is credited in full to every context it is attached to
+and counted once in the total, and a Venus context's device memory comes from
+the renderer's per-context report (the pool's `account` callback). The guest
+kernel names a context's creating process in the context's debug name
+(`<name>|pid=<tgid>|comm=<comm>`, the
+[kernel contract](../kernel/common/README.md#devices)); a kernel that does not
+leaves the holders unnamed and nothing acts on them. `read_graphics_memory`
+(runtime API 28) lists the quiet holders by process, and the macOS launchers
+print them with `--stats`. Andarium ends the cached background app that holds
+the most when the budget is nearly full (`GraphicsReclaim`).
+
 ### Android guest requirements
 
 The Android guest reaches the same renderer by a separate route: one Soong port
@@ -422,8 +434,9 @@ results, not only speed; the driver takes the capabilities that differ
 iOS ends the app at its footprint limit, and a 1536 MiB guest already leaves the
 host side little headroom, so guest RAM cannot be raised to make room for a
 workload. The per-device geometry heap starts small and grows within the pool, a
-grown heap is freed once nothing holds it, Zink's buffer cache is bounded and an
-idle Virgl context is trimmed. virglrenderer's shared-memory segments are
+grown heap is freed once nothing holds it, Zink's buffer cache is bounded, a
+destroyed context's command storage is released with it
+(`gpu-host-gl-batch-storage`) and an idle Virgl context is trimmed. virglrenderer's shared-memory segments are
 unlinked container files outside the footprint on iOS and POSIX shared memory
 inside it on macOS. A baked device campaign leaves out the groups its guest
 memory cannot hold ([`testing.md`](testing.md)).

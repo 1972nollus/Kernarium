@@ -41,6 +41,13 @@ add_library(uml_gpu_device_memory_pool STATIC device_memory_pool.cpp)
 add_library(UML::GpuDeviceMemoryPool ALIAS uml_gpu_device_memory_pool)
 uml_configure_gpu_component(uml_gpu_device_memory_pool)
 
+# What the guest's contexts hold of the host GPU's memory, by process; see
+# context_memory_ledger.hpp. The display keeps one for the device and the
+# service.
+add_library(uml_gpu_context_memory_ledger STATIC context_memory_ledger.cpp)
+add_library(UML::GpuContextMemoryLedger ALIAS uml_gpu_context_memory_ledger)
+uml_configure_gpu_component(uml_gpu_context_memory_ledger)
+
 # Finds the guest contexts that have gone quiet, for the renderer to trim.
 add_library(uml_gpu_context_idle_tracker STATIC context_idle_tracker.cpp)
 add_library(UML::GpuContextIdleTracker ALIAS uml_gpu_context_idle_tracker)
@@ -96,7 +103,8 @@ target_compile_definitions(uml_gpu_display PRIVATE
     UML_GPU_VNC_STARTUP_TESTING=0)
 target_include_directories(uml_gpu_display PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/device/input/vnc)
-target_link_libraries(uml_gpu_display PUBLIC UML::Descriptor UML::VncInput)
+target_link_libraries(uml_gpu_display PUBLIC
+    UML::Descriptor UML::VncInput UML::GpuContextMemoryLedger)
 target_link_libraries(uml_gpu_display PRIVATE UML::GuestTimerMask)
 if(UML_TARGET_MACOS)
     target_link_libraries(uml_gpu_display PRIVATE
@@ -201,6 +209,8 @@ if(UML_BUILD_UNIT_TESTS)
     uml_configure_gpu_component(uml_gpu_protocol_device_test_variant)
     target_compile_definitions(uml_gpu_protocol_device_test_variant PUBLIC
         UML_GPU_DEVICE_TESTING=1)
+    target_link_libraries(uml_gpu_protocol_device_test_variant PUBLIC
+        UML::GpuContextMemoryLedger)
 endif()
 
 add_library(uml_gpu_device INTERFACE)

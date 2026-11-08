@@ -5,9 +5,12 @@
 
 #include <uml/emulator.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdint>
 #include <optional>
+#include <span>
+#include <string_view>
 
 namespace kernarium::statistics {
 
@@ -68,6 +71,53 @@ struct GpuMemoryFigures final {
     result.gpu_memory_refusals = memoryRefusals.value_or(0U);
     result.gpu_memory_budget_bytes = gpuMemory ? gpuMemory->budgetBytes : 0U;
     result.gpu_memory_used_bytes = gpuMemory ? gpuMemory->usedBytes : 0U;
+    return result;
+}
+
+/* One holder of the guest's graphics memory, as the GPU service reports it. */
+struct GraphicsHolderFigures final {
+    std::uint32_t pid {};
+    std::uint32_t contexts {};
+    std::uint64_t bytes {};
+    std::uint64_t idleMs {};
+    std::string_view name;
+};
+
+/* The GPU service's figures for one graphics memory reading. */
+struct GraphicsFigures final {
+    std::uint64_t budgetBytes {};
+    std::uint64_t usageBytes {};
+    std::uint64_t contextBytes {};
+    std::uint64_t memoryRefusals {};
+    /* Largest first; the entries past the table's room are dropped. */
+    std::span<const GraphicsHolderFigures> holders;
+};
+
+/* One graphics memory reading. A name is cut to the room the holder has,
+ * which leaves it a terminating null. */
+[[nodiscard]] inline kernarium_runtime_graphics_memory graphicsReading(
+    const GraphicsFigures& figures) noexcept
+{
+    kernarium_runtime_graphics_memory result {};
+    result.struct_size = sizeof(result);
+    result.budget_bytes = figures.budgetBytes;
+    result.usage_bytes = figures.usageBytes;
+    result.context_bytes = figures.contextBytes;
+    result.memory_refusals = figures.memoryRefusals;
+    const auto count = std::min<std::size_t>(
+        figures.holders.size(), KERNARIUM_RUNTIME_GRAPHICS_HOLDERS);
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto& source = figures.holders[index];
+        auto& holder = result.holders[index];
+        holder.pid = source.pid;
+        holder.context_count = source.contexts;
+        holder.bytes = source.bytes;
+        holder.idle_ms = source.idleMs;
+        const auto length = std::min<std::size_t>(
+            source.name.size(), KERNARIUM_RUNTIME_GRAPHICS_NAME_BYTES - 1U);
+        std::copy_n(source.name.data(), length, holder.name);
+    }
+    result.holder_count = static_cast<std::uint32_t>(count);
     return result;
 }
 

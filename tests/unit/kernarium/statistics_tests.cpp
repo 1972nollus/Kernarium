@@ -10,13 +10,18 @@
 #include "named_tests.hpp"
 #include "require.hpp"
 
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <optional>
+#include <string_view>
 
 namespace {
 
 using kernarium::statistics::DisplayFigures;
+using kernarium::statistics::GraphicsFigures;
+using kernarium::statistics::GraphicsHolderFigures;
+using kernarium::statistics::graphicsReading;
 using kernarium::statistics::GpuMemoryFigures;
 using kernarium::statistics::displayActive;
 using kernarium::statistics::guestMemoryResult;
@@ -78,6 +83,55 @@ void noDisplayReadsAsNoFramesAndAnUnknownScreen()
     require(statistics.gpu_memory_budget_bytes == 0U &&
             statistics.gpu_memory_used_bytes == 0U,
         "no GPU service gave the guest a budget");
+}
+
+/* A graphics memory reading carries the service's figures and its holders,
+ * largest first, with names cut to fit the table and its room. */
+void aGraphicsReadingCarriesTheServicesFigures()
+{
+    const std::array<GraphicsHolderFigures, 2> holders {{
+        {.pid = 2204U, .contexts = 3U, .bytes = 136314880ULL,
+            .idleMs = 61500ULL, .name = "org.chromium.chrome.long.name"},
+        {.pid = 0U, .contexts = 1U, .bytes = 8388608ULL, .idleMs = 0ULL,
+            .name = "RenderThread"},
+    }};
+    const auto memory = graphicsReading({
+        .budgetBytes = 560005120ULL,
+        .usageBytes = 524288000ULL,
+        .contextBytes = 440401920ULL,
+        .memoryRefusals = 2ULL,
+        .holders = holders,
+    });
+    require(memory.struct_size == sizeof(memory));
+    require(memory.budget_bytes == 560005120ULL &&
+            memory.usage_bytes == 524288000ULL &&
+            memory.context_bytes == 440401920ULL &&
+            memory.memory_refusals == 2ULL);
+    require(memory.holder_count == 2U);
+    require(memory.holders[0].pid == 2204U &&
+            memory.holders[0].context_count == 3U &&
+            memory.holders[0].bytes == 136314880ULL &&
+            memory.holders[0].idle_ms == 61500ULL);
+    require(std::string_view {memory.holders[0].name} == "org.chromium.ch",
+        "a long name was not cut to the room the holder has");
+    require(std::string_view {memory.holders[1].name} == "RenderThread" &&
+            memory.holders[1].pid == 0U);
+    require(memory.holders[2].pid == 0U && memory.holders[2].bytes == 0U,
+        "an unused entry was not empty");
+}
+
+void noHoldersAndTooManyHoldersFitTheTable()
+{
+    const auto none = graphicsReading({.budgetBytes = 1ULL});
+    require(none.holder_count == 0U && none.budget_bytes == 1ULL);
+
+    std::array<GraphicsHolderFigures, 12> many {};
+    for (std::uint32_t index = 0; index < many.size(); ++index)
+        many[index] = {.pid = index + 1U, .bytes = 100ULL - index};
+    const auto full = graphicsReading({.holders = many});
+    require(full.holder_count == KERNARIUM_RUNTIME_GRAPHICS_HOLDERS &&
+            full.holders[7].pid == 8U,
+        "the entries past the table's room were not dropped");
 }
 
 void theScreenReadsAsOneZeroOrUnknown()
@@ -150,6 +204,10 @@ int main()
             aReadingCarriesEveryFigureOfItsSources},
         {"no-display-reads-as-no-frames-and-an-unknown-screen",
             noDisplayReadsAsNoFramesAndAnUnknownScreen},
+        {"a-graphics-reading-carries-the-services-figures",
+            aGraphicsReadingCarriesTheServicesFigures},
+        {"no-holders-and-too-many-holders-fit-the-table",
+            noHoldersAndTooManyHoldersFitTheTable},
         {"the-screen-reads-as-one-zero-or-unknown",
             theScreenReadsAsOneZeroOrUnknown},
         {"the-emulators-answers-become-the-runtimes",

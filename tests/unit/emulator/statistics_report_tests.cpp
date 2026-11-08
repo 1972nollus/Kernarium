@@ -17,6 +17,7 @@
 namespace {
 
 using namespace std::chrono_literals;
+using uml::emulator::GraphicsAttribution;
 using uml::emulator::StatisticsMemory;
 using uml::emulator::StatisticsReport;
 using uml::emulator::StatisticsSample;
@@ -202,6 +203,54 @@ void theLineStatesTheGpuMemoryBudgetAndItsUsage()
 	require(line && line->find("gpu-memory") == std::string::npos, *line);
 }
 
+/* Who holds the budget is one more clause after the budget's own; a launcher
+ * without a budget says nothing. */
+void theLineStatesWhoHoldsTheGraphicsBudget()
+{
+	StatisticsReport report;
+	auto first = sample(0ms, 0);
+	auto second = sample(1000ms, 0);
+	second.gpu_memory_budget_bytes = 534 * mebibyte;
+	second.gpu_memory_used_bytes = 500 * mebibyte;
+	second.graphics_attribution = GraphicsAttribution {
+		.context_bytes = 420 * mebibyte,
+		.holders = {
+			{.pid = 2204, .bytes = 130 * mebibyte, .idle_ms = 61'500,
+				.name = "jelly"},
+			{.pid = 0, .bytes = 8 * mebibyte, .idle_ms = 0,
+				.name = "RenderThread"},
+		},
+	};
+	(void)report.add(first, std::nullopt);
+	auto line = report.add(second, std::nullopt);
+	require(line && line->ends_with(
+			" gpu-memory 500/534 MiB attributed 420 MiB "
+			"holders 2204:jelly:130 MiB:61 s 0:RenderThread:8 MiB:0 s"),
+		*line);
+
+	StatisticsReport quiet;
+	auto third = sample(0ms, 0);
+	auto fourth = sample(1000ms, 0);
+	fourth.gpu_memory_budget_bytes = 534 * mebibyte;
+	fourth.gpu_memory_used_bytes = 12 * mebibyte;
+	fourth.graphics_attribution = GraphicsAttribution {};
+	(void)quiet.add(third, std::nullopt);
+	line = quiet.add(fourth, std::nullopt);
+	require(line && line->ends_with(" gpu-memory 12/534 MiB attributed 0 MiB"),
+		*line);
+
+	StatisticsReport unbudgeted;
+	auto fifth = sample(0ms, 0);
+	auto sixth = sample(1000ms, 0);
+	sixth.graphics_attribution = GraphicsAttribution {
+		.context_bytes = 12 * mebibyte};
+	(void)unbudgeted.add(fifth, std::nullopt);
+	line = unbudgeted.add(sixth, std::nullopt);
+	require(line && line->find("gpu-memory") == std::string::npos &&
+			line->find("attributed") == std::string::npos,
+		*line);
+}
+
 void theElapsedTimeCountsFromTheFirstSample()
 {
 	StatisticsReport report;
@@ -238,6 +287,8 @@ int main()
 			theLineStatesTheGpuRefusalsOfADisplay},
 		{"the-line-states-the-gpu-memory-budget-and-its-usage",
 			theLineStatesTheGpuMemoryBudgetAndItsUsage},
+		{"the-line-states-who-holds-the-graphics-budget",
+			theLineStatesWhoHoldsTheGraphicsBudget},
 		{"the-elapsed-time-counts-from-the-first-sample",
 			theElapsedTimeCountsFromTheFirstSample},
 	};

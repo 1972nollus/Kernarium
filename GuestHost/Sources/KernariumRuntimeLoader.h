@@ -62,6 +62,11 @@ int kernarium_runtime_loader_guest_display_active(void);
  * -ENODEV when no runtime is loaded. */
 int kernarium_runtime_loader_read_statistics(
     kernarium_runtime_statistics* statistics);
+/* The guest's graphics memory budget and who holds it; see
+ * kernarium_runtime_read_graphics_memory_function. Returns the runtime's
+ * answer, or -ENODEV when no runtime is loaded. */
+int kernarium_runtime_loader_read_graphics_memory(
+    kernarium_runtime_graphics_memory* memory);
 /* The guest kernel's own memory figures; see
  * kernarium_runtime_read_guest_memory_function. Returns the runtime's answer,
  * or -ENODEV when no runtime is loaded. Call it away from the main thread: it

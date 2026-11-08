@@ -16,6 +16,15 @@ uml_add_tooling_test(
     LABELS emulator;guest
     TIMEOUT 60)
 
+# The AArch32 engine runner's verdict on fixed console and host output: a
+# kernel line inside a probe line is no crash, and every real crash fails.
+uml_add_tooling_test(
+    NAME guest-aarch32-engine-runner
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/emulator/a32_engine_runner_tests.py
+    LABELS emulator;guest;aarch32
+    TIMEOUT 60)
+
 # The fixture probe runner's guest command and the message of every way a probe
 # fails, with the guest replaced by a recorder.
 uml_add_tooling_test(

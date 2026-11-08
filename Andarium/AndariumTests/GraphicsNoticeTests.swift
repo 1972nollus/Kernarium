@@ -222,4 +222,112 @@ struct GraphicsNoticeFlowTests {
         #expect(!model.graphicsNotice.isShowing, "a refusal made before the restart was announced after it")
         model.phase = .home
     }
+    // MARK: Freeing graphics memory
+
+    private static let mebibyte: UInt64 = 1 << 20
+
+    /// A budget of 534 MiB of which contexts hold `held` MiB, and one big
+    /// quiet holder.
+    private func memory(held: UInt64, refusals: UInt64 = 0) -> GraphicsMemoryReading {
+        GraphicsMemoryReading(
+            budgetBytes: 534 * Self.mebibyte, usageBytes: (held + 20) * Self.mebibyte,
+            contextBytes: held * Self.mebibyte, refusals: refusals,
+            holders: [GraphicsHolder(pid: 2285, bytes: 130 * Self.mebibyte, idle: .seconds(60), name: "jelly")])
+    }
+
+    @Test func theBudgetIsReadWithTheNoticeAndNothingIsEndedWhileThereIsRoom() async {
+        let pace = Pace()
+        let driver = StubDriver(plan: .normal)
+        driver.refusalCounts = [0]
+        driver.graphicsMemories = [memory(held: 200)]
+        let model = runningModel(driver, pace: pace)
+        #expect(await until { pace.isWaiting })
+        #expect(await nextReading(pace, driver))
+        #expect(await nextReading(pace, driver))
+        #expect(driver.graphicsMemoryAsked == 3, "the budget was not read with each count")
+        #expect(driver.reclaims.isEmpty)
+        #expect(driver.graphicsMemoryFilters.allSatisfy {
+            $0.idle == GraphicsReclaim.minimumIdle && $0.bytes == GraphicsReclaim.minimumHolderBytes
+        }, "the holders asked for were not the ones a reclaim may end")
+        model.phase = .home
+    }
+
+    @Test func aBudgetThatStaysNearlyFullEndsTheHolderOnceAndSaysNothing() async {
+        let pace = Pace()
+        let driver = StubDriver(plan: .normal)
+        driver.refusalCounts = [0]
+        driver.graphicsMemories = [memory(held: 460)]
+        driver.reclaimAnswer = .ended(package: "org.lineageos.jelly", pid: 2285, bytes: 130 * Self.mebibyte)
+        let model = runningModel(driver, pace: pace)
+        #expect(await until { pace.isWaiting })
+        #expect(driver.reclaims.isEmpty, "one reading was taken for pressure")
+        #expect(await nextReading(pace, driver))
+        #expect(driver.reclaims.count == 1, "a budget nearly full for two readings ended nothing")
+        // The app is given time to go, and the next reading is inside the
+        // three seconds between two apps.
+        #expect(await nextReading(pace, driver))
+        #expect(driver.reclaims.count == 1, "a second app ended within three seconds")
+        #expect(!model.graphicsNotice.isShowing, "freeing memory announced itself")
+        model.phase = .home
+    }
+
+    @Test func aRefusalEndsTheHolderAtOnce() async {
+        let pace = Pace()
+        let driver = StubDriver(plan: .normal)
+        driver.refusalCounts = [0]
+        driver.graphicsMemories = [memory(held: 200), memory(held: 200, refusals: 1)]
+        let model = runningModel(driver, pace: pace)
+        #expect(await until { pace.isWaiting })
+        #expect(driver.reclaims.isEmpty)
+        #expect(await nextReading(pace, driver))
+        #expect(driver.reclaims.count == 1, "a refusal ended nothing")
+        model.phase = .home
+    }
+
+    @Test func aTryThatEndedNothingIsNotRepeatedEveryReading() async {
+        let pace = Pace()
+        let driver = StubDriver(plan: .normal)
+        driver.refusalCounts = [0]
+        driver.graphicsMemories = [memory(held: 460)]
+        driver.reclaimAnswer = .nothingToEnd
+        let model = runningModel(driver, pace: pace)
+        #expect(await until { pace.isWaiting })
+        #expect(await nextReading(pace, driver))
+        #expect(driver.reclaims.count == 1)
+        for _ in 0..<3 { #expect(await nextReading(pace, driver)) }
+        #expect(driver.reclaims.count == 1, "the guest was asked for its processes every two seconds")
+        #expect(await nextReading(pace, driver))
+        #expect(await nextReading(pace, driver))
+        #expect(driver.reclaims.count == 2, "the try was never repeated")
+        model.phase = .home
+    }
+
+    @Test func aGuestWithNoBudgetReadingEndsNothingAndKeepsTheNotice() async {
+        let pace = Pace()
+        let driver = StubDriver(plan: .normal)
+        driver.refusalCounts = [0, 2]
+        let model = runningModel(driver, pace: pace)
+        #expect(await until { pace.isWaiting })
+        #expect(await nextReading(pace, driver))
+        #expect(driver.reclaims.isEmpty)
+        #expect(model.graphicsNotice.isShowing)
+        model.phase = .home
+    }
+
+    @Test func aRestartForgetsWhatWasEnded() async {
+        let pace = Pace()
+        let driver = StubDriver(plan: .normal)
+        driver.refusalCounts = [0]
+        driver.graphicsMemories = [memory(held: 460)]
+        driver.reclaimAnswer = .ended(package: "org.lineageos.jelly", pid: 2285, bytes: 130 * Self.mebibyte)
+        let model = runningModel(driver, pace: pace)
+        #expect(await until { pace.isWaiting })
+        #expect(await nextReading(pace, driver))
+        #expect(driver.reclaims.count == 1)
+        model.restart()
+        model.phase = .running(.normal)
+        #expect(await until { driver.graphicsMemoryAsked >= 3 && pace.isWaiting })
+        #expect(driver.reclaims.count == 1, "a restarted guest was judged by the old one's readings")
+        model.phase = .home
+    }
 }

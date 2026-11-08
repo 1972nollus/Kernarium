@@ -297,7 +297,8 @@ header names: rotation, motion compatibility and over-vsock, shutdown flow,
 low-space pause (a real guest paused through a free-space number the test
 sets, its CPU time standing still), the graphics-memory notice (a real refusal
 in Chrome's WebGL under the host's GPU budget, on a guest with Chrome
-installed), Retina memory, the ADB-over-vsock guest
+installed), the graphics-memory reading and the process list the reclaim
+parses (any guest), Retina memory, the ADB-over-vsock guest
 tests (including Android storage and the touch-cancel path), the side keys'
 pass-through of touches to Android, the ADB-over-network hold and the
 background disk locks (which also requires a guest that was allocating

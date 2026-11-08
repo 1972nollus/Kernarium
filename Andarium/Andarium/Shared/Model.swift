@@ -239,6 +239,9 @@ final class AppModel {
     @ObservationIgnored var graphicsNoticeClock: @MainActor () -> ContinuousClock.Instant = { .now }
     @ObservationIgnored private var graphicsNoticeTask: Task<Void, Never>?
     @ObservationIgnored private var graphicsNoticeGeneration = 0
+    /// When to end the cached app that holds the most graphics memory, from
+    /// the same readings; nothing of it shows.
+    @ObservationIgnored private(set) var graphicsReclaim = GraphicsReclaim()
 
     init(
         guest: Guest?, host: HostDevice, system: SystemInfo, capabilities: Capabilities,
@@ -877,6 +880,7 @@ final class AppModel {
         endAdbOverNetwork()
         spacePause = nil
         graphicsNotice = GraphicsNotice()
+        graphicsReclaim.reset()
         runEnd = end
         runUptimeSeconds = uptimeSeconds
         if end.poweredOff {
@@ -901,6 +905,7 @@ final class AppModel {
         endAdbOverNetwork()
         spacePause = nil
         graphicsNotice = GraphicsNotice()
+        graphicsReclaim.reset()
         frozenBootStage = nil
         sessionPreset = SessionPreset()
         let showStats = session.showStats
@@ -1106,8 +1111,24 @@ final class AppModel {
                 graphicsNotice.record(refusals: refusals, at: graphicsNoticeClock())
             }
             guard !Task.isCancelled else { return }
+            await reclaimGraphicsMemory(with: driver)
+            guard !Task.isCancelled else { return }
             await graphicsNoticeSleep(GraphicsNotice.pollInterval)
         }
+    }
+
+    /// One look at the graphics memory budget: when it stays nearly full or
+    /// the guest was refused, ends the cached app that holds the most of it.
+    /// Silent, and nothing at all while the kernel names no process.
+    private func reclaimGraphicsMemory(with driver: RuntimeDriver) async {
+        guard
+            let reading = await driver.readGraphicsMemory(
+                minimumIdle: GraphicsReclaim.minimumIdle, minimumBytes: GraphicsReclaim.minimumHolderBytes),
+            !Task.isCancelled
+        else { return }
+        guard graphicsReclaim.observe(reading, at: graphicsNoticeClock()) else { return }
+        let result = await driver.reclaimGraphicsMemory(reading, using: graphicsReclaim)
+        graphicsReclaim.record(result, at: graphicsNoticeClock())
     }
 
     /// The person dismisses the notice.

@@ -283,6 +283,13 @@ it. The bridge fields used below are defined by the comments in
 - The driver paces each CRTC with the DRM vblank timer at its mode's refresh
   rate: a flip's event and out-fence signal at the next tick. The optional
   `guest-drm-vblank` test checks the rate.
+- A Virtio-GPU context's debug name ends in its creating process,
+  `<name>|pid=<tgid>|comm=<comm>`: the thread group ID in the initial PID
+  namespace and the group leader's command name (a `|` in it becomes `?`), cut
+  from `<name>` to fit the 64-byte field so the suffix survives. The host reads
+  it to credit graphics memory to a process
+  ([`docs/graphics.md`](../../docs/graphics.md#device-memory-budget);
+  `guest-virtgpu-context-owner`).
 - A file's handles opened before its Virtio-GPU context exists are attached when
   the context is created. The primary plane accepts ARGB8888 as well as
   XRGB8888 (the first format) and the host ignores the alpha byte; the
