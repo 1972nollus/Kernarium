@@ -493,6 +493,12 @@ class ConsoleProcess:
     what the guest wrote, and ``host_output()`` holds the diagnostics.
     """
 
+    # Without separate_host_output there is no host stream; these defaults
+    # also hold for an instance a test builds without __init__.
+    _separate_host_output = False
+    _host: int | None = None
+    _host_transcript: bytes | bytearray = b""
+
     # How long a guest has to exit after SIGTERM before it is killed.
     STOP_GRACE_SECONDS = 2.0
     KILL_WAIT_SECONDS = 30.0
@@ -512,7 +518,7 @@ class ConsoleProcess:
         self._host_transcript = bytearray()
         self._separate_host_output = separate_host_output
         # The read end of the emulator's stderr until it reaches its end.
-        self._host: int | None = None
+        self._host = None
         # Receives every console byte as the harness reads it, so a caller
         # can stream a long command's output instead of waiting for its end.
         self._console_sink = console_sink
