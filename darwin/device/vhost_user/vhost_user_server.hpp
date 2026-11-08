@@ -108,6 +108,10 @@ private:
     void configureKick(VhostUserMessage& message);
     void drainKick(std::uint32_t index);
     void processQueue(std::uint32_t index);
+    /* Runs queue `index` after its kick was answered, with the guest's kicks
+     * suppressed meanwhile, until no buffer added while it ran is waiting. */
+    void runAnsweredKick(std::uint32_t index);
+    void suppressKicks(std::uint32_t index, bool suppress) noexcept;
     /* How many buffers the guest has made available on queue `index` that the
      * server has not yet taken, or zero if the queue is not running. */
     [[nodiscard]] std::size_t waitingBuffers(std::uint32_t index);

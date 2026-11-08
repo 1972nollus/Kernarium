@@ -224,6 +224,12 @@ public:
         return true;
     }
 
+    // A submission can run for hundreds of milliseconds on the host.
+    [[nodiscard]] bool answersKicksBeforeRunning() const noexcept override
+    {
+        return true;
+    }
+
     [[nodiscard]] std::vector<std::uint8_t> discardedResponse(
         std::uint32_t index,
         std::span<const std::uint8_t> request) const override
