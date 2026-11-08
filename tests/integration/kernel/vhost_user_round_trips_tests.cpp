@@ -2,14 +2,17 @@
 /*
  * Synchronous vhost-user round trips that two vCPUs start at once.
  *
- * Every frontend request on a vhost-user socket but an in-band kick has a
- * reply, and nothing but order tells the frontend which request a reply
- * answers, so a frontend may send its next request only after it has read
- * the previous reply. An in-band kick shares the socket, and the guest kicks
- * from any vCPU while another may be reading the device's configuration. A
- * kick that the guest sent while a GET_CONFIG reply was still on its way,
- * when kicks still asked for an acknowledgement, took that reply as its own
- * and retired a healthy GPU device in the middle of a display change.
+ * Every frontend request on a vhost-user socket but a kick to a GPU or sound
+ * device has a reply, and nothing but order tells the frontend which request
+ * a reply answers, so a frontend may send its next request only after it has
+ * read the previous reply. With in-band notifications any other kick is such
+ * a round trip too, and the guest kicks from any vCPU while another may be
+ * reading the device's configuration. A kick sent while a GET_CONFIG reply
+ * was still on its way took that reply as its acknowledgement and retired a
+ * healthy GPU device in the middle of a display change. The console's kick
+ * must also stay a round trip that serves the device's requests: its writer
+ * spins on the output queue with interrupts off, and the device reads no
+ * kick until the guest has answered the configuration change it sent.
  *
  * The device here is a single-port Virtio console, served in-process by the
  * production transport, that changes its size every few tens of

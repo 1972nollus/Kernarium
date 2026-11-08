@@ -295,9 +295,11 @@ it. The bridge fields used below are defined by the comments in
   XRGB8888 (the first format) and the host ignores the alpha byte; the
   [Android product](../mainline-6.18/README.md#android-product) offers the other
   32-bit RGB orders.
-- An in-band vhost-user kick asks for no acknowledgement, so the kicking CPU,
-  which holds the device's socket with its interrupts off, never waits for the
-  backend's queue work; every other request on the socket is a round trip.
+- An in-band vhost-user kick to a Virtio GPU or sound device asks for no
+  acknowledgement, so the kicking CPU, which holds the device's socket with its
+  interrupts off, never waits for the backend's queue work. Every other
+  request on the socket, any other kick included, is a round trip that serves
+  the backend's requests while it waits.
 - The Virtio sound driver runs a substream's elapsed-period work on its
   device's kthread worker (`virtsnd-<device>`) at the lowest real-time
   priority, not on the system workqueue.

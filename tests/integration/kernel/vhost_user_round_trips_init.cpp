@@ -5,8 +5,8 @@
 // and answers each configuration read late. Every change sends the guest's
 // console driver to read the new size, a GET_CONFIG round trip on the
 // device's vhost-user socket, while a writer pinned to each vCPU keeps
-// kicking the console's output queue, an in-band kick on the same socket.
-// The init lets them run for a while, then reports whether the
+// kicking the console's output queue, an in-band kick round trip on the same
+// socket. The init lets them run for a while, then reports whether the
 // console is still bound to its driver, one "ROUND_TRIPS" line per step, and
 // powers the guest off.
 

@@ -115,4 +115,4 @@ patch	drm-virtio-let-the-freezer-freeze-a-task-that-waits-for-the-host.patch
 patch	uml-let-a-write-only-mapping-be-read-as-native-architectures-do.patch
 patch	drm-virtio-name-the-creating-process-in-a-context-s-debug-name.patch
 patch	ALSA-virtio-run-the-elapsed-period-work-on-a-real-time-worker.patch
-patch	uml-virtio_uml-send-in-band-kicks-without-an-acknowledgement.patch
+patch	uml-virtio_uml-kick-GPU-and-sound-devices-without-an-acknowledgement.patch
