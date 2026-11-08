@@ -55,6 +55,9 @@ struct EmulatorOptions final {
 	 * that wires guest RAM; on forces it anywhere, for diagnosis. */
 	::uml::runtime::HibernationMode guest_hibernation{
 		::uml::runtime::HibernationMode::automatic};
+	/* --session-record=: the file the run records how its session ended in,
+	 * for the next launch (runtime/session_record.hpp). Empty keeps none. */
+	std::string session_record_path;
 	std::size_t guest_memory_bytes{};
 	unsigned guest_cpus{1};
 	/* Whether the engines ignore the top byte of a data address. On for every

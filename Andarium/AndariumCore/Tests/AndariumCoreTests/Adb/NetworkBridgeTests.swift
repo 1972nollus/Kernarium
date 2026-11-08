@@ -30,9 +30,12 @@ final class LoopbackGuest: GuestStreamOpener, @unchecked Sendable {
         guard socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0 else { throw AdbError.io(errno) }
         lock.withLock { opened += 1 }
         let guestEnd = pair[1]
-        // A write to a stream the bridge ended must fail, not kill the test.
+        // A write to a stream the bridge ended must fail, not kill the test,
+        // and one the bridge never takes fails too.
         var on: Int32 = 1
         _ = setsockopt(guestEnd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+        var timeout = timeval(tv_sec: Int(LoopbackGuest.waitSeconds), tv_usec: 0)
+        _ = setsockopt(guestEnd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         let handler = handler
         let thread = Thread {
             handler(guestEnd)
@@ -43,20 +46,29 @@ final class LoopbackGuest: GuestStreamOpener, @unchecked Sendable {
         return pair[0]
     }
 
-    /// Waits until `fd` can be read or has ended. A blocking `read` on a
-    /// socket pair can miss the end its peer announces with
-    /// `shutdown(SHUT_WR)` on Darwin, which would hang a test now and then.
-    static func waitReadable(_ fd: Int32) {
+    /// The longest a fake guest or a computer waits for the other side.
+    static let waitSeconds: Int32 = 30
+
+    /// Waits until `fd` can be read or has ended; false when `waitSeconds`
+    /// pass first. A blocking `read` on a socket pair can miss the end its
+    /// peer announces with `shutdown(SHUT_WR)` on Darwin, which would hang a
+    /// test now and then.
+    static func waitReadable(_ fd: Int32) -> Bool {
         var entry = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-        while poll(&entry, 1, -1) < 0 && errno == EINTR {}
+        while true {
+            let ready = poll(&entry, 1, waitSeconds * 1000)
+            if ready >= 0 { return ready > 0 }
+            if errno != EINTR { return true }
+        }
     }
 
-    /// Reads until the stream ends and returns what arrived.
+    /// Reads until the stream ends, or nothing comes for `waitSeconds`, and
+    /// returns what arrived.
     static func readAll(_ fd: Int32) -> Data {
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 64 * 1024)
         while true {
-            waitReadable(fd)
+            guard waitReadable(fd) else { return data }
             let got = Darwin.read(fd, &buffer, buffer.count)
             if got > 0 {
                 data.append(buffer, count: got)
@@ -85,7 +97,7 @@ final class LoopbackGuest: GuestStreamOpener, @unchecked Sendable {
     static let echo: Handler = { fd in
         var buffer = [UInt8](repeating: 0, count: 64 * 1024)
         while true {
-            waitReadable(fd)
+            guard waitReadable(fd) else { return }
             let got = Darwin.read(fd, &buffer, buffer.count)
             if got > 0 {
                 if !writeAll(fd, Data(buffer[0..<got])) { return }
@@ -101,8 +113,24 @@ final class Computer: @unchecked Sendable {
     let fd: Int32
     private var closed = false
 
-    init(port: UInt16) throws {
-        fd = socket(AF_INET, SOCK_STREAM, 0)
+    /// `afterRefusal` runs when a connect failed and its socket is closed,
+    /// before the error is thrown; whatever opens there takes the number the
+    /// computer let go of, as a parallel test's socket can.
+    init(port: UInt16, afterRefusal: (Int32) -> Void = { _ in }) throws {
+        // The socket is the computer's only once it is connected: an init
+        // that throws after every property is set runs `deinit`, which would
+        // close the number again, whoever holds it by then.
+        fd = try Computer.connect(port: port, afterRefusal: afterRefusal)
+        var on: Int32 = 1
+        _ = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+        // A test never waits for a silent or a stalled socket for long.
+        var timeout = timeval(tv_sec: Int(LoopbackGuest.waitSeconds), tv_usec: 0)
+        _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        _ = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+    }
+
+    private static func connect(port: UInt16, afterRefusal: (Int32) -> Void) throws -> Int32 {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { throw AdbError.io(errno) }
         var address = sockaddr_in()
         address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
@@ -117,13 +145,10 @@ final class Computer: @unchecked Sendable {
         guard connected == 0 else {
             let code = errno
             Darwin.close(fd)
+            afterRefusal(fd)
             throw AdbError.io(code)
         }
-        var on: Int32 = 1
-        _ = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
-        // A test never waits for a silent socket for long.
-        var timeout = timeval(tv_sec: 30, tv_usec: 0)
-        _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        return fd
     }
 
     deinit { if !closed { Darwin.close(fd) } }
@@ -204,6 +229,59 @@ func eventually(_ seconds: Double = 10, _ condition: () -> Bool) -> Bool {
     return condition()
 }
 
+/// Whether `counter` stops below `limit` within `seconds`: it has not moved
+/// for `quiet` seconds. A side that is held back stops once the sockets in
+/// between are full, and how soon that is depends on the host's load.
+func settles(_ counter: ByteCounter, below limit: Int, within seconds: Double = 30, quiet: Double = 0.3) -> Bool {
+    let deadline = Date().addingTimeInterval(seconds)
+    var last = counter.value
+    var since = Date()
+    while last < limit, Date() < deadline {
+        usleep(10_000)
+        let now = counter.value
+        if now != last {
+            last = now
+            since = Date()
+        } else if Date().timeIntervalSince(since) >= quiet {
+            return true
+        }
+    }
+    return false
+}
+
+/// A loopback port nothing listens on: a listener's, closed again. (A port
+/// that is bound and not listening is not refused; the connect times out.)
+func refusedPort() throws -> UInt16 {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    guard fd >= 0 else { throw AdbError.io(errno) }
+    defer { Darwin.close(fd) }
+    var address = sockaddr_in()
+    address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    address.sin_family = sa_family_t(AF_INET)
+    address.sin_addr = in_addr(s_addr: UInt32(0x7F00_0001).bigEndian)
+    var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+    let ready = withUnsafeMutablePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            Darwin.bind(fd, $0, length) == 0 && listen(fd, 1) == 0 && getsockname(fd, $0, &length) == 0
+        }
+    }
+    guard ready else { throw AdbError.io(errno) }
+    return UInt16(bigEndian: address.sin_port)
+}
+
+/// What a descriptor names, to tell whether a number still names it.
+struct FileIdentity: Equatable {
+    let device: dev_t
+    let inode: ino_t
+
+    init?(_ fd: Int32) {
+        var info = stat()
+        guard fstat(fd, &info) == 0 else { return nil }
+        device = info.st_dev
+        inode = info.st_ino
+    }
+}
+
 /// The listener of ADB over network on loopback against a fake guest: bytes
 /// both ways, backpressure each way, half close, a failed stream, the limit of
 /// computers, stopping and a port in use.
@@ -236,7 +314,7 @@ struct AdbNetworkBridgeTests {
         let release = DispatchSemaphore(value: 0)
         let received = ByteCounter()
         let guest = LoopbackGuest { fd in
-            release.wait()
+            _ = release.wait(timeout: .now() + 60)
             received.add(LoopbackGuest.readAll(fd).count)
         }
         let (bridge, port) = try started(guest)
@@ -257,11 +335,7 @@ struct AdbNetworkBridgeTests {
         writer.start()
         // The sockets between them hold a few megabytes, not a hundred and
         // twenty-eight.
-        Thread.sleep(forTimeInterval: 0.6)
-        #expect(written.value < total / 2)
-        let stalled = written.value
-        Thread.sleep(forTimeInterval: 0.3)
-        #expect(written.value == stalled)
+        #expect(settles(written, below: total / 2))
         release.signal()
         #expect(eventually(30) { received.value == total })
         #expect(written.value == total)
@@ -270,21 +344,30 @@ struct AdbNetworkBridgeTests {
     @Test func aSlowComputerHoldsTheGuestBack() throws {
         let sent = ByteCounter()
         let total = 128 << 20
+        let drained = DispatchSemaphore(value: 0)
+        let finished = DispatchSemaphore(value: 0)
         let guest = LoopbackGuest { fd in
+            defer { finished.signal() }
             let block = patternData(256 * 1024)
             var done = 0
             while done < total {
                 guard LoopbackGuest.writeAll(fd, block) else { return }
                 done += block.count
+                // The computer can read the last block before this thread is
+                // back from writing it, and a busy host keeps the thread away
+                // longer: it waits here until the computer has it all, and the
+                // test reads the count only once the guest is done.
+                if done == total { _ = drained.wait(timeout: .now() + 30) }
                 sent.set(done)
             }
         }
         let (bridge, port) = try started(guest)
         defer { bridge.stop() }
         let computer = try Computer(port: port)
-        Thread.sleep(forTimeInterval: 0.6)
-        #expect(sent.value < total / 2)
+        #expect(settles(sent, below: total / 2))
         #expect(computer.drain(count: total) == total)
+        drained.signal()
+        #expect(finished.wait(timeout: .now() + 30) == .success)
         #expect(sent.value == total)
     }
 
@@ -402,6 +485,35 @@ struct AdbNetworkBridgeTests {
         again.stop()
     }
 
+    /// The harness: a computer that is refused closes its socket once. A
+    /// second close would close whatever took the number meanwhile, such as a
+    /// parallel test's adbd connection, whose waiting handshake never ends.
+    @Test func aRefusedComputerLeavesTheNextSocketAlone() throws {
+        let port = try refusedPort()
+        var proved = 0
+        for _ in 0..<10 {
+            var victim: [(end: Int32, identity: FileIdentity?)] = []
+            var taken: Int32?
+            #expect(throws: AdbError.io(ECONNREFUSED)) {
+                try Computer(port: port) { freed in
+                    var pair: [Int32] = [-1, -1]
+                    guard socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0 else { return }
+                    victim = pair.map { ($0, FileIdentity($0)) }
+                    // Another test may have taken the number first.
+                    taken = pair.first { $0 == freed }
+                }
+            }
+            if let taken, let opened = victim.first(where: { $0.end == taken }) {
+                proved += 1
+                #expect(FileIdentity(taken) == opened.identity, "the computer closed the socket opened after it")
+            }
+            for opened in victim where opened.identity != nil && FileIdentity(opened.end) == opened.identity {
+                Darwin.close(opened.end)
+            }
+        }
+        #expect(proved > 0)
+    }
+
     @Test func stoppingEndsConnectionsThatAreBusyInBothDirections() throws {
         let guestEnded = DispatchSemaphore(value: 0)
         let release = DispatchSemaphore(value: 0)
@@ -411,7 +523,7 @@ struct AdbNetworkBridgeTests {
             let block = patternData(64 * 1024)
             while LoopbackGuest.writeAll(fd, block) {}
             guestEnded.signal()
-            release.wait()
+            _ = release.wait(timeout: .now() + 60)
         }
         let (bridge, port) = try started(guest)
         let computers = try (0..<3).map { _ in try Computer(port: port) }

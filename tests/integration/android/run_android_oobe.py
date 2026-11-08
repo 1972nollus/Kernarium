@@ -11,15 +11,18 @@ a fresh instance, and checks the contract in android/lineage-24/README.md:
   wizard and stays there when pressed, and the wizard's first page is on
   screen. The runner then completes the wizard through the pages the product
   shows, exactly these and in this order: Welcome, Language, Date and time,
-  Theme, Finish. Setup ends in the state the product defines for a fresh guest:
+  Theme. Finish on the Theme page goes straight to the home screen: the
+  wizard's closing page (the logo with its home button) is not shown, and its
+  activity never starts. Setup ends in the state the product defines for a fresh guest:
   both settings 1, the wizard's HOME activity and flow manager disabled, HOME
   resolving to, and pressed back to, the launcher, three-button navigation
   (`navigation_mode` 0, the gestural overlay off and both mode overlays
   present), no screen lock, location on as it was before the wizard, Wi-Fi
   connected to VirtWifi, no status bar lock held by the wizard, and a home
-  screen that is one page holding the six applications of the default layout
-  (Settings, Calendar, Gallery, Music, Calculator, Files), no widget and an
-  empty dock, none of them dropped while the launcher read its layout. The
+  screen that is one page with an empty workspace, no widget and a dock of
+  exactly Files and Settings, neither dropped while the launcher read its
+  layout, while the app drawer still lists all six applications (Calendar,
+  Gallery, Music and Calculator are reached from it). The
   drop check reads the guest's log, so the runner raises the log buffers as
   soon as adb answers, before the wizard runs, and a log without the
   launcher's layout load is a failure, not a skipped check. `--width`,
@@ -36,8 +39,9 @@ a fresh instance, and checks the contract in android/lineage-24/README.md:
 Neither guest may have a wizard crash in its crash buffer: the helper's disable
 landing while the wizard binds kills the process with a NameNotFoundException.
 
-The flow is the contract of release r17 and later: a release that still shows
-LineageOS's other pages fails at the first page that is not in the list.
+The flow is the contract of release r18 and later: a release that still shows
+LineageOS's other pages, or the closing page, fails at the first page that is
+not in the list.
 
 Every wait has a deadline; the guest's launcher is stopped through its own
 process on any exit.
@@ -72,22 +76,27 @@ WELCOME_ACTIVITY = f"{WIZARD}/.WelcomeActivity"
 LOCALE_ACTIVITY = f"{WIZARD}/.locale.LocaleActivity"
 DATETIME_ACTIVITY = f"{WIZARD}/.time.DateTimeActivity"
 THEME_ACTIVITY = f"{WIZARD}/.settings.ThemeSettingsActivity"
+# The closing page of LineageOS's flow (the logo and the home button): the product skips it.
 FINISH_ACTIVITY = f"{WIZARD}/.FinishActivity"
-# The reviewed flow: the pages the wizard shows, in order.
-FLOW = (WELCOME_ACTIVITY, LOCALE_ACTIVITY, DATETIME_ACTIVITY, THEME_ACTIVITY, FINISH_ACTIVITY)
+FINISH_LOG_TAG = "FinishActivity"
+# The reviewed flow: the pages the wizard shows, in order. Finish on the last one goes home.
+FLOW = (WELCOME_ACTIVITY, LOCALE_ACTIVITY, DATETIME_ACTIVITY, THEME_ACTIVITY)
 NAVBAR_GESTURAL = "com.android.internal.systemui.navbar.gestural"
 NAVBAR_3BUTTON = "com.android.internal.systemui.navbar.threebutton"
 WIFI_NETWORK = "VirtWifi"
 LAUNCHER_ACTIVITY = f"{LAUNCHER_PACKAGE}/.uioverrides.QuickstepLauncher"
-# The applications of the launcher's default layout (android/lineage-24/overlay/overlay/packages/apps/Launcher3).
-HOME_APPS = frozenset({
+# The launcher's default layout (android/lineage-24/overlay/overlay/packages/apps/Launcher3): the dock holds
+# these two and the workspace nothing. The other four applications with a launcher activity stay in the app drawer.
+DOCK_APPS = frozenset({
     ("com.android.settings", "com.android.settings.Settings"),
-    ("org.lineageos.etar", "com.android.calendar.AllInOneActivity"),
-    ("org.lineageos.glimpse", "org.lineageos.glimpse.MainActivity"),
-    ("org.lineageos.twelve", "org.lineageos.twelve.MainActivity"),
-    ("com.android.calculator2", "com.android.calculator2.Calculator"),
     ("com.android.documentsui", "com.android.documentsui.LauncherActivity"),
 })
+# What the app drawer lists: every application with a launcher activity, by the label the launcher shows.
+DRAWER_LABELS = frozenset({"Calculator", "Calendar", "Files", "Gallery", "Music", "Settings"})
+DRAWER_ONLY_LABELS = DRAWER_LABELS - {"Files", "Settings"}
+ALL_APPS_ACTION = "android.intent.action.ALL_APPS"
+DRAWER_ICON_ID = f"{LAUNCHER_PACKAGE}:id/icon"
+DRAWER_SEARCH_ID = f"{LAUNCHER_PACKAGE}:id/search_container_all_apps"
 LAUNCHER_LOAD_SECONDS = 60
 UI_DUMP = "/data/local/tmp/andarium-oobe-ui.xml"
 BOUNDS = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
@@ -139,15 +148,13 @@ def center(bounds: str) -> tuple[int, int]:
 
 
 # What each page of the wizard is asked: the id of its button, the text of its
-# button, its first list item, or the page's home affordance (in three-button
-# navigation the Finish page's icon is the control that goes home).
+# button, or its first list item.
 PAGES: dict[str, tuple[str, str]] = {
     WELCOME_ACTIVITY: ("id", f"{WIZARD}:id/start"),
     LOCALE_ACTIVITY: ("item", "sud_items_title"),
     DATETIME_ACTIVITY: ("text", "Next"),
-    # The last page before Finish: its button reads Finish.
+    # The last page: its button reads Finish, and it ends the wizard.
     THEME_ACTIVITY: ("text", "Finish"),
-    FINISH_ACTIVITY: ("id", f"{WIZARD}:id/swipe_hint_icon"),
 }
 assert tuple(PAGES) == FLOW
 
@@ -230,41 +237,61 @@ def launcher_items(dump: str) -> list[dict]:
         body = match.group("body")
         container = LAUNCHER_CONTAINER.match(body)
         page = re.search(r"page_index: (\d+)", container.group("fields")) if container else None
+        rank = re.search(r"index: (\d+)", container.group("fields")) if container else None
         component = LAUNCHER_COMPONENT.search(body)
         items.append({
             "id": int(match.group("id")), "type": match.group("type"),
             "container": container.group("kind") if container else "?",
             "page": int(page.group(1)) if page else 0,
+            "rank": int(rank.group(1)) if rank else 0,
             "component": (component.group("package"), component.group("class")) if component else None,
         })
     return items
 
 
 def launcher_problems(items: list[dict]) -> list[str]:
-    """What is wrong with the workspace: it holds the six applications on the first page and nothing else."""
+    """What is wrong with the home screen's items: Files and Settings in the dock and nothing else."""
     problems = []
-    if len(items) != len(HOME_APPS):
-        problems.append(f"{len(items)} items, expected {len(HOME_APPS)}")
+    if len(items) != len(DOCK_APPS):
+        problems.append(f"{len(items)} items, expected {len(DOCK_APPS)}")
     for item in items:
         name = "/".join(item["component"]) if item["component"] else f"item {item['id']}"
-        if item["type"] != "APP" or item["component"] not in HOME_APPS:
-            problems.append(f"{name} ({item['type']}) is not one of the six applications")
-        if item["container"] != "workspace":
-            problems.append(f"{name} is in the {item['container']}, not on the workspace")
-        elif item["page"] != 0:
-            problems.append(f"{name} is on page {item['page']}, not the first")
-    for package, class_name in sorted(HOME_APPS - {item["component"] for item in items}):
-        problems.append(f"{package}/{class_name} is missing")
+        if item["type"] != "APP" or item["component"] not in DOCK_APPS:
+            problems.append(f"{name} ({item['type']}) is not Files or Settings: the home screen holds only those two")
+        if item["container"] == "workspace":
+            problems.append(f"{name} is on the workspace page {item['page']}, which stays empty")
+        elif item["container"] != "hotseat":
+            problems.append(f"{name} is in the {item['container']}, not the dock")
+    for package, class_name in sorted(DOCK_APPS - {item["component"] for item in items}):
+        problems.append(f"{package}/{class_name} is missing from the dock")
     return problems
 
 
-# What release r16 showed on the second page of its home screen, besides the music widget and
-# behind an empty first page: Gallery, Music and Settings. Each stays on the home screen.
-R16_SECOND_PAGE_APPS = frozenset({
-    ("org.lineageos.glimpse", "org.lineageos.glimpse.MainActivity"),
-    ("org.lineageos.twelve", "org.lineageos.twelve.MainActivity"),
-    ("com.android.settings", "com.android.settings.Settings"),
-})
+def drawer_labels(nodes: list[dict[str, str]]) -> list[str] | None:
+    """The labels of the app drawer's icons in a dump of the screen, or None when the drawer is not what is shown.
+
+    The drawer is on screen when its search container is; its icons are the nodes with the launcher's `icon`
+    id, which the workspace's and the dock's icons do not carry."""
+    if not any(node.get("resource-id") == DRAWER_SEARCH_ID for node in nodes):
+        return None
+    return sorted(node.get("text", "") for node in nodes if node.get("resource-id") == DRAWER_ICON_ID)
+
+
+def drawer_problems(labels: list[str] | None) -> list[str]:
+    """What is wrong with the app drawer: it lists the six applications, each once, and nothing else."""
+    if labels is None:
+        return ["the app drawer did not open"]
+    problems = []
+    for label in sorted(DRAWER_LABELS - set(labels)):
+        problems.append(f"{label} is not in the app drawer" + (
+            ": it is off the home screen only, not uninstalled" if label in DRAWER_ONLY_LABELS else ""))
+    for label in sorted(set(labels) - DRAWER_LABELS):
+        problems.append(f"{label} is in the app drawer, which lists only the six applications of the image")
+    for label in sorted({label for label in labels if labels.count(label) > 1}):
+        problems.append(f"{label} is in the app drawer twice")
+    return problems
+
+
 WORKSPACE_VIEW = re.compile(r"^(?P<indent> *)com\.android\.launcher3\.Workspace\{")
 
 
@@ -543,8 +570,11 @@ def complete_wizard(device: Device) -> None:
             if position != len(FLOW) - 1 or position not in answered:
                 raise Failure(f"the wizard ended at the launcher after {FLOW[position]}, before the whole flow "
                               f"{' > '.join(page.split('/')[-1] for page in FLOW)}")
-            print(f"wizard completed through {len(FLOW)} pages")
+            print(f"wizard completed through {len(FLOW)} pages, and Finish went to the home screen")
             return
+        if activity == FINISH_ACTIVITY:
+            raise Failure("the wizard shows its closing page, which the product skips: Finish on the "
+                          f"{THEME_ACTIVITY.split('/')[-1]} page goes straight to the home screen")
         # A page that is not in the flow may be a transition: look again before
         # calling it unexpected.
         if activity not in FLOW:
@@ -600,6 +630,22 @@ def check_wizard_released(device: Device, *, by_wizard: bool) -> None:
     print("the wizard holds no status bar lock")
 
 
+def finish_activity_lines(log: str) -> list[str]:
+    """The lines of the closing page's log tag in a `logcat -v time` dump; the page logs when it is created."""
+    return [match.group(0) for match in LAUNCHER_LOG.finditer(log) if match.group("tag") == FINISH_LOG_TAG]
+
+
+def check_wizard_skipped_finish(device: Device) -> None:
+    """The wizard's closing page never started, in either guest: Finish on the last page went to the home screen.
+
+    A poll of the resumed activity could miss a page that flashes by, so the proof is the page's own log line,
+    which its activity writes when it is created. The main buffer was raised before the wizard ran."""
+    lines = finish_activity_lines(device.shell(f"logcat -b main -d -v time -s {FINISH_LOG_TAG}:V", timeout=60))
+    if lines:
+        raise Failure("the wizard started its closing page, which the product skips: " + lines[0])
+    print("the wizard did not start its closing page")
+
+
 def check_wizard_did_not_crash(device: Device) -> None:
     """The wizard's process did not die of an exception, in either guest.
 
@@ -611,8 +657,35 @@ def check_wizard_did_not_crash(device: Device) -> None:
     print("the wizard did not crash")
 
 
+def open_app_drawer(device: Device) -> list[str] | None:
+    """The labels of the app drawer, opened with the launcher's ALL_APPS intent; None when it does not open."""
+    device.shell("input keyevent KEYCODE_HOME")
+    wait_for("the launcher", lambda: device.resumed().startswith(f"{LAUNCHER_PACKAGE}/"), 30)
+    device.shell(f"am start -a {ALL_APPS_ACTION}")
+    labels: list[str] | None = None
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        time.sleep(2)
+        try:
+            labels = drawer_labels(ui_nodes(device))
+        except Failure:
+            continue
+        if labels is not None:
+            break
+    device.shell("input keyevent KEYCODE_HOME")
+    return labels
+
+
+def check_app_drawer(device: Device) -> None:
+    """The four applications that are off the home screen are still installed and listed in the app drawer."""
+    problems = drawer_problems(open_app_drawer(device))
+    if problems:
+        raise Failure("the app drawer is not the six applications: " + "; ".join(problems))
+    print("app drawer: lists " + ", ".join(sorted(DRAWER_LABELS)))
+
+
 def check_launcher(device: Device) -> None:
-    """The home screen is one page of the six applications of the default layout, with no widget and an empty dock.
+    """The home screen is one page with an empty workspace and a dock of Files and Settings, and no widget.
 
     The launcher reads its layout when it first starts, and a guest keeps what it built, so this is
     a fresh guest's check. A release whose layout names an application the image lacks drops it and
@@ -624,16 +697,12 @@ def check_launcher(device: Device) -> None:
         items = launcher_items(dump)
         view = workspace_view(dump)
         # The model lists the items before the workspace binds them to a page.
-        if (len(items) >= len(HOME_APPS) and view is not None and view[0] >= 1) or time.monotonic() >= deadline:
+        if (len(items) >= len(DOCK_APPS) and view is not None and view[0] >= 1) or time.monotonic() >= deadline:
             break
         time.sleep(2)
     problems = launcher_problems(items) + workspace_view_problems(view)
     if problems:
-        raise Failure("the launcher's workspace is not the default layout: " + "; ".join(problems))
-    gone = R16_SECOND_PAGE_APPS - {item["component"] for item in items}
-    if gone:
-        raise Failure("an application release r16 showed on its second page is not on the home screen: "
-                      + ", ".join(sorted("/".join(component) for component in gone)))
+        raise Failure("the launcher's home screen is not the default layout: " + "; ".join(problems))
     log = device.shell("logcat -b main -d -v time -s ModelDbController:D "
                        + " ".join(f"{tag}:D" for tag in LAUNCHER_LAYOUT_TAGS), timeout=60)
     drops = launcher_layout_drops(log)
@@ -643,7 +712,8 @@ def check_launcher(device: Device) -> None:
                       "or the drops cannot be checked")
     if drops:
         raise Failure("the launcher dropped items of its default layout: " + "; ".join(drops[:5]))
-    print("home screen: one page, the six applications, no widget, the dock empty, no item dropped")
+    print("home screen: one page, an empty workspace, no widget, the dock holds Files and Settings, no item dropped")
+    check_app_drawer(device)
 
 
 def check_provisioned(device: Device, *, by_wizard: bool, before: dict[str, str] | None = None) -> None:
@@ -683,6 +753,7 @@ def check_provisioned(device: Device, *, by_wizard: bool, before: dict[str, str]
           + ("disabled its HOME activity and manager" if by_wizard else "package is disabled"))
     check_wizard_released(device, by_wizard=by_wizard)
     check_wizard_did_not_crash(device)
+    check_wizard_skipped_finish(device)
     check_defaults(device, before)
     check_launcher(device)
 

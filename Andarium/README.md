@@ -19,8 +19,8 @@ AndariumCore/         Swift package: the model and the adb client, no UIKit; it
                       re-exports GuestHostCore (../GuestHost/Core)
 AndariumTests/        hosted tests of the device app
 Config/               entitlements, Info.plist, privacy manifest, bridging header
-scripts/              system staging, the App Store bundle check, acknowledgements,
-                      screen capture
+scripts/              system staging, the App Store bundle check,
+                      acknowledgements, screen capture
 Andarium.xcodeproj/   JSON project (project.xcproj) and its shared schemes
 ../GuestHost/Sources  host code shared with Kernarium: the runtime loader, the
                       display and touch view, zstd, the shader caches
@@ -96,7 +96,9 @@ disk, partition layout, kernel command line and manifest into
 `.build/andarium-system`, which the application bundles as it stands.
 
 The `AndariumTests` bundle runs hosted in the application on an iPad, in the
-iOS Simulator or, as an iPad app, on an Apple silicon Mac. For the Simulator,
+iOS Simulator or, as an iPad app, on an Apple silicon Mac (whose derived data
+must be outside the temporary directories,
+[`docs/testing.md`](../docs/testing.md#apple-builds-and-kernarium)). For the Simulator,
 package its slices first (below), then:
 
 ```sh

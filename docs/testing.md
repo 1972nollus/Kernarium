@@ -236,8 +236,13 @@ launch and assemble a bundle on an Apple silicon Mac (`--help`). Xcode's local
 install service, driven by `xcodebuild test`, is the only command-line launcher
 for this mode, and it passes each `TEST_RUNNER_`-prefixed variable to the app
 without the prefix. An iOS application reads nothing outside its container, so
-the launcher copies the rootfs into it. The shared schemes gather no code
-coverage; a coverage run passes `-enableCodeCoverage YES`.
+the launcher copies the rootfs into it. Derived data for a Mac run of either
+application is never in a system temporary directory (`/tmp`, `/var/tmp`,
+`$TMPDIR`): Gatekeeper rejects the installed app there ("bad app wrapper") and
+the run never starts, so the first build phase of each application's target
+(`scripts/check-run-location.py`, `apple-run-location`) fails a Mac build below
+one. The shared schemes gather no code coverage; a coverage run passes
+`-enableCodeCoverage YES`.
 
 On a connected iOS device, Android runs go through Andarium
 (`tests/perf/run_ios_device_android.py`, [`Andarium/README.md`](../Andarium/README.md#automation))

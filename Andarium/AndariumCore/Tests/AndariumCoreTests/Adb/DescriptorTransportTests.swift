@@ -71,4 +71,39 @@ struct DescriptorTransportTests {
         #expect(result.value == Data("gone".utf8))
         Darwin.close(pair[1])
     }
+
+    /// Darwin's `poll` never wakes for a descriptor that is closed under it,
+    /// so a shutdown whose wake the system does not deliver must still end
+    /// the wait. A pipe stands for that descriptor: `shutdown` cannot reach
+    /// it, and the transport is left to see its own shutdown.
+    @Test func aShutdownTheSystemDoesNotDeliverStillEndsAWait() {
+        var ends: [Int32] = [-1, -1]
+        #expect(pipe(&ends) == 0)
+        let reader = DescriptorTransport(descriptor: ends[0])
+        let outcome = DispatchSemaphore(value: 0)
+        let result = DataBox()
+        let thread = Thread {
+            do {
+                _ = try reader.readExactly(1)
+                result.set(Data("data".utf8))
+            } catch AdbError.guestGone {
+                result.set(Data("gone".utf8))
+            } catch {
+                result.set(Data("other".utf8))
+            }
+            outcome.signal()
+        }
+        thread.start()
+        Thread.sleep(forTimeInterval: 0.2)
+        reader.shutdown()
+        let ended = outcome.wait(timeout: .now() + 5) == .success
+        #expect(ended)
+        #expect(result.value == Data("gone".utf8))
+        if !ended {
+            // Let the reader go before its descriptor is released.
+            _ = Darwin.write(ends[1], "x", 1)
+            _ = outcome.wait(timeout: .now() + 5)
+        }
+        Darwin.close(ends[1])
+    }
 }
