@@ -118,9 +118,11 @@ wizard has no process and no status bar record and adbd has been stable with no
 trade-in mode pending. A measurement of the first-boot experience itself keeps
 the wizard.
 
-The wizard shows Welcome, Language, Date and time and Theme, then Finish (a
-secondary user sees Welcome and Theme, then Finish); the verifier requires the
-two flow scripts in the wizard's resource overlay byte for byte. The other
+The wizard shows Welcome, Language, Date and time and Theme (a secondary user
+sees Welcome and Theme). Finish on the Theme page ends the wizard and goes
+straight to the home screen: LineageOS's closing page, with its logo and home
+button, is not shown (route `p0026`); the verifier requires the two flow scripts
+in the wizard's resource overlay byte for byte. The other
 LineageOS pages are left out because a default answers them or they cannot apply
 to a virtual device: Network (the virtual Wi-Fi is already connected), Location
 (stays on), Screen lock (a fresh guest has none), Navigation (three buttons, the
@@ -128,11 +130,11 @@ platform default; route `p0026` removes the wizard's forcing), Restore and
 Andarium features (not useful here), and Bluetooth, SIM, device-specific setup,
 biometrics and recovery update (no such hardware or script).
 
-The home screen is one page that holds the six applications with a launcher
-activity (Settings, Calendar, Gallery, Music, Calculator, Files) and nothing
-else: no widget, no second page and an empty dock. The Launcher3 resource overlay
-owns the layouts and the verifier requires them. The launcher reads its layout
-once, so a guest created earlier keeps its home screen.
+The home screen is one empty page with a dock of Files and Settings: no
+widget, no second page and no other item. Calendar, Gallery, Music and
+Calculator stay installed and are in the app drawer. The Launcher3 resource
+overlay owns the layouts and the verifier requires them. The launcher reads its
+layout once, so a guest created earlier keeps its home screen.
 
 ### Motion sensors
 
@@ -356,7 +358,9 @@ product omits: HAL APEXes with no Darwin UML hardware, AVF guest payloads, OTA
 and DSU executables, and Cuttlefish host-monitoring services. The build and the
 verifier reject any excluded module that reappears. The thermal and CAS HAL
 APEXes (CTS needs both) stay, as do DeviceLock, Virtualization and the modular
-framework containers, which the platform SDK classes link.
+framework containers, which the platform SDK classes link. EasterEgg stays
+too: Settings' Android version row opens the platform logo screen, which starts
+the egg, and the verifier requires its package.
 
 Android suspends itself when the screen is off and nothing holds a wakelock, and
 this machine's adb host arrives over the network, which only briefly wakes a

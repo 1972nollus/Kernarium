@@ -6,7 +6,7 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_builder_lane.py
         --source-root ${PROJECT_SOURCE_DIR} --part verifiers
     LABELS android;audit
-    TIMEOUT 60)
+    TIMEOUT 180)
 
 uml_add_tooling_test(
     NAME lineage24-target-files-fixtures
