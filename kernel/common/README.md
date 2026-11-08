@@ -22,6 +22,7 @@ contracts every product shares:
 - `tooling/verify-console-input.py` and `tooling/console_input_probe.cpp`: the
   console PTY assertion, run by the standalone kernel build with explicit
   source and build paths (Apple product configuration consumes only bundles);
+- [`gpu/`](gpu/README.md): the private Virtio-GPU memory-report wire contract;
   and
 - [`video/`](video/README.md): the private Virtio video wire contract.
 
@@ -295,6 +296,16 @@ it. The bridge fields used below are defined by the comments in
   it to credit graphics memory to a process
   ([`docs/graphics.md`](../../docs/graphics.md#device-memory-budget);
   `guest-virtgpu-context-owner`).
+- With `VIRTIO_GPU_F_UML_MEMORY_REPORT` ([wire contract](gpu/README.md)) the
+  driver serves `gpu_memory_report` on the primary DRM minor
+  (`/sys/class/drm/card0`), mode 0600: a header line (`seq`, `age_ms`, `state`,
+  `refused`, `budget`, `used`, `held`, `armed`, `generation`) and up to 16
+  holder lines `<pid> <bytes> <idle_ms> <contexts> <comm>`, the host's last
+  report. A read formats that report and never waits for the host. A write of
+  `arm <min_bytes> <min_idle_ms>`, `refresh` or `disarm` queues one query and
+  returns, and a stored report calls `sysfs_notify()`. Without the feature
+  there is no file, and no ioctl or other interface changes
+  (`guest-virtgpu-memory-report`).
 - A file's handles opened before its Virtio-GPU context exists are attached when
   the context is created. The primary plane accepts ARGB8888 as well as
   XRGB8888 (the first format) and the host ignores the alpha byte; the
