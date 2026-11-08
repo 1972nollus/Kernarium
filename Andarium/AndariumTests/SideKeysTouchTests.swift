@@ -3,7 +3,6 @@
 import AndariumCore
 import SwiftUI
 import Testing
-import TipKit
 import UIKit
 @testable import Andarium
 
@@ -142,22 +141,18 @@ struct SideKeysTouchTests {
         }
 
         func onTip(_ point: CGPoint) -> Bool { tipCard?.contains(point) ?? false }
-    }
 
-    /// Shows the side keys' tip whatever the host's datastore says. TipKit
-    /// applies a testing override only to a tip that has not yet shown in the
-    /// process, and keeps it for the process, so each test here that puts the
-    /// keys on screen asks for the same one first.
-    private func showTheTip() {
-        Tips.showTipsForTesting([SideKeysTip.self])
+        /// A touch beside the shown tip reaches the guest. On a Mac an iPad
+        /// app's popover keeps its dimming view, which takes every touch
+        /// while the tip shows, so this holds on iOS alone.
+        var besideTheTipReachesGuest: Bool { presented == nil || !ProcessInfo.processInfo.isiOSAppOnMac }
     }
 
     /// A point beside the open keys must reach the display (UIKit hands the
     /// touch to the display's view), and a point on a key must stay with the
-    /// keys. Beside the closed keys only the tip's card, while it shows, takes
-    /// a touch.
+    /// keys. Beside the closed keys only the tip, while it shows, takes a
+    /// touch: on iOS only its card.
     @Test func theOpenKeysTakeNoTouchesBesideThem() async throws {
-        showTheTip()
         let run = try await RunningSession(self)
         defer { run.end() }
         let model = run.model
@@ -177,8 +172,10 @@ struct SideKeysTouchTests {
         model.session.sideKeysOpen = false
         try await Task.sleep(for: .milliseconds(600))
         run.root.layoutIfNeeded()
-        #expect(await eventually { run.reachesGuest(far) }, "closed: \(far)")
-        for point in run.beside where !run.onTip(point) { #expect(run.reachesGuest(point), "closed: \(point)") }
+        if run.besideTheTipReachesGuest {
+            #expect(await eventually { run.reachesGuest(far) }, "closed: \(far)")
+            for point in run.beside where !run.onTip(point) { #expect(run.reachesGuest(point), "closed: \(point)") }
+        }
 
         model.session.sideKeysOpen = true
         #expect(await eventually { run.presented == nil }, "the tip stayed beside the open keys")
@@ -197,15 +194,18 @@ struct SideKeysTouchTests {
         #expect(await eventually { !model.session.sideKeysOpen })
         try await Task.sleep(for: .milliseconds(600))
         run.root.layoutIfNeeded()
-        #expect(await eventually { run.reachesGuest(far) }, "closed again: \(far)")
-        for point in run.beside where !run.onTip(point) { #expect(run.reachesGuest(point), "closed again: \(point)") }
+        if run.besideTheTipReachesGuest {
+            #expect(await eventually { run.reachesGuest(far) }, "closed again: \(far)")
+            for point in run.beside where !run.onTip(point) { #expect(run.reachesGuest(point), "closed again: \(point)") }
+        }
     }
 
-    /// The tip beside the closed keys takes touches only on its card, and goes
-    /// with the closed keys: when they open, nothing of it is left beside the
-    /// open keys, and when the session ends, nothing of it is left over Home.
+    /// The tip beside the closed keys takes touches on its card (on iOS only
+    /// there), and goes with the closed keys: when they open, nothing of it is
+    /// left beside the open keys, and when the session ends, nothing of it is
+    /// left over Home.
+    /// The test bundle shows the tip in every session (`AndariumTestBundle`).
     @Test func theTipGoesWithTheClosedKeys() async throws {
-        showTheTip()
         let run = try await RunningSession(self)
         defer { run.end() }
         let model = run.model
@@ -213,12 +213,14 @@ struct SideKeysTouchTests {
         try #require(await eventually { run.presented != nil }, "the tip did not show")
         let card = try #require(run.tipCard)
         let far = run.beside[0]
-        // Once the popover is up, a touch beside its card reaches the guest.
-        #expect(await eventually { run.reachesGuest(far) }, "the tip's popover took a touch beside it")
         let onCard = CGPoint(x: card.midX, y: card.midY)
         #expect(!run.reachesGuest(onCard), "a touch on the tip at \(onCard) reached the guest")
-        for point in [far, run.window(run.width - 20, run.height * 0.9), run.window(run.width * 0.3, run.height * 0.1)] {
-            #expect(run.reachesGuest(point), "tip shown: \(point)")
+        // Once the popover is up, a touch beside its card reaches the guest.
+        if run.besideTheTipReachesGuest {
+            #expect(await eventually { run.reachesGuest(far) }, "the tip's popover took a touch beside it")
+            for point in [far, run.window(run.width - 20, run.height * 0.9), run.window(run.width * 0.3, run.height * 0.1)] {
+                #expect(run.reachesGuest(point), "tip shown: \(point)")
+            }
         }
 
         model.session.sideKeysOpen = true
