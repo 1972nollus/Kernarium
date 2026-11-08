@@ -111,3 +111,4 @@ patch	ALSA-virtio-report-elapsed-periods-one-at-a-time.patch
 patch	ALSA-virtio-release-periods-queued-before-a-start.patch
 patch	ALSA-virtio-pad-the-last-period-of-a-drain-with-silence.patch
 patch	uml-answer-the-mconsole-mem-command-with-the-memory-counters.patch
+patch	drm-virtio-let-the-freezer-freeze-a-task-that-waits-for-the-host.patch
