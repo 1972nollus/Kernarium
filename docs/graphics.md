@@ -403,6 +403,13 @@ environment (`GuestHost/Sources/MesaShaderCache.swift`,
 already in the environment is kept, and a process with no cache directory runs
 without a cache. No behavior depends on a cache entry surviving.
 
+The cache is Mesa's one-file-per-entry format and holds no file lock: a writer
+claims an entry by creating its temporary file exclusively, and a temporary
+file older than an hour is a dead writer's and is replaced. iOS ends a process
+it suspends while it holds a file lock, and a cache write can be in flight at
+the suspension. The database and single-file formats lock their files and stay
+off.
+
 ## Validation
 
 Use `check-gpu` for native GPU ownership and VNC checks and
