@@ -78,6 +78,16 @@ target_link_libraries(uml_runtime_kernel_resources PRIVATE
 target_include_directories(uml_runtime_kernel_resources PUBLIC
     ${PROJECT_SOURCE_DIR}/darwin/runtime)
 
+# The record of how the process's guest session ended, which the next launch
+# reads, and the kernel output it quotes: the loader resolves the kernel's
+# write import to it.
+add_library(uml_runtime_session_record OBJECT
+    ${PROJECT_SOURCE_DIR}/darwin/runtime/session_record.cpp)
+add_library(UML::RuntimeSessionRecord ALIAS uml_runtime_session_record)
+uml_declare_architecture_target(uml_runtime_session_record runtime)
+target_include_directories(uml_runtime_session_record PUBLIC
+    ${PROJECT_SOURCE_DIR}/darwin/runtime)
+
 # The threads an embedded kernel creates and the fence that holds them. The
 # loader resolves the kernel's pthread_create to this registry.
 add_library(uml_runtime_thread_fence OBJECT
@@ -95,6 +105,7 @@ add_library(UML::RuntimeHibernation ALIAS uml_runtime_hibernation)
 uml_declare_architecture_target(uml_runtime_hibernation runtime)
 target_link_libraries(uml_runtime_hibernation PUBLIC
     UML::MemorySharedBacking
+    UML::RuntimeSessionRecord
     UML::RuntimeThreadFence)
 target_include_directories(uml_runtime_hibernation PUBLIC
     ${PROJECT_SOURCE_DIR}/darwin
@@ -153,6 +164,7 @@ target_link_libraries(uml_runtime_entry PRIVATE
     UML::GuestFiles
     UML::MemorySharedBacking
     UML::RuntimeContract
+    UML::RuntimeSessionRecord
     uml_cpu_engine_factory
     uml_static_guest_memory)
 target_include_directories(uml_runtime_entry PRIVATE
@@ -167,6 +179,7 @@ target_sources(uml_runtime_objects INTERFACE
 	$<TARGET_OBJECTS:uml_runtime_context>
     $<TARGET_OBJECTS:uml_runtime_kernel_signals>
     $<TARGET_OBJECTS:uml_runtime_kernel_resources>
+    $<TARGET_OBJECTS:uml_runtime_session_record>
     $<TARGET_OBJECTS:uml_runtime_thread_fence>
     $<TARGET_OBJECTS:uml_runtime_hibernation>
     $<TARGET_OBJECTS:uml_runtime_virtual_jetsam>

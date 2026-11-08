@@ -51,6 +51,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <climits>
 #include <condition_variable>
 #include <cctype>
 #include <cerrno>
@@ -1070,6 +1071,8 @@ struct GuestRequest final {
     /* The host's time zone an Android guest is given for the launch, empty for
      * none; a Linux guest ignores it. */
     std::string timeZone;
+    /* Where the run records how the session ended, empty for nowhere. */
+    std::string sessionRecordPath;
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
     /* The guest's two disks: the release's system disk and the instance's
      * data disk. */
@@ -1326,6 +1329,9 @@ private:
              * Android's init turns SysRq off, so state it here. */
             "sysrq_always_enabled",
         };
+        if (!request_.sessionRecordPath.empty())
+            arguments.emplace_back(
+                "--session-record=" + request_.sessionRecordPath);
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
         /* Android tags heap pointers, so the guest must run with the top byte
          * ignored exactly as it does on the macOS Android product. */
@@ -1547,6 +1553,10 @@ constexpr std::size_t bootSizeBeforeAdbKey =
 constexpr std::size_t bootSizeBeforeTimeZone =
     offsetof(kernarium_runtime_boot, android_time_zone);
 
+/* What a request states before the session record was added to it. */
+constexpr std::size_t bootSizeBeforeSessionRecord =
+    offsetof(kernarium_runtime_boot, session_record_path);
+
 int runtimeRun(
     KernariumMetalView view,
     const kernarium_runtime_boot* boot)
@@ -1582,7 +1592,7 @@ int runtimeRun(
          * that is not valid is dropped, because the guest keeps its own zone
          * without one and no boot should fail over it. */
         std::string timeZone;
-        if (boot->struct_size >= sizeof(kernarium_runtime_boot) &&
+        if (boot->struct_size >= bootSizeBeforeSessionRecord &&
             boot->android_time_zone != nullptr) {
             const std::size_t length = ::strnlen(
                 boot->android_time_zone,
@@ -1627,6 +1637,18 @@ int runtimeRun(
         GuestRequest request;
         request.adbPublicKey = std::move(adbPublicKey);
         request.timeZone = std::move(timeZone);
+        if (boot->struct_size >= sizeof(kernarium_runtime_boot) &&
+            boot->session_record_path != nullptr) {
+            const std::size_t length =
+                ::strnlen(boot->session_record_path, PATH_MAX);
+            if (length == 0 || length == PATH_MAX) {
+                std::fputs("Kernarium: invalid session record path\n",
+                    stderr);
+                return -UML_EMULATOR_INVALID_ARGUMENT;
+            }
+            request.sessionRecordPath.assign(boot->session_record_path,
+                length);
+        }
         request.dotsPerInch = dotsPerInch;
         request.guestMemoryMiB = guestMemoryMiB;
         request.guestProcessorCount = guestProcessorCount;

@@ -347,6 +347,26 @@ void test_guest_hibernation_option()
 	}
 }
 
+void test_session_record_option()
+{
+	const char *absent[]{"uml-test"};
+	require(uml::emulator::prepare_emulator_options(1, absent,
+		"/tmp/rootfs.erofs").session_record_path.empty(),
+		"a launch that names no record got one");
+	const char *named[]{"uml-test", "--session-record=/tmp/end record",
+		"ip=dhcp"};
+	const auto options = uml::emulator::prepare_emulator_options(3, named,
+		"/tmp/rootfs.erofs");
+	require(options.valid &&
+		options.session_record_path == "/tmp/end record" &&
+		!contains(options, "--session-record=/tmp/end record") &&
+		contains(options, "ip=dhcp"),
+		"the session record was not consumed by the host");
+	const char *empty[]{"uml-test", "--session-record="};
+	require(!uml::emulator::prepare_emulator_options(2, empty,
+		"/tmp/rootfs.erofs").valid, "an empty session record was accepted");
+}
+
 void test_jit_tier_option()
 {
 	const char *absent[]{"uml-test"};
@@ -728,6 +748,7 @@ int main()
 		test_memory_limit_option();
 		test_jit_tier_option();
 		test_guest_hibernation_option();
+		test_session_record_option();
 		test_scalable_native_kernel_layout_geometry();
 		test_process_native_window_is_one_reservation();
 		test_guest_cpu_count_matches_kernel_policy();

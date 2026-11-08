@@ -24,6 +24,7 @@ constexpr std::string_view gadget_cache_budget_prefix{
 	"--gadget-cache-budget="};
 constexpr std::string_view guest_hibernation_prefix{"--guest-hibernation="};
 constexpr std::string_view memory_limit_prefix{"--memory-limit="};
+constexpr std::string_view session_record_prefix{"--session-record="};
 namespace {
 
 [[nodiscard]] bool has_argument(
@@ -309,6 +310,15 @@ EmulatorOptions prepare_emulator_options(
 				::uml::runtime::parse_translation_cache_quantity(
 					quantity.c_str());
 			if (prepared.memory_limit_bytes == 0) {
+				prepared.valid = false;
+				return prepared;
+			}
+			continue;
+		}
+		if (argument.starts_with(session_record_prefix)) {
+			prepared.session_record_path =
+				argument.substr(session_record_prefix.size());
+			if (prepared.session_record_path.empty()) {
 				prepared.valid = false;
 				return prepared;
 			}

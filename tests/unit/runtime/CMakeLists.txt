@@ -42,6 +42,15 @@ uml_add_unit_test(
     NAME runtime-kernel-crash-frames
     COMMAND uml_runtime_kernel_crash_frames_tests)
 
+# The record of how a guest session ended and the kernel output it quotes.
+add_executable(uml_runtime_session_record_tests
+    session_record_tests.cpp)
+target_link_libraries(uml_runtime_session_record_tests PRIVATE
+    UML::RuntimeSessionRecord)
+uml_add_unit_test(
+    NAME runtime-session-record
+    COMMAND uml_runtime_session_record_tests)
+
 # The kernel a shared library links into itself is found through the library
 # that holds the lookup, not through the executable that loads it.
 add_library(uml_runtime_embedded_kernel_probe SHARED
@@ -172,6 +181,7 @@ set_tests_properties(runtime-thread-fence
 add_executable(uml_runtime_guest_hibernation_tests guest_hibernation_tests.cpp)
 target_link_libraries(uml_runtime_guest_hibernation_tests PRIVATE
     UML::RuntimeHibernation
+    UML::RuntimeSessionRecord
     UML::RuntimeThreadFence
     UML::MemorySharedBacking)
 uml_add_unit_test(
