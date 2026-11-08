@@ -273,9 +273,9 @@ again.
   makes for the guest is reserved before its pages are made. Imported memory is
   neither charged nor counted: Metal counts it in full, so KosmicKrisp reports
   the bytes it imports and the pool leaves them out. Command, descriptor and
-  query pools, the driver's command storage, presentation, the VNC surface and
-  decoder surfaces are counted and never refused, and they, with the geometry
-  heap floor below, are the only way usage passes B.
+  query pools, pipelines, the driver's command storage, presentation, the VNC
+  surface and decoder surfaces are counted and never refused, and they, with
+  the geometry heap floor below, are the only way usage passes B.
 - OpenGL: a refused texture or buffer makes the renderer give back what it
   holds for finished work and create the resource once more: it finishes and
   trims every context, frees the deferred shared-memory segments and what the
