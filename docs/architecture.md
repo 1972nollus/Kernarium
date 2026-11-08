@@ -542,8 +542,11 @@ A launch that passes `--session-record=PATH` gets a record of how its session
 ended (`runtime/session_record`): "running" from the boot on, overwritten by
 every end that runs code, a panic with its message and the kernel's last
 output included. A record still "running" at the next launch means the process
-was ended from outside without running, as a memory-limit end is. Andarium
-names the file in its boot request and reads it at launch.
+was ended from outside without running, as a memory-limit end is. Its first
+256 bytes are a memory checkpoint that a thread of its own rewrites every 2 s
+(`memory_checkpoint_interval_ms`): the footprint, its peak and what the
+process's memory limit still allows. Andarium names the file in its boot
+request and reads it at launch.
 
 A guest that restarts itself boots again in the same process, because iOS can
 neither re-exec nor respawn an application. The macOS launchers

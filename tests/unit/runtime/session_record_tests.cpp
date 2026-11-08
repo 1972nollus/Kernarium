@@ -8,6 +8,7 @@
 #include "session_record.hpp"
 #include "require.hpp"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -140,7 +141,9 @@ void test_record_lifecycle()
 	const std::string path = temporary_record();
 	require(uml::runtime::begin_session_record(path, {}));
 	std::string record = read_file(path);
-	require(record.starts_with("uml-session 1\nstate running\nend running\n"),
+	require(record.starts_with("uml-session 2\nmemory at ") &&
+		record.size() > 256 && record[255] == '\n' &&
+		record.substr(256).starts_with("state running\nend running\n"),
 		"a begun session is not running: " + record);
 	uml::runtime::end_session_record(SessionEnd::powered_off, 0);
 	record = read_file(path);
@@ -148,7 +151,8 @@ void test_record_lifecycle()
 		has(record, "\nended ") && !has(record, "kernel-output"),
 		"a power-off was recorded wrong: " + record);
 	uml::runtime::end_session_record(SessionEnd::kernel_exit, 143);
-	require(read_file(path) == record, "a second end replaced the first");
+	require(read_file(path).substr(256) == record.substr(256),
+		"a second end replaced the first");
 
 	/* A restart begins the next session in the same file. */
 	require(uml::runtime::begin_session_record(path, {}));
@@ -165,6 +169,44 @@ void test_record_lifecycle()
 		"a kernel exit was recorded wrong: " + record);
 	uml::runtime::reset_session_record();
 	unlink(path.c_str());
+}
+
+void test_memory_checkpoints()
+{
+	uml::runtime::reset_session_record();
+	const std::string path = temporary_record();
+	require(uml::runtime::begin_session_record(path, {}));
+	const std::string begun = read_file(path);
+	const std::string slot = begun.substr(0, 256);
+	require(has(slot, " footprint ") && has(slot, " peak "),
+		"the memory slot has no footprint: " + slot);
+	/* A checkpoint rewrites the slot and nothing after it. */
+	constexpr int checkpoints = 500;
+	const auto start = std::chrono::steady_clock::now();
+	for (int index = 0; index < checkpoints; ++index)
+		uml::runtime::checkpoint_session_memory();
+	const auto each = std::chrono::duration<double, std::micro>(
+		std::chrono::steady_clock::now() - start).count() / checkpoints;
+	std::printf("a memory checkpoint takes %.1f us\n", each);
+	require(each < 5000.0, "a memory checkpoint is far too slow");
+	const std::string checked = read_file(path);
+	require(checked.size() == begun.size() &&
+		checked.substr(256) == begun.substr(256),
+		"a checkpoint changed the session's state");
+	uml::runtime::end_session_record(SessionEnd::powered_off, 0);
+	uml::runtime::checkpoint_session_memory();
+	const std::string ended = read_file(path);
+	require(ended.substr(256).starts_with("state ended\nend powered-off\n"),
+		"a checkpoint after the end replaced it: " + ended);
+	/* The next session reuses the record's descriptor number. */
+	const std::string next = temporary_record();
+	require(uml::runtime::begin_session_record(next, {}));
+	require(has(read_file(next), "\nstate running\n") &&
+		has(read_file(path), "\nend powered-off\n"),
+		"the next session's record was written to the wrong file");
+	uml::runtime::reset_session_record();
+	unlink(path.c_str());
+	unlink(next.c_str());
 }
 
 void *crash_on_a_thread(void *)
@@ -236,7 +278,8 @@ void test_host_fault()
 		has(record, "owns no virtual CPU"),
 		"a host fault was recorded wrong: " + record);
 	uml::runtime::record_kernel_crash();
-	require(read_file(path) == record, "a later crash replaced the fault");
+	require(read_file(path).substr(256) == record.substr(256),
+		"a later crash replaced the fault");
 	uml::runtime::reset_session_record();
 	unlink(path.c_str());
 }
@@ -283,6 +326,7 @@ int main()
 		test_panic_message();
 		test_kept_output();
 		test_record_lifecycle();
+		test_memory_checkpoints();
 		test_kernel_crash();
 		test_host_fault();
 		test_unopenable_record();

@@ -31,10 +31,17 @@ namespace uml::runtime {
  * process through the default disposition, which writes the crash report.
  * kernel_write records that end as host_fault when it sees the report.
  *
+ * Every memory_checkpoint_interval_ms while a session runs, a thread of the
+ * record's own writes the process's footprint, its peak and what its memory
+ * limit leaves into a fixed slot at the start of the file, so a record that
+ * is still "running" says how close to its limit the process was.
+ *
  * Everything that runs at an end only formats into static storage and makes
  * system calls: it takes no lock and allocates nothing, so a panic, a signal
  * handler or a process whose other threads are suspended can run it.
  */
+inline constexpr unsigned memory_checkpoint_interval_ms = 2000;
+
 enum class SessionEnd : std::uint8_t {
 	running,
 	powered_off,
@@ -76,6 +83,9 @@ void end_session_record(SessionEnd end, int status,
  * that the crash report, which shows thread names, says why. */
 void record_kernel_crash() noexcept;
 
+/* Writes the memory slot now; the checkpoint thread calls it. */
+void checkpoint_session_memory() noexcept;
+
 /* The loader's resolution of the kernel's write import. */
 ssize_t kernel_write(int descriptor, const void *buffer, std::size_t length)
 	noexcept;
@@ -96,8 +106,8 @@ std::size_t kernel_output_tail(std::span<char> buffer) noexcept;
 [[nodiscard]] std::string_view host_fault_message(std::string_view output)
 	noexcept;
 
-/* Forgets the session: closes the record and drops the kept output. For
- * tests. */
+/* Forgets the session: points the record's descriptor at /dev/null and drops
+ * the kept output. For tests. */
 void reset_session_record() noexcept;
 
 } // namespace uml::runtime

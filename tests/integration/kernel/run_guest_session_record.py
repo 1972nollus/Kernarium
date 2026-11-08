@@ -12,6 +12,8 @@ Each case boots a guest with --session-record and ends it one way:
   records ``kernel-exit``;
 - a SIGKILL leaves the record ``running``, as a system memory-limit end does.
 
+Every record starts with the session's last memory checkpoint.
+
 The contract is runtime/session_record.hpp.
 """
 
@@ -101,6 +103,13 @@ def check(how: str, code: int | None, output: str, record: str) -> None:
             if line not in quoted:
                 raise RuntimeError(f"panic: the record does not quote "
                                    f"{line!r}:\n{quoted[-3000:]}")
+    # The memory checkpoint the record starts with, rewritten every 2 s.
+    memory = header.get("memory", "").split()
+    if (len(memory) < 6 or memory[0::2][:3] != ["at", "footprint", "peak"]
+            or int(memory[1]) < int(header.get("started", "0"))
+            or int(memory[3]) == 0):
+        raise RuntimeError(f"{how}: the record has no memory checkpoint: "
+                           f"{header.get('memory')!r}")
     if how == "sigterm" and header.get("status") != "143":
         raise RuntimeError(f"sigterm: the record's status is "
                            f"{header.get('status')!r}")
