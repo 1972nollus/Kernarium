@@ -337,6 +337,16 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY TIMEOUT 240)
 
+    # A resource the guest makes inside a command buffer, which the host
+    # refuses for want of memory, is told to the guest by the blob that names
+    # it: out of memory, once, and not as an id the host never saw.
+    uml_add_gpu_unit_test(gpu-host-gl-refused-blob
+        uml_gpu_host_gl_refused_blob_tests
+        host_gl_refused_blob_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries} UML::HostGpuMemory
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY TIMEOUT 120)
+
     # The device memory pool frees the host GL driver's cache before it
     # refuses a reservation: the driver releases it for any thread, with no
     # context current (EGL_MESA_context_trim).
