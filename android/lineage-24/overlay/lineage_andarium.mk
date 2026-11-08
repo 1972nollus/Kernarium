@@ -623,6 +623,15 @@ PRODUCT_PRODUCT_PROPERTIES += \
 PRODUCT_SYSTEM_EXT_PROPERTIES += \
     ro.audio.ihaladaptervendorextension_enabled=true
 
+# The primary audio HAL opens its ALSA streams with four periods of one HAL
+# buffer each (alsa_utils divides the multiplied buffer by the count): a
+# 1024-frame output ring at the primary module's 5 ms buffer (route p0005). The
+# boot command line lowers the Virtio sound driver's minimum period to 5 ms to
+# admit it.
+PRODUCT_VENDOR_PROPERTIES += \
+    ro.hardware.audio.tinyalsa.period_count=4 \
+    ro.hardware.audio.tinyalsa.period_size_multiplier=4
+
 # The guest boots straight to the home screen, and its swipe lock screen stays
 # available. LockSettingsService writes lockscreen.disabled=1 for user 0 when it
 # creates its database, which a fresh /data does on the first boot; the setting

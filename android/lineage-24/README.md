@@ -169,9 +169,13 @@ SoftAP, Wi-Fi Direct, Aware or RTT, and `wificond` is not shipped.
 The vendor audio policy exposes one built-in microphone, the Virtio sound
 capture stream. The product declares `android.hardware.microphone` permanently,
 and the host decides whether the stream carries silence (the default) or its
-microphone. A Virtio battery device reports the Apple host's percentage and
-charging state. The swipe lock screen can be turned on:
-`ro.lockscreen.disable.default` turns it off for user 0 of a fresh `/data` only.
+microphone. The primary output has a 5 ms HAL buffer, so AudioFlinger gives it a
+fast mixer, and writes straight into an ALSA ring of four such periods (route
+`p0005` and the `ro.hardware.audio.tinyalsa.*` vendor properties); the boot
+command line lowers the Virtio sound driver's minimum period to 5 ms for it. A
+Virtio battery device reports the Apple host's percentage and charging state.
+The swipe lock screen can be turned on: `ro.lockscreen.disable.default` turns it
+off for user 0 of a fresh `/data` only.
 
 ### Debugging and adb
 
@@ -195,8 +199,9 @@ The user's debugging setting stays meaningful while adbd remains the host's
 channel: route `p0007` records the setting in `persist.sys.usb.config` and
 restarts adbd instead of stopping it, and route `p0011` refuses every key but the
 host's, with no prompt, while USB and wireless debugging are both off. `adb root`
-is refused at once on a `user` build whatever the authorization policy. SELinux
-stays enforcing in both variants. `tests/integration/android/run_android_adb_debugging.py`
+is refused at once on a `user` build whatever the authorization policy, with
+AOSP's answer for a production build (route `p0011`). SELinux stays enforcing in
+both variants. `tests/integration/android/run_android_adb_debugging.py`
 qualifies this contract.
 
 ### Framework and CTS behaviour

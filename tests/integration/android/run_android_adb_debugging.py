@@ -17,9 +17,10 @@ is android/lineage-24/README.md (the p0007 and p0011 adb topics):
   restarting adbd once, and leaves adbd running for the host, which
   reconnects;
 - both settings survive a guest reboot;
-- `adb root` on the user variant is refused at once, whatever the guest's key policy: it
-  neither announces a restart of adbd nor waits for one, adbd stays the shell user, and
-  the connection stays;
+- `adb root` on the user variant is refused at once, whatever the guest's key policy, with
+  AOSP's answer for a production build: it neither announces a restart of adbd nor waits
+  for one, it does not send the user to a Settings switch the build lacks, adbd stays the
+  shell user, and the connection stays;
 - when the guest checks keys (`ro.boot.kernarium.adb_auth` is 1, which the
   macOS launcher never sets, so only a guest the Kernarium runtime started),
   a second throwaway key stays unauthorized with no prompt while debugging is
@@ -54,6 +55,10 @@ SETTLE_SECONDS = 30
 # that never comes, so any answer slower than this is the defect.
 ROOT_ANSWER_SECONDS = 20
 ROOT_RESTART_LINE = "restarting adbd as root"
+# AOSP's answer to `adb root` on a build that is not debuggable. LineageOS answers with its stored
+# setting's message ("ADB Root access is disabled by system setting - enable in Settings ...")
+# when its adb_root service replies; route p0011 tests the build first.
+ROOT_REFUSAL_LINE = "adbd cannot run as root in production builds"
 SHELL_UID = "2000"
 RECONNECT_SECONDS = 90
 REFUSAL_LINE = "kernarium: key refused, debugging is off"
@@ -187,6 +192,8 @@ def check_root_refused(device: Device) -> None:
     Lineage's adbd asks its adb_root service whether rooted debugging is on; a guest whose boot
     policy turned that on for a non-debuggable build made adbd say it was restarting as root,
     set service.adb.root, and leave the client waiting for a restart no init trigger performs.
+    The answer is AOSP's for a production build, not the service's: a user build has no
+    Settings switch for the message to point at.
     """
     if device.getprop("ro.debuggable") != "0":
         print("adb root: skipped, this is a debuggable build")
@@ -199,6 +206,9 @@ def check_root_refused(device: Device) -> None:
                       f"restart as root that a {device.getprop('ro.build.type')} build never performs")
     if ROOT_RESTART_LINE in answer.stdout:
         raise Failure(f"`adb root` said {ROOT_RESTART_LINE!r} on a non-debuggable build: {answer.stdout.strip()!r}")
+    if ROOT_REFUSAL_LINE not in answer.stdout:
+        raise Failure(f"`adb root` on a non-debuggable build did not answer {ROOT_REFUSAL_LINE!r}: "
+                      f"{answer.stdout.strip()!r}")
     if device.devices_line() != "device":
         raise Failure(f"`adb root` cost the connection: the guest is {device.devices_line()!r}")
     if device.shell("id -u") != SHELL_UID:

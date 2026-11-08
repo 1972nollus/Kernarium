@@ -644,7 +644,10 @@ CIL_PROPERTY_SET_RULE = re.compile(
 CIL_FILE_ALLOW_RULE = re.compile(
     rb"^\(allow (\S+) (\S+) \(file \(([^)]*)\)\)\)$", re.MULTILINE
 )
-CIL_TYPE_ATTRIBUTE_SET = re.compile(rb"^\(typeattributeset (\S+) \(([^()]*)\)\)$", re.MULTILINE)
+# An attribute's set: a list of names, or a set expression such as
+# (and (domain) (not (appdomain coredomain))).
+CIL_TYPE_ATTRIBUTE_SET = re.compile(rb"^\(typeattributeset (\S+) (\(.*\))\)$", re.MULTILINE)
+CIL_SET_OPERATORS = frozenset({"all", "and", "not", "or", "xor"})
 INIT_PROPERTY_TRIGGER = re.compile(r"property:([^=\s&]+)=")
 # The property_contexts of every partition, in the order libselinux merges them.
 PROPERTY_CONTEXT_FILES = (
@@ -2740,6 +2743,7 @@ def check_kernel_policy(
     check_adbd_launch_policy(contexts, (platform_policy, vendor_policy, system_ext_policy))
     check_lmkd_gpu_policy(contexts, (platform_policy, vendor_policy, system_ext_policy), vendor_policy)
     check_venus_option_policy(contexts, (platform_policy, vendor_policy, system_ext_policy))
+    check_audio_ring_policy(contexts, (platform_policy, vendor_policy, system_ext_policy))
 
 
 def media_codec_limit(codec: ET.Element, name: str) -> ET.Element:
@@ -3247,17 +3251,82 @@ def property_label(name: str, contexts: list[str]) -> str | None:
     return best[1] if best else None
 
 
+@functools.lru_cache(maxsize=8)
+def cil_attribute_sets(
+    policy: bytes,
+) -> tuple[tuple[tuple[str, frozenset[str]], ...], tuple[tuple[str, list[object]], ...]]:
+    """The attributes a policy defines, without version suffixes: those whose set is a list of
+    names, with the names, and those whose set is an expression, as nested lists of names."""
+    lists = []
+    expressions = []
+    for match in CIL_TYPE_ATTRIBUTE_SET.finditer(policy):
+        stack: list[list[object]] = [[]]
+        for token in re.findall(r"[()]|[^\s()]+", match.group(2).decode()):
+            if token == "(":
+                stack.append([])
+            elif token != ")":
+                stack[-1].append(CIL_PLATFORM_VERSION_SUFFIX.sub("", token))
+            elif len(stack) > 1:
+                closed = stack.pop()
+                stack[-1].append(closed)
+        if len(stack) != 1 or len(stack[0]) != 1 or not isinstance(stack[0][0], list):
+            continue
+        attribute = CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode())
+        members = stack[0][0]
+        if all(isinstance(member, str) for member in members) and not (
+            members and members[0] in CIL_SET_OPERATORS
+        ):
+            lists.append((attribute, frozenset(members)))
+        else:
+            expressions.append((attribute, members))
+    return tuple(lists), tuple(expressions)
+
+
+def cil_set_contains(members: object, names: set[str]) -> bool:
+    """Whether a CIL set includes a type whose own name and attributes are |names|."""
+    if isinstance(members, str):
+        return members in names
+    assert isinstance(members, list)
+    operator = members[0] if members and isinstance(members[0], str) else None
+    if operator not in CIL_SET_OPERATORS:
+        return any(cil_set_contains(member, names) for member in members)
+    operands = [cil_set_contains(operand, names) for operand in members[1:]]
+    if operator == "all":
+        return True
+    if operator == "not":
+        return not any(operands)
+    if operator == "and":
+        return all(operands)
+    if operator == "or":
+        return any(operands)
+    return operands.count(True) == 1
+
+
 def cil_types_and_attributes(policies: tuple[bytes, ...], type_name: str) -> set[str]:
-    """A type and every attribute that includes it."""
+    """A type and every attribute that includes it, directly, through another attribute or
+    through a set expression.
+
+    Lists of names are closed first; set expressions, which may negate, are then evaluated
+    against that closure, and the lists that name the attributes they add are closed again.
+    """
+    lists = [entry for policy in policies for entry in cil_attribute_sets(policy)[0]]
+    expressions = [entry for policy in policies for entry in cil_attribute_sets(policy)[1]]
+
+    def close(names: set[str]) -> None:
+        changed = True
+        while changed:
+            changed = False
+            for attribute, members in lists:
+                if attribute not in names and not members.isdisjoint(names):
+                    names.add(attribute)
+                    changed = True
+
     names = {type_name}
-    for policy in policies:
-        for match in CIL_TYPE_ATTRIBUTE_SET.finditer(policy):
-            members = {
-                CIL_PLATFORM_VERSION_SUFFIX.sub("", member.decode())
-                for member in match.group(2).split()
-            }
-            if type_name in members:
-                names.add(CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode()))
+    close(names)
+    names |= {
+        attribute for attribute, members in expressions if cil_set_contains(members, names)
+    }
+    close(names)
     return names
 
 
@@ -3762,6 +3831,33 @@ def check_video_encoders(
         fail("the video encoder service is not labeled mediacodec_exec")
 
 
+# The primary audio HAL (alsa_utils) sizes its ALSA streams from these vendor properties: four
+# periods of one HAL buffer each. Without them it asks for periods of a quarter buffer, shorter
+# than the Virtio sound driver's minimum, and the primary output does not open.
+AUDIO_RING_PROPERTIES = {
+    "ro.hardware.audio.tinyalsa.period_count": "4",
+    "ro.hardware.audio.tinyalsa.period_size_multiplier": "4",
+}
+AUDIO_HAL_DOMAIN = "hal_audio_default"
+
+
+def check_audio_ring_policy(contexts: list[str], policies: tuple[bytes, ...]) -> None:
+    """init may load the ALSA ring properties from the vendor build.prop, and the audio HAL may
+    read them."""
+    for name in AUDIO_RING_PROPERTIES:
+        label = property_label(name, contexts) or "default_prop"
+        if not cil_allows_property_set(policies, "vendor_init", label):
+            fail(
+                f"vendor_init may not set {name}, labelled {label}: init skips it in the "
+                "vendor build.prop"
+            )
+        if not cil_allows_file_read(policies, AUDIO_HAL_DOMAIN, label):
+            fail(
+                f"{AUDIO_HAL_DOMAIN} may not read {name}, labelled {label}: the primary "
+                "output would not open"
+            )
+
+
 def check_audio_policy(
     archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
 ) -> None:
@@ -3889,6 +3985,17 @@ def check_audio_policy(
         ]
         if values != [expected]:
             fail(f"unexpected product property {property_name}: {values}")
+    vendor_properties = read_small(
+        archive, infos["VENDOR/build.prop"]
+    ).decode("utf-8", errors="strict").splitlines()
+    for property_name, expected in AUDIO_RING_PROPERTIES.items():
+        values = [
+            line.partition("=")[2].strip()
+            for line in vendor_properties
+            if line.partition("=")[0] == property_name
+        ]
+        if values != [expected]:
+            fail(f"unexpected vendor audio property {property_name}: {values}")
 
 
 def read_elf_prefix(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes | None:

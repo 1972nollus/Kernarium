@@ -541,6 +541,12 @@ done
 PRODUCT_VENDOR_PROPERTIES=" $(get_build_var PRODUCT_VENDOR_PROPERTIES) "
 [[ "$PRODUCT_VENDOR_PROPERTIES" != *" ro.rebootescrow.device="* ]] ||
 	fail "the unsupported reboot-escrow backing property remains present"
+for property in \
+	ro.hardware.audio.tinyalsa.period_count=4 \
+	ro.hardware.audio.tinyalsa.period_size_multiplier=4; do
+	[[ "$PRODUCT_VENDOR_PROPERTIES" == *" $property "* ]] ||
+		fail "required UML audio property is absent: $property"
+done
 
 PRODUCT_PRODUCT_PROPERTIES=" $(get_build_var PRODUCT_PRODUCT_PROPERTIES) "
 for property in \
