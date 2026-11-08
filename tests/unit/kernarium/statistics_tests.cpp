@@ -42,7 +42,8 @@ void aReadingCarriesEveryFigureOfItsSources()
         DisplayFigures {.presentedFrames = 900U, .offeredFrames = 880U},
         true,
         2U,
-        987654321ULL);
+        987654321ULL,
+        7U);
     require(statistics.struct_size == sizeof(statistics));
     require(statistics.processor_count == 4U);
     require(statistics.boot_index == 2U);
@@ -53,6 +54,7 @@ void aReadingCarriesEveryFigureOfItsSources()
     require(statistics.offered_frames == 880U);
     require(statistics.memory_bytes == 2147483648ULL);
     require(statistics.memory_held_bytes == 1610612736ULL);
+    require(statistics.gpu_memory_refusals == 7U);
 }
 
 /* No GPU service reads as no frames and an unknown display, and the
@@ -66,6 +68,8 @@ void noDisplayReadsAsNoFramesAndAnUnknownScreen()
         statistics.offered_frames == 0U);
     require(statistics.processor_time_ns == 123456789012ULL &&
         statistics.processor_count == 4U);
+    require(statistics.gpu_memory_refusals == 0U,
+        "no GPU service refused anything");
 }
 
 void theScreenReadsAsOneZeroOrUnknown()

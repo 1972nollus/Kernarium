@@ -2075,6 +2075,7 @@ int runtimeReadStatistics(kernarium_runtime_statistics* statistics)
             std::chrono::steady_clock::now().time_since_epoch()).count());
     std::optional<kernarium::statistics::DisplayFigures> display;
     std::optional<bool> scanout;
+    std::optional<std::uint64_t> memoryRefusals;
     {
         std::lock_guard lock(activeGpuMutex);
         if (activeGpu != nullptr) {
@@ -2084,6 +2085,7 @@ int runtimeReadStatistics(kernarium_runtime_statistics* statistics)
                     .offeredFrames = frames->guestFrames,
                 };
             scanout = activeGpu->guestScanoutActive();
+            memoryRefusals = activeGpu->memoryRefusals();
         }
     }
     *statistics = kernarium::statistics::reading(
@@ -2091,7 +2093,8 @@ int runtimeReadStatistics(kernarium_runtime_statistics* statistics)
         display,
         scanout,
         bootIndex.load(std::memory_order_acquire),
-        timestamp);
+        timestamp,
+        memoryRefusals);
     return 0;
 }
 
@@ -2326,7 +2329,7 @@ kernarium_runtime_automation_hold_delay_ms(void)
 }
 #endif
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v25(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v26(void)
 {
     return &runtimeApi;
 }

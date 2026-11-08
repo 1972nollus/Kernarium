@@ -1241,12 +1241,17 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
              * resource's storage as ENOMEM, which is the one failure the
              * guest can tell from a resource it described wrongly: the
              * driver gives its application GL_OUT_OF_MEMORY, and the guest
-             * kernel fails the creation ioctl with -ENOMEM. */
+             * kernel fails the creation ioctl with -ENOMEM. The renderer has
+             * already reclaimed and retried by now, so this is a refusal that
+             * reaches the guest, and the display counts it for the
+             * application to report. */
+            const bool noRoom = created == ENOMEM || created == -ENOMEM;
+            if (noRoom)
+                UML_GPU_DISPLAY.recordMemoryRefusal();
             return response(
                 *header,
-                created == ENOMEM || created == -ENOMEM
-                    ? protocol::GpuResponse::errorOutOfMemory
-                    : protocol::GpuResponse::errorInvalidParameter);
+                noRoom ? protocol::GpuResponse::errorOutOfMemory
+                       : protocol::GpuResponse::errorInvalidParameter);
         }
         return success;
     }

@@ -155,6 +155,29 @@ void theMemoryIsReadOnEverySecondSample()
 	require(report.memory_due());
 }
 
+/* The count is cumulative, so every line states it as it stands; a launcher
+ * with no display has no figure and says nothing. */
+void theLineStatesTheGpuRefusalsOfADisplay()
+{
+	StatisticsReport report;
+	auto first = sample(0ms, 0);
+	auto second = sample(1000ms, 0);
+	auto third = sample(2000ms, 0);
+	first.gpu_memory_refusals = 0;
+	second.gpu_memory_refusals = 0;
+	third.gpu_memory_refusals = 3;
+	(void)report.add(first, std::nullopt);
+	auto line = report.add(second, std::nullopt);
+	require(line && line->ends_with(" gpu-refusals 0"), *line);
+	line = report.add(third, std::nullopt);
+	require(line && line->ends_with(" held 1536 of 2048 MiB gpu-refusals 3"),
+		*line);
+	StatisticsReport bare;
+	(void)bare.add(sample(0ms, 0), std::nullopt);
+	line = bare.add(sample(1000ms, 0), std::nullopt);
+	require(line && line->find("gpu-refusals") == std::string::npos, *line);
+}
+
 void theElapsedTimeCountsFromTheFirstSample()
 {
 	StatisticsReport report;
@@ -187,6 +210,8 @@ int main()
 		{"a-guest-with-no-vcpu-has-no-share", aGuestWithNoVcpuHasNoShare},
 		{"the-memory-is-read-on-every-second-sample",
 			theMemoryIsReadOnEverySecondSample},
+		{"the-line-states-the-gpu-refusals-of-a-display",
+			theLineStatesTheGpuRefusalsOfADisplay},
 		{"the-elapsed-time-counts-from-the-first-sample",
 			theElapsedTimeCountsFromTheFirstSample},
 	};

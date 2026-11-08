@@ -187,12 +187,26 @@ public:
     /* The device records its own CPU readback frames here, because only the
      * device knows a direct presentation was refused. */
     virtual void recordCpuFallbackFrame() noexcept {}
+    /* The device counts here each time it tells the guest that the host GPU
+     * has no room for a graphics allocation: a refusal that the host's
+     * reclaim and retry did not avoid, because only the device knows what the
+     * guest was answered. Like the frame counters it belongs to the display,
+     * so a guest that restarts does not reset it. Read from any thread. */
+    void recordMemoryRefusal() noexcept
+    {
+        memoryRefusals_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t memoryRefusals() const noexcept
+    {
+        return memoryRefusals_.load(std::memory_order_relaxed);
+    }
 
 protected:
     Display() = default;
 
 private:
     std::atomic_bool guestScanoutActive_ {};
+    std::atomic<std::uint64_t> memoryRefusals_ {};
 };
 
 [[nodiscard]] std::unique_ptr<Display> makeDisplay(
