@@ -34,8 +34,14 @@ struct SessionView: View {
                 .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in model.session.closeSideKeys() })
         }
         .overlay(alignment: .top) {
-            if model.session.showStats {
-                StatsPill(readout: model.session.readout, memoryMiB: guestModel.memoryMiB, recovery: mode == .recovery)
+            if AndariumProcess.shared.entry.screen == "session-stats-designs" {
+                StatsDesignGallery(memoryMiB: guestModel.memoryMiB, maximumMemoryMiB: model.host.memory.maximumMiB(vCPUs: 1))
+                    .allowsHitTesting(false)
+            } else if model.session.showStats {
+                StatsPill(
+                    readout: model.session.readout, memoryMiB: guestModel.memoryMiB, recovery: mode == .recovery,
+                    design: model.statsDesign
+                )
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .padding(.top, 36)
                     .allowsHitTesting(false)
@@ -95,6 +101,8 @@ struct SessionView: View {
                     GuestSetupScreen { withAnimation { screen = .home } }
                 case .off:
                     Color.black
+                case .game:
+                    GuestGameScreen()
                 }
                 if volumePanel && screen != .off {
                     GuestVolumePanel(level: volume, maximum: 15)
