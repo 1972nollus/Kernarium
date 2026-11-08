@@ -174,6 +174,7 @@ SHOTS: list[Shot] = [
     s("session-power-menu", "Guest", "session-power", "Android's power menu."),
     s("session-keyboard", "Guest", "session-keyboard", "The guest's own keyboard up over its search."),
     s("session-stats", "Guest", "session-stats", "The CPU, memory and frame rate readout drawn over the guest."),
+    s("session-graphics-notice", "Guest", "session-graphics-notice", "The notice over the running guest that Android ran out of graphics memory."),
     s("session-setup", "Guest", "session-setup", "The guest's own first-run setup screen."),
     s("session-off", "Guest", "session-off", "The guest's screen after it powered off."),
     s("space-pause", "Guest", "space-pause", "The running guest paused because the device is nearly out of space: the screen over it with Resume and Shut down.", dark=True),
