@@ -588,7 +588,9 @@ nothing runs between reads: there is no sampler, timer or counter of its own.
 console's `mem` command; like every console request it ends a suspend, so it is
 sent only under the handle's lifecycle mutex (taken with `try_lock`) and only
 while the guest is not quiesced. The macOS launchers print the same figures with
-`--stats=<ms>`.
+`--stats=<ms>`. The runtime's reading also carries the display's count of
+refused graphics allocations (the device memory budget in
+[`graphics.md`](graphics.md)).
 
 ### Hibernation
 

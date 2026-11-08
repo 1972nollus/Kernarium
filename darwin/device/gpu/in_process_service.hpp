@@ -118,6 +118,14 @@ public:
     [[nodiscard]] std::optional<DisplayStatistics> displayStatistics()
         const noexcept;
 
+    /* How many times the device answered the guest that the host GPU had no
+     * room for an allocation, since the display was made (a guest that
+     * restarts does not reset it). Only an answer the guest received counts:
+     * a refusal the host reclaimed and retried past does not. Any thread,
+     * whether or not requests are held. Nothing once stop() has let the
+     * display go. */
+    [[nodiscard]] std::optional<std::uint64_t> memoryRefusals() const noexcept;
+
     /* The port a VNC display listens on, or nothing for any other display. */
     [[nodiscard]] std::optional<std::uint16_t> vncPort() const noexcept;
 

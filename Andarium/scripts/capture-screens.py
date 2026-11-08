@@ -176,6 +176,7 @@ SHOTS: list[Shot] = [
     s("session-stats", "Guest", "session-stats", "The CPU, memory and frame rate readout drawn over the guest."),
     s("session-stats-fresh", "Guest", "session-stats", "The readout before the session's first reading: every figure a dash, the CPU bars all dimmed floor bars.", "-statsReadings", "0"),
     s("session-stats-short", "Guest", "session-stats", "The readout after three CPU readings: the bars fill from the right, the older slots stay dimmed floor bars.", "-statsReadings", "3"),
+    s("session-graphics-notice", "Guest", "session-graphics-notice", "The notice over the running guest that Android ran out of graphics memory."),
     s("session-setup", "Guest", "session-setup", "The guest's own first-run setup screen."),
     s("session-off", "Guest", "session-off", "The guest's screen after it powered off."),
     s("space-pause", "Guest", "space-pause", "The running guest paused because the device is nearly out of space: the screen over it with Resume and Shut down.", dark=True),

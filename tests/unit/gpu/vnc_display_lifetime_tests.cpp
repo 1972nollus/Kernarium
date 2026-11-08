@@ -294,10 +294,27 @@ void privateMetalTextureReadbackIsDamageBounded()
     disconnectClient(client);
 }
 
+/* The device counts the refusals it answers the guest with on the display,
+ * which a new guest on the same machine does not start again, like the frame
+ * counters. */
+void memoryRefusalsBelongToTheDisplay()
+{
+    uml::gpu::VncDisplay display {"127.0.0.1", 0, {}, 64, 64};
+    require(display.memoryRefusals() == 0);
+    display.recordMemoryRefusal();
+    display.recordMemoryRefusal();
+    require(display.memoryRefusals() == 2);
+    display.resetGuestSession();
+    display.clear();
+    require(display.memoryRefusals() == 2,
+        "a new guest or a cleared display reset the refusals");
+}
+
 } // namespace
 
 int main()
 {
+    memoryRefusalsBelongToTheDisplay();
     packedBgraUpdatesRespectOffsetsAndPaddedStride();
     dimensionsMustFitLibVncServerAbi();
     readbackTracksClientDemandAndReconnects();

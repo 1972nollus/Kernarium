@@ -31,6 +31,9 @@ public:
     virtual void clear() noexcept = 0;
     /* A display keeps the flag itself; a fake that records it overrides this. */
     virtual void setGuestScanoutActive(bool) noexcept {}
+    /* A display counts the refusals itself; a fake that records them
+     * overrides this. */
+    virtual void recordMemoryRefusal() noexcept {}
     virtual void update(
         std::span<const std::uint8_t> source,
         std::uint32_t sourceWidth,

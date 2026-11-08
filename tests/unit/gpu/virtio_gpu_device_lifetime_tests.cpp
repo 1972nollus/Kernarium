@@ -81,6 +81,11 @@ public:
         guestScanoutActive = active;
     }
 
+    void recordMemoryRefusal() noexcept override
+    {
+        ++memoryRefusalCount;
+    }
+
     void clear() noexcept override
     {
         std::fill(framebuffer.begin(), framebuffer.end(), 0);
@@ -616,6 +621,7 @@ public:
     bool guestScanoutChangeAccepted {true};
     unsigned guestSessionResetCount {};
     bool guestScanoutActive {};
+    std::uint32_t memoryRefusalCount {};
     std::uint32_t lastTextureResource {};
     std::uint32_t lastUnmappedResource {};
     std::uint32_t lastBlobScanoutWidth {};
@@ -1415,12 +1421,21 @@ void rendererExecutionFailuresPreserveDeviceState()
      * a resource described wrongly, so the guest can fail the creation with
      * -ENOMEM; nothing of the refused resource stays behind. */
     auto refused = create3d(703, 4, 4);
+    /* Only a creation the guest was refused for want of room is counted for
+     * the application's notice: not a resource described wrongly, and not a
+     * creation that succeeded. */
+    require(dependencies.memoryRefusalCount == 0,
+        "a refusal was counted before there was one");
     dependencies.rejectNext(
         FakeGpuDependencies::Operation::create_resource_refused);
     requireResponse(device, requestBytes(refused),
         protocol::GpuResponse::errorOutOfMemory);
     require(!dependencies.resources.contains(refused.resourceId));
+    require(dependencies.memoryRefusalCount == 1,
+        "the refusal the guest was answered was not counted");
     requireOk(device, requestBytes(refused));
+    require(dependencies.memoryRefusalCount == 1,
+        "a creation that succeeded was counted as a refusal");
 
     const auto attachRequest = attachBackingRequest(
         resource.resourceId, guestMemory.size());
