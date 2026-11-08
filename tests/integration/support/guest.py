@@ -484,6 +484,13 @@ class ConsoleProcess:
     The emulator shares this harness's session and process group, and a
     watchdog in that group kills it if the harness dies without closing it,
     so no way of ending the harness leaves the guest running.
+
+    The emulator's stderr shares the PTY unless ``separate_host_output`` is
+    set. Shared, a host diagnostic can land inside a guest line, and the
+    kernel's console makes the PTY non-blocking, so a diagnostic written
+    while the PTY is full is dropped. Separate, stderr goes to a pipe of its
+    own that the harness drains with the console, ``output()`` holds only
+    what the guest wrote, and ``host_output()`` holds the diagnostics.
     """
 
     # How long a guest has to exit after SIGTERM before it is killed.
@@ -499,8 +506,13 @@ class ConsoleProcess:
         environment: Mapping[str, str] | None = None,
         pass_fds: Sequence[int] = (),
         console_sink: BinaryIO | None = None,
+        separate_host_output: bool = False,
     ) -> None:
         self._transcript = bytearray()
+        self._host_transcript = bytearray()
+        self._separate_host_output = separate_host_output
+        # The read end of the emulator's stderr until it reaches its end.
+        self._host: int | None = None
         # Receives every console byte as the harness reads it, so a caller
         # can stream a long command's output instead of waiting for its end.
         self._console_sink = console_sink
@@ -508,13 +520,17 @@ class ConsoleProcess:
         master, slave = pty.openpty()
         self._master = master
         os.set_blocking(master, False)
+        host_write: int | None = None
         try:
+            if separate_host_output:
+                self._host, host_write = os.pipe()
+                os.set_blocking(self._host, False)
             self._process = subprocess.Popen(
                 list(arguments),
                 env=None if environment is None else dict(environment),
                 stdin=subprocess.PIPE,
                 stdout=slave,
-                stderr=slave,
+                stderr=slave if host_write is None else host_write,
                 close_fds=True,
                 # Descriptors a kernel argument names, such as an external
                 # vhost-user backend's end of a socket pair.
@@ -522,9 +538,13 @@ class ConsoleProcess:
             )
         except BaseException:
             os.close(master)
+            if self._host is not None:
+                os.close(self._host)
             raise
         finally:
             os.close(slave)
+            if host_write is not None:
+                os.close(host_write)
         assert self._process.stdin is not None
         self._input = self._process.stdin
         try:
@@ -534,6 +554,8 @@ class ConsoleProcess:
             self._process.wait()
             self._input.close()
             os.close(master)
+            if self._host is not None:
+                os.close(self._host)
             raise
         os.set_blocking(self._input.fileno(), False)
 
@@ -548,6 +570,11 @@ class ConsoleProcess:
                     self.output()[-FAILURE_TRANSCRIPT_CHARACTERS:],
                     file=sys.stderr,
                 )
+                if self._separate_host_output:
+                    print(
+                        self.host_output()[-FAILURE_TRANSCRIPT_CHARACTERS:],
+                        file=sys.stderr,
+                    )
         finally:
             self.close()
 
@@ -666,7 +693,7 @@ class ConsoleProcess:
             if remaining <= 0:
                 return False
             readable, _, _ = select.select(
-                [self._master], [], [], min(remaining, 0.25)
+                self._readable(), [], [], min(remaining, 0.25)
             )
             if readable:
                 self._drain()
@@ -700,6 +727,7 @@ class ConsoleProcess:
                     os.close(self._master)
                 except OSError:
                     pass
+                self._close_host()
                 self._release_lifeline()
                 if self._process.poll() is not None:
                     remove_emulator_run_directories(self._process.pid)
@@ -728,6 +756,14 @@ class ConsoleProcess:
     def output(self) -> str:
         return self._normal_output(bytes(self._transcript))
 
+    def host_output(self) -> str:
+        """The emulator's own diagnostics, with ``separate_host_output``."""
+        return self._normal_output(bytes(self._host_transcript))
+
+    def _readable(self) -> list[int]:
+        return [self._master] if self._host is None else [self._master,
+                                                          self._host]
+
     def _exited_without_output(self) -> None:
         """Explain an emulator that exited before the awaited output.
 
@@ -755,7 +791,7 @@ class ConsoleProcess:
             if self._process.poll() is not None:
                 raise BrokenPipeError("guest exited during console write")
             readable, writable, _ = select.select(
-                [self._master], [input_descriptor], [], min(remaining, 0.25)
+                self._readable(), [input_descriptor], [], min(remaining, 0.25)
             )
             if readable:
                 self._drain()
@@ -800,12 +836,13 @@ class ConsoleProcess:
                     f"guest operation exceeded {timeout_seconds:g}s"
                 )
             readable, _, _ = select.select(
-                [self._master], [], [], min(remaining, 0.25)
+                self._readable(), [], [], min(remaining, 0.25)
             )
             if readable:
                 self._drain()
 
     def _drain(self) -> None:
+        self._drain_host()
         while True:
             try:
                 chunk = os.read(self._master, 65536)
@@ -819,6 +856,28 @@ class ConsoleProcess:
             if self._console_sink is not None:
                 self._console_sink.write(chunk)
                 self._console_sink.flush()
+
+    def _drain_host(self) -> None:
+        while self._host is not None:
+            try:
+                chunk = os.read(self._host, 65536)
+            except BlockingIOError:
+                return
+            except OSError:
+                chunk = b""
+            if not chunk:
+                # A pipe at its end stays readable, so it leaves the select.
+                self._close_host()
+                return
+            self._host_transcript.extend(chunk)
+
+    def _close_host(self) -> None:
+        if self._host is not None:
+            try:
+                os.close(self._host)
+            except OSError:
+                pass
+            self._host = None
 
     @staticmethod
     def _normal_output(output: bytes) -> str:
@@ -863,6 +922,7 @@ class Guest(ConsoleProcess):
         root_type: str | None = None,
         network: str = "user-network",
         environment: Mapping[str, str] | None = None,
+        separate_host_output: bool = False,
     ) -> None:
         if init_shell == overlay_shell:
             raise ValueError(
@@ -902,6 +962,7 @@ class Guest(ConsoleProcess):
                 environment=environment,
                 pass_fds=pass_fds,
                 console_sink=console_sink,
+                separate_host_output=separate_host_output,
             )
         except BaseException:
             self._remove_host_files()
@@ -924,6 +985,7 @@ class Guest(ConsoleProcess):
         )
         # Every vCPU's carrier has come up by the time the session runs.
         require_host_fast_paths(self.output())
+        require_host_fast_paths(self.host_output())
 
     def boot_and_login(self, timeout_seconds: float = BOOT_TIMEOUT_SECONDS) -> None:
         self.boot_to_shell(timeout_seconds)
