@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "elf_loader.h"
 #include "kernel_resources.hpp"
+#include "session_record.hpp"
 #include "kernel_signal_scope.hpp"
 #include "kernel_threads.hpp"
 #include "uml_elf64.h"
@@ -260,6 +261,10 @@ private:
 	/* The resources the kernel creates are recorded, so that a guest which
 	 * restarts itself can give them back (kernel_resources.hpp). */
 	if (void *const wrapper = uml::runtime::kernel_resource_import(name))
+		return wrapper;
+	/* The kernel's console and diagnostic output, which a session record
+	 * quotes (session_record.hpp). */
+	if (void *const wrapper = uml::runtime::kernel_output_import(name))
 		return wrapper;
 	void *address = dlsym(RTLD_DEFAULT, name);
 	/* Darwin SDK headers give a few libc entry points an asm-label alias. */

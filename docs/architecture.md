@@ -535,7 +535,15 @@ after the runtime moves the kernel frames on every thread's stack and registers
 from the kernel's alias to the same instructions in the framework's
 `__TEXT,__uml_elf` section (`runtime/kernel_crash_frames`), where the runtime's
 dSYM, which alone names the kernel's functions, symbolizes them in a crash
-report.
+report. The panicking thread takes the panic's message as its name, which the
+report shows.
+
+A launch that passes `--session-record=PATH` gets a record of how its session
+ended (`runtime/session_record`): "running" from the boot on, overwritten by
+every end that runs code, a panic with its message and the kernel's last
+output included. A record still "running" at the next launch means the process
+was ended from outside without running, as a memory-limit end is. Andarium
+names the file in its boot request and reads it at launch.
 
 A guest that restarts itself boots again in the same process, because iOS can
 neither re-exec nor respawn an application. The macOS launchers

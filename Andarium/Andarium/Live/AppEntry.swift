@@ -124,6 +124,15 @@ struct AppEntry {
             model.notice = .closedInBackground
             print("Andarium: the previous process ended out of the foreground; the guest starts again from boot")
         }
+        // How the previous session ended, before the next boot overwrites
+        // it: a copy stays beside the record for diagnostics.
+        let sessionRecord = markerDirectory.appendingPathComponent("session.txt")
+        if let previous = SessionRecord.read(at: sessionRecord) {
+            print("Andarium: \(previous.summary)")
+            let kept = markerDirectory.appendingPathComponent("previous-session.txt")
+            try? FileManager.default.removeItem(at: kept)
+            try? FileManager.default.copyItem(at: sessionRecord, to: kept)
+        }
         if carried != nil {
             #if APP_STORE
             let watched = freeSpace
@@ -136,7 +145,8 @@ struct AppEntry {
             }
             #endif
             let runtime = LiveRuntime(
-                model: model, storage: storage, marker: marker, keyStore: adbKeyStore, freeSpace: watched)
+                model: model, storage: storage, marker: marker, keyStore: adbKeyStore,
+                sessionRecord: sessionRecord, freeSpace: watched)
             model.driver = runtime
             model.refreshPlan()
             // Access the person took away while Andarium was closed takes the
