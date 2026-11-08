@@ -1327,10 +1327,21 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 .blobId = create->blobId,
                 .size = create->size,
             };
-            if (UML_GPU_RENDERER.createResourceBlob(resource) != 0) {
+            if (const int created =
+                    UML_GPU_RENDERER.createResourceBlob(resource);
+                created != 0) {
                 blobResources_.erase(iterator);
+                /* A blob the host had no memory to create is answered as
+                 * out of memory, so the guest can tell it from a blob it
+                 * described wrongly, and the display counts it as it counts
+                 * a refused 3D resource. */
+                const bool noRoom = created == ENOMEM || created == -ENOMEM;
+                if (noRoom)
+                    UML_GPU_DISPLAY.recordMemoryRefusal();
                 return response(
-                    *header, protocol::GpuResponse::errorInvalidParameter);
+                    *header,
+                    noRoom ? protocol::GpuResponse::errorOutOfMemory
+                           : protocol::GpuResponse::errorInvalidParameter);
             }
             return success;
         } catch (const std::bad_alloc&) {

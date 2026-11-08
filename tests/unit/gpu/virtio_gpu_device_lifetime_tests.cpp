@@ -216,6 +216,9 @@ public:
     {
         if (reject(Operation::create_resource))
             return EIO;
+        /* libvirglrenderer reports its failures as negative errors. */
+        if (reject(Operation::create_resource_refused))
+            return -ENOMEM;
         try {
             resources.insert(resource.resourceId);
         } catch (...) {
@@ -1289,6 +1292,45 @@ void blobCommandsAllocateBeforeCommitAndRetry()
     require(responseType(unmapped.response) ==
         protocol::GpuResponse::okNoData);
     completeAction(device);
+}
+
+/* A blob the host had no memory to create is answered as out of memory, not
+ * as a blob described wrongly, and counted for the application's notice;
+ * nothing of it stays behind, and the same blob can be created once there is
+ * room. */
+void refusedBlobIsAnsweredAsOutOfMemory()
+{
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
+    const auto context = createContext(0x911, protocol::venusCapsetId);
+    requireOk(device, requestBytes(context));
+
+    auto create = newRequest<protocol::GpuResourceCreateBlob>(
+        GpuCommand::resourceCreateBlob);
+    create.header.contextId = context.header.contextId;
+    create.resourceId = 0x912;
+    create.memory = protocol::blobMemoryHost3d;
+    create.flags = protocol::blobFlagMappable;
+    create.size = protocol::hostVisibleSharedMemoryAlignment;
+
+    dependencies.rejectNext(FakeGpuDependencies::Operation::create_resource);
+    requireResponse(device, requestBytes(create),
+        protocol::GpuResponse::errorInvalidParameter);
+    require(dependencies.memoryRefusalCount == 0,
+        "a blob described wrongly was counted as a refusal");
+
+    dependencies.rejectNext(
+        FakeGpuDependencies::Operation::create_resource_refused);
+    requireResponse(device, requestBytes(create),
+        protocol::GpuResponse::errorOutOfMemory);
+    require(!dependencies.resources.contains(create.resourceId));
+    require(dependencies.memoryRefusalCount == 1,
+        "the refused blob the guest was answered was not counted");
+
+    requireOk(device, requestBytes(create));
+    require(dependencies.resources.contains(create.resourceId));
+    require(dependencies.memoryRefusalCount == 1,
+        "a blob that was created was counted as a refusal");
 }
 
 void edidReportsDisplayPixelsAndEffectiveDensity()
@@ -3511,6 +3553,7 @@ int main()
     lifecycleCommandsAllocateBeforeCommitAndRetry();
     contextCreateIsRetryableAfterEachAllocationFailure();
     blobCommandsAllocateBeforeCommitAndRetry();
+    refusedBlobIsAnsweredAsOutOfMemory();
     rendererExecutionFailuresPreserveDeviceState();
     softwareScanoutProgressesWhileRendererFenceIsPending();
     deferredFencesUseHostTimelineAndMergedRetirement();
