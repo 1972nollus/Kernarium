@@ -244,9 +244,12 @@ architecture](architecture.md#memory-and-executable-code)). The budget is one
 pool (`device/gpu/device_memory_pool.*`) for everything the host GPU holds for
 the process: the larger of Metal's allocation counter less the host memory the
 drivers only import, and the graphics ledger the system counts the process by.
-The renderer shrinks every advertised heap to B and bounds every heap budget it
-reports by the pool's headroom, so a guest sizes its allocations from B less
-what the host already holds.
+The counter holds the IOSurfaces of presentation and decoding, which the ledger
+does not, and the ledger the driver's command storage, which the counter does
+not, so the pool counts only the larger of those two. The renderer shrinks every
+advertised heap to B and bounds every heap budget it reports by the pool's
+headroom, so a guest sizes its allocations from B less what the host already
+holds.
 
 KosmicKrisp is the one place every allocation passes: every device the process
 creates, Venus guests' and host GL's alike, reserves a heap from the pool before

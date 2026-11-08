@@ -12,17 +12,23 @@ namespace uml::gpu {
 /* The device memory the host GPU holds for the process, as the pool counts
  * it, from three readings.
  *
- * `metalAllocated` is Metal's allocation counter, which counts a no-copy
- * buffer at its full size whatever backs it. `imported` is the part of that
- * the process only lends the GPU, host memory a device maps by its address,
- * such as the shared-memory segments behind a guest's host-visible
+ * `metalAllocated` is Metal's allocation counter, which counts every heap
+ * from its creation, a no-copy buffer at its full size whatever backs it, and
+ * the IOSurfaces behind presentation and decoding. `imported` is the part of
+ * that the process only lends the GPU, host memory a device maps by its
+ * address, such as the shared-memory segments behind a guest's host-visible
  * allocations: on iOS they are container files, outside the footprint the
  * system limits the process by, so they must not fill a budget that exists to
  * keep the footprint under its limit. `graphicsFootprint` is the kernel's
- * graphics ledger, which also holds the driver's own command storage and the
- * surfaces Metal's counter omits, and is what jetsam counts. Neither
- * estimate may lower the other, and an import larger than the counter (the
- * two are read at different instants) leaves the ledger alone.
+ * graphics ledger, part of what jetsam counts. It holds the driver's own
+ * command storage, which Metal's counter omits, and not the IOSurfaces, and it
+ * counts a heap's pages only once they are resident, so a consumer makes a
+ * heap resident before it releases the heap's reservation (KosmicKrisp does);
+ * a heap that is not would be hidden from the pool while the ledger leads the
+ * counter. Neither estimate may lower the other, so the larger counts only
+ * the larger of the command storage and the IOSurfaces, and an import larger
+ * than the counter (the two are read at different instants) leaves the
+ * ledger alone.
  *
  * Read `imported` before `metalAllocated`: an import that lands between the
  * two readings is then counted a moment too long and never too short.
@@ -79,7 +85,7 @@ namespace uml::gpu {
  * bound below passes, and a wait that reached its bound forgets what the
  * ledger owed. A request that would not fit even then, or that follows no
  * release, is refused at once: a ledger that stays above the counter for
- * good, by the surfaces the counter omits, costs no wait. */
+ * good, by the command storage the counter omits, costs no wait. */
 class DeviceMemoryPool final {
 public:
     /* Frees what the host drivers cache for reuse, on whichever thread was
