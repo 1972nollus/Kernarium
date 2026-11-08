@@ -278,7 +278,10 @@ the tracked `UML_KERNEL_FINAL_TREE` of the line (and of the x86_64 slice) must
 equal the descriptor's final tree, which covers every patch, and the kernel in
 the packaged runtime must be the descriptor's release and hold every symbol the
 configuration fragments request. The manifest records no identity for the
-configuration, so a symbol removed from a fragment is not caught.
+configuration, so a symbol removed from a fragment is not caught. Every kernel
+is built as `kernarium@kernarium` (`KBUILD_BUILD_USER` and `KBUILD_BUILD_HOST`
+in `build-kernel.sh`), and the check refuses a packaged kernel whose banner names
+another build user or host.
 
 ## Toolchain
 

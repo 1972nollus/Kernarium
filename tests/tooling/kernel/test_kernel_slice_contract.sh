@@ -488,4 +488,10 @@ END { exit !(NR == 7 && good == 7) }
 	fail "verify-replay does not cover arm64, the Android product, and x86_64"
 }
 
+# Every kernel line, slice and product builds as the neutral user and host, so
+# the Linux banner names neither the builder's account nor machine.
+grep -F 'KBUILD_BUILD_USER=kernarium KBUILD_BUILD_HOST=kernarium' \
+	"$LINE_ROOT/build/build-kernel.sh" >/dev/null ||
+	fail "build-kernel.sh does not build as the neutral user and host"
+
 printf '%s\n' "kernel common/x86_64 slice producer contract passed"

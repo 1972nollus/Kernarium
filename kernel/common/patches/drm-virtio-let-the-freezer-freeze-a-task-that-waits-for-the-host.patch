@@ -28,7 +28,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  1 file changed, 3 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/gpu/drm/virtio/virtgpu_ioctl.c b/drivers/gpu/drm/virtio/virtgpu_ioctl.c
-index d619ee042590d48b26f0c82ab2a258b98c3dde23..ad0e56b27f0859e62cee72bcb12bbf7cf6ea194a 100644
+index c2ad81b4543ebc18ab060aa4c27138cc7ea973ea..54955a5dd287d18b91dd98e11f5a5ab21156d040 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_ioctl.c
 +++ b/drivers/gpu/drm/virtio/virtgpu_ioctl.c
 @@ -477,8 +477,9 @@ static int virtio_gpu_get_caps_ioctl(struct drm_device *dev,
