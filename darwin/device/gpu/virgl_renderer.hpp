@@ -93,6 +93,18 @@ public:
     static void setMemoryRefusalObserver(
         MemoryRefusalObserver observer, void* data) noexcept;
 
+    /* The device memory budget and what the process holds against it, while
+     * a renderer with a budget exists; any thread. Nothing without one. The
+     * usage is the pool's own, which is what the budget refuses by: the
+     * larger of Metal's allocation less the host memory the drivers only
+     * import and the graphics footprint, plus the reservations in flight. It
+     * includes memory the host's drivers hold for reuse. */
+    struct DeviceMemory {
+        std::uint64_t budgetBytes {};
+        std::uint64_t usageBytes {};
+    };
+    [[nodiscard]] static std::optional<DeviceMemory> deviceMemory() noexcept;
+
     VirglRenderer(const VirglRenderer&) = delete;
     VirglRenderer& operator=(const VirglRenderer&) = delete;
 

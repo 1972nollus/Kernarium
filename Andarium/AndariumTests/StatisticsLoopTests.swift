@@ -140,8 +140,11 @@ struct StatisticsLoopTests {
         let gate = SleepGate()
         let driver = StubDriver(plan: .normal)
         // 250 ms later: 125 ms of work on two vCPUs is a quarter of them,
-        // and 15 frames are 60 a second.
-        driver.samples = [.some(reading(0, busy: 0, frames: 0)), .some(reading(250, busy: 125, frames: 15))]
+        // and 15 frames are 60 a second. The GPU has its budget by then.
+        var budgeted = reading(250, busy: 125, frames: 15)
+        budgeted.gpuMemoryBudgetBytes = 534 * Limits.bytesPerMiB
+        budgeted.gpuMemoryUsedBytes = 412 * Limits.bytesPerMiB
+        driver.samples = [.some(reading(0, busy: 0, frames: 0)), .some(budgeted)]
         driver.memories = [.some(memory(usedMiB: 818))]
         let model = runningModel(driver, gate: gate)
         #expect(model.session.readout.cpu == nil, "no figure before the first reading")
@@ -149,6 +152,8 @@ struct StatisticsLoopTests {
         model.statistics(.settings, visible: true)
         #expect(await until { gate.waits.count == 1 && gate.isWaiting })
         #expect(model.session.readout.cpu == nil, "one reading is no rate")
+        #expect(model.session.readout.vramText == "\u{2013}", "no budget yet is no figure")
+        #expect(model.session.readout.vramFraction == nil)
         gate.release()
         #expect(await until { gate.waits.count == 2 && gate.isWaiting })
         let readout = model.session.readout
@@ -157,6 +162,9 @@ struct StatisticsLoopTests {
         #expect(readout.history == [25])
         #expect(readout.memoryUsedBytes == 818 * Limits.bytesPerMiB)
         #expect(readout.memoryText(of: 2048) == "818 MiB of 2 GiB")
+        #expect(readout.vramText == "412 MiB of 534 MiB")
+        #expect(readout.vramUsedText == "412 MiB")
+        #expect(readout.vramFraction.map { abs($0 - 412.0 / 534) < 1e-9 } == true)
         model.statistics(.settings, visible: false)
     }
 

@@ -21,11 +21,15 @@ public struct StatsSample: Equatable, Sendable {
     /// The guest's RAM, and the part of it the iPad holds now.
     public var ramBytes: UInt64
     public var ramHeldBytes: UInt64
+    /// The host GPU's memory budget for the guest and what the process holds
+    /// against it; both 0 while there is no budget.
+    public var gpuMemoryBudgetBytes: UInt64
+    public var gpuMemoryUsedBytes: UInt64
 
     public init(
         bootIndex: UInt32, processorCount: UInt32, timestampNanoseconds: UInt64,
         processorTimeNanoseconds: UInt64, presentedFrames: UInt64, ramBytes: UInt64 = 0,
-        ramHeldBytes: UInt64 = 0
+        ramHeldBytes: UInt64 = 0, gpuMemoryBudgetBytes: UInt64 = 0, gpuMemoryUsedBytes: UInt64 = 0
     ) {
         self.bootIndex = bootIndex
         self.processorCount = processorCount
@@ -34,6 +38,8 @@ public struct StatsSample: Equatable, Sendable {
         self.presentedFrames = presentedFrames
         self.ramBytes = ramBytes
         self.ramHeldBytes = ramHeldBytes
+        self.gpuMemoryBudgetBytes = gpuMemoryBudgetBytes
+        self.gpuMemoryUsedBytes = gpuMemoryUsedBytes
     }
 }
 
@@ -77,6 +83,10 @@ public struct StatsMeter: Equatable, Sendable {
     public private(set) var memoryInUseBytes: UInt64?
     /// The guest RAM the iPad holds, from the last reading.
     public private(set) var ramHeldBytes: UInt64?
+    /// The graphics memory in use against the budget, and the budget, from
+    /// the last reading; nil while there is no budget.
+    public private(set) var gpuMemoryUsedBytes: UInt64?
+    public private(set) var gpuMemoryBudgetBytes: UInt64?
     /// The boot the figures belong to.
     public private(set) var bootIndex: UInt32?
     private var baseline: StatsSample?
@@ -92,6 +102,9 @@ public struct StatsMeter: Equatable, Sendable {
         if let bootIndex, bootIndex != sample.bootIndex { self = StatsMeter() }
         bootIndex = sample.bootIndex
         ramHeldBytes = sample.ramBytes == 0 ? nil : sample.ramHeldBytes
+        let budgeted = sample.gpuMemoryBudgetBytes > 0
+        gpuMemoryBudgetBytes = budgeted ? sample.gpuMemoryBudgetBytes : nil
+        gpuMemoryUsedBytes = budgeted ? sample.gpuMemoryUsedBytes : nil
         defer { baseline = sample }
         guard let before = baseline else { return }
         guard sample.timestampNanoseconds > before.timestampNanoseconds,

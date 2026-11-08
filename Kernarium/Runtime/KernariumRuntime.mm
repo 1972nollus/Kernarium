@@ -2098,6 +2098,7 @@ int runtimeReadStatistics(kernarium_runtime_statistics* statistics)
     std::optional<kernarium::statistics::DisplayFigures> display;
     std::optional<bool> scanout;
     std::optional<std::uint64_t> memoryRefusals;
+    std::optional<kernarium::statistics::GpuMemoryFigures> gpuMemory;
     {
         std::lock_guard lock(activeGpuMutex);
         if (activeGpu != nullptr) {
@@ -2108,6 +2109,11 @@ int runtimeReadStatistics(kernarium_runtime_statistics* statistics)
                 };
             scanout = activeGpu->guestScanoutActive();
             memoryRefusals = activeGpu->memoryRefusals();
+            if (const auto memory = activeGpu->deviceMemory())
+                gpuMemory = kernarium::statistics::GpuMemoryFigures {
+                    .budgetBytes = memory->budgetBytes,
+                    .usedBytes = memory->usageBytes,
+                };
         }
     }
     *statistics = kernarium::statistics::reading(
@@ -2116,7 +2122,8 @@ int runtimeReadStatistics(kernarium_runtime_statistics* statistics)
         scanout,
         bootIndex.load(std::memory_order_acquire),
         timestamp,
-        memoryRefusals);
+        memoryRefusals,
+        gpuMemory);
     return 0;
 }
 
@@ -2351,7 +2358,7 @@ kernarium_runtime_automation_hold_delay_ms(void)
 }
 #endif
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v26(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v27(void)
 {
     return &runtimeApi;
 }

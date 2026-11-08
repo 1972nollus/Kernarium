@@ -35,6 +35,17 @@ struct InProcessGpuOptions {
     std::uint64_t deviceMemoryLimit {};
 };
 
+/* The device memory budget and what the process holds against it. */
+struct DeviceMemoryFigures {
+    /* The budget, B. */
+    std::uint64_t budgetBytes {};
+    /* The pool's own count, which the budget refuses by: the larger of
+     * Metal's allocation less the host memory the drivers only import and the
+     * graphics footprint, plus the reservations in flight. Memory the host's
+     * drivers hold for reuse is in it. */
+    std::uint64_t usageBytes {};
+};
+
 /* The GPU of one process's guest, and the display it presents on.
  *
  * The display (the VNC listener and its clients, or the native window or
@@ -125,6 +136,13 @@ public:
      * whether or not requests are held. Nothing once stop() has let the
      * display go. */
     [[nodiscard]] std::optional<std::uint64_t> memoryRefusals() const noexcept;
+
+    /* The device memory budget and what the process holds against it, while a
+     * renderer with a budget runs; nothing without one. It reads the pool's
+     * counters, about 0.1 ms, and waits for no request: any thread, whether or
+     * not requests are held. */
+    [[nodiscard]] std::optional<DeviceMemoryFigures> deviceMemory()
+        const noexcept;
 
     /* The port a VNC display listens on, or nothing for any other display. */
     [[nodiscard]] std::optional<std::uint16_t> vncPort() const noexcept;

@@ -797,6 +797,10 @@ private:
 				reading.offered_frames = frames->guestFrames;
 			}
 			reading.gpu_memory_refusals = gpu_->memoryRefusals();
+			if (const auto memory = gpu_->deviceMemory()) {
+				reading.gpu_memory_budget_bytes = memory->budgetBytes;
+				reading.gpu_memory_used_bytes = memory->usageBytes;
+			}
 			scanout = gpu_->guestScanoutActive();
 		}
 		/* A guest whose display is off may have suspended itself, and the

@@ -309,6 +309,12 @@ launchers print it as `gpu-refusals` with `--stats`. The renderer reports a
 Venus refusal through the pool's `refused` callback, which the device
 registers.
 
+The same reading carries B and the pool's usage, the count the budget refuses
+by (`gpu_memory_budget_bytes` and `gpu_memory_used_bytes`, runtime API 27): the
+larger of Metal's allocation less the imported host memory and the graphics
+footprint, plus the reservations in flight, memory the drivers keep for reuse
+included. The macOS launchers print them as `gpu-memory <used>/<B> MiB`.
+
 ### Android guest requirements
 
 The Android guest reaches the same renderer by a separate route: one Soong port
