@@ -472,6 +472,31 @@ def start_lifeline(process_id: int) -> tuple[int, subprocess.Popen[bytes]]:
     return write_end, watchdog
 
 
+def exit_queue(process_id: int) -> select.kqueue | None:
+    """Return a kqueue that turns readable when ``process_id`` exits, or
+    ``None`` when it has exited already."""
+    queue = select.kqueue()
+    try:
+        queue.control(
+            [
+                select.kevent(
+                    process_id,
+                    select.KQ_FILTER_PROC,
+                    select.KQ_EV_ADD,
+                    select.KQ_NOTE_EXIT,
+                )
+            ],
+            0,
+        )
+    except ProcessLookupError:
+        queue.close()
+        return None
+    except BaseException:
+        queue.close()
+        raise
+    return queue
+
+
 class ConsoleProcess:
     """One emulator process driven through its serial console.
 
@@ -480,6 +505,14 @@ class ConsoleProcess:
     every guest CPU is busy and a pipe stays pollable at guest timer
     boundaries. Writes have their own deadline. Commands are wrapped in
     unique markers and read back from the ANSI-normalized transcript.
+
+    The harness holds the PTY's terminal end until it closes, so everything
+    the emulator wrote before it exited stays readable however late the
+    harness reads it: Darwin discards a terminal's unread output at its last
+    close, at once when that descriptor is non-blocking, as the guest
+    kernel's console makes it, and otherwise after 0.6 s. The PTY therefore
+    reports no end when the emulator exits, and the console loops wait on
+    the exit itself as well.
 
     The emulator shares this harness's session and process group, and a
     watchdog in that group kills it if the harness dies without closing it,
@@ -493,11 +526,13 @@ class ConsoleProcess:
     what the guest wrote, and ``host_output()`` holds the diagnostics.
     """
 
-    # Without separate_host_output there is no host stream; these defaults
+    # Without separate_host_output there is no host stream. These defaults
     # also hold for an instance a test builds without __init__.
     _separate_host_output = False
     _host: int | None = None
     _host_transcript: bytes | bytearray = b""
+    _terminal: int | None = None
+    _exit_queue: select.kqueue | None = None
 
     # How long a guest has to exit after SIGTERM before it is killed.
     STOP_GRACE_SECONDS = 2.0
@@ -525,6 +560,9 @@ class ConsoleProcess:
         self.first_output_at: float | None = None
         master, slave = pty.openpty()
         self._master = master
+        # The terminal end stays open here until close(), so the emulator's
+        # exit is never the terminal's last close.
+        self._terminal = slave
         os.set_blocking(master, False)
         host_write: int | None = None
         try:
@@ -543,25 +581,23 @@ class ConsoleProcess:
                 pass_fds=tuple(pass_fds),
             )
         except BaseException:
-            os.close(master)
-            if self._host is not None:
-                os.close(self._host)
+            self._close_console()
+            self._close_host()
             raise
         finally:
-            os.close(slave)
             if host_write is not None:
                 os.close(host_write)
         assert self._process.stdin is not None
         self._input = self._process.stdin
         try:
+            self._exit_queue = exit_queue(self._process.pid)
             self._lifeline, self._watchdog = start_lifeline(self._process.pid)
         except BaseException:
             self._process.kill()
             self._process.wait()
             self._input.close()
-            os.close(master)
-            if self._host is not None:
-                os.close(self._host)
+            self._close_console()
+            self._close_host()
             raise
         os.set_blocking(self._input.fileno(), False)
 
@@ -729,10 +765,7 @@ class ConsoleProcess:
             except OSError:
                 pass
             finally:
-                try:
-                    os.close(self._master)
-                except OSError:
-                    pass
+                self._close_console()
                 self._close_host()
                 self._release_lifeline()
                 if self._process.poll() is not None:
@@ -767,8 +800,14 @@ class ConsoleProcess:
         return self._normal_output(bytes(self._host_transcript))
 
     def _readable(self) -> list[int]:
-        return [self._master] if self._host is None else [self._master,
-                                                          self._host]
+        """The console, the host output while it lasts, and the queue that
+        turns readable when the emulator exits."""
+        descriptors = [self._master]
+        if self._host is not None:
+            descriptors.append(self._host)
+        if self._exit_queue is not None:
+            descriptors.append(self._exit_queue.fileno())
+        return descriptors
 
     def _exited_without_output(self) -> None:
         """Explain an emulator that exited before the awaited output.
@@ -876,6 +915,21 @@ class ConsoleProcess:
                 self._close_host()
                 return
             self._host_transcript.extend(chunk)
+
+    def _close_console(self) -> None:
+        """Close the PTY and the exit queue. The master goes first, because a
+        terminal end closed last with output unread while its master is open
+        waits 0.6 s for a reader."""
+        for descriptor in (self._master, self._terminal):
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+        self._terminal = None
+        if self._exit_queue is not None:
+            self._exit_queue.close()
+            self._exit_queue = None
 
     def _close_host(self) -> None:
         if self._host is not None:
