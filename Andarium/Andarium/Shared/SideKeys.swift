@@ -21,9 +21,10 @@ struct SideKeyActions {
 /// Settings and a Back and Home pair right beside them as one small group.
 /// They move up and down the edge with a drag and across to the other edge.
 ///
-/// Only the keys take touches. While they are open, a touch anywhere else
-/// reaches the guest as it would with them closed, and the guest's display
-/// closes the keys when it receives that touch (`SessionState.closeSideKeys`).
+/// Only the keys take touches, and the tip beside the closed keys on its own
+/// card. While they are open, a touch anywhere else reaches the guest as it
+/// would with them closed, and the guest's display closes the keys when it
+/// receives that touch (`SessionState.closeSideKeys`).
 struct SideKeysOverlay: View {
     /// How the keys open and close.
     static let motion = Animation.spring(duration: 0.36, bounce: 0.22)
@@ -43,6 +44,9 @@ struct SideKeysOverlay: View {
     @State private var keyPresses = 0
     @Namespace private var keysSpace
     private let tip = SideKeysTip()
+    /// The tip's popover is up: while the closed keys are on screen and the
+    /// tip wants to show.
+    @State private var tipShown = false
 
     init(mode: StartMode, lit: Bool, open: Binding<Bool>, leading: Bool = false, actions: SideKeyActions) {
         self.mode = mode
@@ -98,7 +102,18 @@ struct SideKeysOverlay: View {
                 .position(x: edgeX + inward * (KeyMetrics.edgeGap + groupWidth / 2), y: openY)
             } else {
                 ClosedKeys(space: keysSpace, leading: leading)
-                    .popoverTip(tip, arrowEdge: leading ? .leading : .trailing)
+                    // SwiftUI's own popover, not `popoverTip`: TipKit leaves
+                    // its popover on screen when the keys it points at go
+                    // away (opening, or the session ending), over the open
+                    // keys or Home, where its card takes their touches.
+                    // SwiftUI dismisses its popover with the closed keys.
+                    .popover(isPresented: $tipShown, arrowEdge: leading ? .leading : .trailing) {
+                        SideKeysTipCard(tip: tip)
+                    }
+                    .task {
+                        for await shows in tip.shouldDisplayUpdates { tipShown = shows }
+                    }
+                    .onDisappear { tipShown = false }
                     .position(x: edgeX + inward * 18, y: closedY)
                     .gesture(dragKeys(size: size))
                     .onTapGesture { setOpen(true) }
@@ -331,4 +346,20 @@ nonisolated struct SideKeysTip: Tip {
     var message: Text? { Text("Tap for Back, Home and Settings. Hold Power for the power menu. Drag to move.") }
     var image: Image? { Image(systemName: "hand.tap") }
     var options: [any TipOption] { [MaxDisplayCount(3)] }
+}
+
+/// The tip in its popover, drawn as TipKit draws a popover tip: the popover's
+/// own background, at most 400 points wide. A touch beside it reaches the
+/// guest, as a touch beside TipKit's does.
+private struct SideKeysTipCard: View {
+    let tip: SideKeysTip
+
+    var body: some View {
+        TipView(tip)
+            .tipBackground(.clear)
+            .frame(idealWidth: 400, maxWidth: 400)
+            .fixedSize(horizontal: false, vertical: true)
+            .presentationCompactAdaptation(.popover)
+            .presentationBackgroundInteraction(.enabled)
+    }
 }
