@@ -251,6 +251,37 @@ void theLineStatesWhoHoldsTheGraphicsBudget()
 		*line);
 }
 
+/* The guest's own reclaimer is the last clause, after the holders it ends,
+ * and only while it asks. */
+void theLineStatesWhenTheGuestReclaimsGraphicsMemory()
+{
+	StatisticsReport report;
+	auto first = sample(0ms, 0);
+	auto second = sample(1000ms, 0);
+	second.gpu_memory_budget_bytes = 534 * mebibyte;
+	second.gpu_memory_used_bytes = 500 * mebibyte;
+	second.graphics_attribution = GraphicsAttribution {
+		.context_bytes = 420 * mebibyte,
+		.holders = {{.pid = 2204, .bytes = 130 * mebibyte, .idle_ms = 61'500,
+			.name = "jelly"}},
+	};
+	second.guest_reclaims = true;
+	(void)report.add(first, std::nullopt);
+	auto line = report.add(second, std::nullopt);
+	require(line && line->ends_with(
+			" holders 2204:jelly:130 MiB:61 s guest-reclaim=on"),
+		*line);
+
+	StatisticsReport idle;
+	auto third = sample(0ms, 0);
+	auto fourth = sample(1000ms, 0);
+	fourth.gpu_memory_budget_bytes = 534 * mebibyte;
+	fourth.gpu_memory_used_bytes = 12 * mebibyte;
+	(void)idle.add(third, std::nullopt);
+	line = idle.add(fourth, std::nullopt);
+	require(line && line->find("guest-reclaim") == std::string::npos, *line);
+}
+
 void theElapsedTimeCountsFromTheFirstSample()
 {
 	StatisticsReport report;
@@ -289,6 +320,8 @@ int main()
 			theLineStatesTheGpuMemoryBudgetAndItsUsage},
 		{"the-line-states-who-holds-the-graphics-budget",
 			theLineStatesWhoHoldsTheGraphicsBudget},
+		{"the-line-states-when-the-guest-reclaims-graphics-memory",
+			theLineStatesWhenTheGuestReclaimsGraphicsMemory},
 		{"the-elapsed-time-counts-from-the-first-sample",
 			theElapsedTimeCountsFromTheFirstSample},
 	};

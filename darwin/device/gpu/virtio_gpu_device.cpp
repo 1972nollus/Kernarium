@@ -3,6 +3,7 @@
 #include "virtio_gpu_device.hpp"
 
 #include "display_activity_log.hpp"
+#include "virtio_gpu_uml.h"
 
 #if UML_GPU_DEVICE_TESTING
 #include "virtio_gpu_device_testing.hpp"
@@ -70,6 +71,35 @@ namespace {
 /* What the guest's contexts hold of the host GPU's memory (the display keeps
  * it, since the display outlives this connection). */
 #define UML_GPU_LEDGER UML_GPU_DISPLAY.graphicsLedger()
+/* The device memory budget and the pool's usage, while a renderer with a
+ * budget runs. */
+#if UML_GPU_DEVICE_TESTING
+#define UML_GPU_DEVICE_MEMORY dependencies_.deviceMemory()
+#define UML_GPU_RECLAIM_MEMORY dependencies_.reclaimCachedMemory()
+#else
+#define UML_GPU_DEVICE_MEMORY VirglRenderer::deviceMemory()
+#define UML_GPU_RECLAIM_MEMORY VirglRenderer::reclaimCachedMemory()
+#endif
+
+/* The memory report's wire is the kernel's header; the host's own names for
+ * its codes must agree. */
+static_assert(protocol::virtioGpuFeatureUmlMemoryReport ==
+    1ULL << VIRTIO_GPU_F_UML_MEMORY_REPORT);
+static_assert(protocol::gpuEventMemory == VIRTIO_GPU_EVENT_UML_MEMORY);
+static_assert(static_cast<std::uint32_t>(protocol::GpuCommand::umlGetMemory) ==
+    VIRTIO_GPU_CMD_UML_GET_MEMORY);
+static_assert(static_cast<std::uint32_t>(protocol::GpuResponse::okUmlMemory) ==
+    VIRTIO_GPU_RESP_OK_UML_MEMORY);
+static_assert(sizeof(virtio_gpu_ctrl_hdr) == sizeof(protocol::GpuControlHeader));
+static_assert(sizeof(virtio_gpu_uml_get_memory) == 48);
+static_assert(sizeof(virtio_gpu_uml_memory) == 72);
+static_assert(sizeof(virtio_gpu_uml_memory_holder) == 40);
+static_assert(VIRTIO_GPU_UML_COMM_LEN == 16);
+
+/* The size of the memory reply with no holder, and with every holder. */
+constexpr std::size_t memoryReplyFixedSize = sizeof(virtio_gpu_uml_memory);
+constexpr std::size_t memoryReplyMaximumSize = memoryReplyFixedSize +
+    VIRTIO_GPU_UML_MAX_HOLDERS * sizeof(virtio_gpu_uml_memory_holder);
 
 /* A resource's room in the ledger, given back unless the command commits. */
 class LedgerReservation {
@@ -145,6 +175,8 @@ const Structure* readStructure(std::span<const std::uint8_t> bytes)
         return sizeof(protocol::GpuCapsetInfo);
     case protocol::GpuCommand::resourceMapBlob:
         return sizeof(protocol::GpuMapInfo);
+    case protocol::GpuCommand::umlGetMemory:
+        return memoryReplyFixedSize;
     default:
         return sizeof(protocol::GpuControlHeader);
     }
@@ -542,6 +574,8 @@ protocol::GpuConfig VirtioGpuDevice::config() const noexcept
     std::uint32_t events = 0;
     if (displayGeneration_ != clearedDisplayGeneration_)
         events |= protocol::gpuEventDisplay;
+    if (memoryGeneration_ != clearedMemoryGeneration_)
+        events |= protocol::gpuEventMemory;
     return {
         .eventsRead = events,
         .eventsClear = 0,
@@ -561,12 +595,14 @@ void VirtioGpuDevice::recordConfigRead(
         eventsReadOffset + sizeof(protocol::GpuConfig::eventsRead);
     const auto readEnd =
         static_cast<std::uint64_t>(offset) + size;
-    if (offset <= eventsReadOffset && readEnd >= eventsReadEnd &&
-        displayGeneration_ != clearedDisplayGeneration_) {
+    if (offset <= eventsReadOffset && readEnd >= eventsReadEnd) {
         /* events_clear acknowledges the generation whose events_read field
          * the guest actually received. Unrelated partial config reads must
          * not advance this snapshot. */
-        reportedDisplayGeneration_ = displayGeneration_;
+        if (displayGeneration_ != clearedDisplayGeneration_)
+            reportedDisplayGeneration_ = displayGeneration_;
+        if (memoryGeneration_ != clearedMemoryGeneration_)
+            reportedMemoryGeneration_ = memoryGeneration_;
     }
 }
 
@@ -579,6 +615,158 @@ void VirtioGpuDevice::clearEvents(std::uint32_t events) noexcept
 {
     if ((events & protocol::gpuEventDisplay) != 0)
         clearedDisplayGeneration_ = reportedDisplayGeneration_;
+    if ((events & protocol::gpuEventMemory) != 0)
+        clearedMemoryGeneration_ = reportedMemoryGeneration_;
+}
+
+bool VirtioGpuDevice::memoryEventPending() const noexcept
+{
+    return memoryGeneration_ != clearedMemoryGeneration_;
+}
+
+bool VirtioGpuDevice::offersMemoryReport() const noexcept
+{
+    return UML_GPU_DEVICE_MEMORY.has_value();
+}
+
+void VirtioGpuDevice::setMemoryWake(std::function<void()> wake)
+{
+    memoryWake_ = std::move(wake);
+    /* A subscription that outlives the call keeps the wake it was made with. */
+    if (memoryPressure_.subscribed())
+        UML_GPU_LEDGER.setObserver(memoryWake_);
+}
+
+MemoryPressure::Reading VirtioGpuDevice::memoryReading() const noexcept
+{
+    MemoryPressure::Reading reading {
+        .refusals = UML_GPU_DISPLAY.memoryRefusals(),
+    };
+    if (const auto figures = UML_GPU_DEVICE_MEMORY) {
+        reading.budgetBytes = figures->budgetBytes;
+        reading.usageBytes = figures->usageBytes;
+    }
+    return reading;
+}
+
+bool VirtioGpuDevice::evaluateMemory(
+    std::chrono::steady_clock::time_point now) noexcept
+{
+    if (!memoryPressure_.subscribed())
+        return false;
+    const bool raise = memoryPressure_.evaluate(now, memoryReading());
+    /* The usage holds what the host's drivers cache, which the pool frees
+     * before it refuses: free it first, and let the evaluator read the figure
+     * that is left once it has settled (its deadline). */
+    if (memoryPressure_.reclaimDue(now))
+        memoryPressure_.reclaimed(now, UML_GPU_RECLAIM_MEMORY != 0);
+    if (!raise)
+        return false;
+    ++memoryGeneration_;
+    ++memoryEventsRaised_;
+    return true;
+}
+
+std::optional<std::chrono::steady_clock::time_point>
+VirtioGpuDevice::memoryDeadline() const noexcept
+{
+    return memoryPressure_.deadline();
+}
+
+std::vector<std::uint8_t> VirtioGpuDevice::memoryReport(
+    const protocol::GpuControlHeader& header,
+    std::span<const std::uint8_t> bytes,
+    std::size_t capacity)
+{
+    if (!offersMemoryReport())
+        return response(header, protocol::GpuResponse::errorUnspecified);
+    virtio_gpu_uml_get_memory query;
+    constexpr std::uint32_t knownFlags = VIRTIO_GPU_UML_MEMORY_SUBSCRIBE |
+        VIRTIO_GPU_UML_MEMORY_GUEST_RECLAIMS;
+    if (bytes.size() < sizeof(query))
+        return response(header, protocol::GpuResponse::errorInvalidParameter);
+    std::memcpy(&query, bytes.data(), sizeof(query));
+    if ((query.flags & ~knownFlags) != 0 || query.padding != 0) {
+        return response(
+            header, protocol::GpuResponse::errorInvalidParameter);
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const auto reading = memoryReading();
+    const bool subscribe =
+        (query.flags & VIRTIO_GPU_UML_MEMORY_SUBSCRIBE) != 0;
+    if (subscribe && !memoryPressure_.subscribed()) {
+        memoryPressure_.subscribe(reading);
+        UML_GPU_LEDGER.setObserver(memoryWake_);
+    } else if (!subscribe && memoryPressure_.subscribed()) {
+        memoryPressure_.unsubscribe();
+        UML_GPU_LEDGER.setObserver({});
+    }
+    UML_GPU_DISPLAY.setGuestReclaims(
+        (query.flags & VIRTIO_GPU_UML_MEMORY_GUEST_RECLAIMS) != 0);
+    const auto state = memoryPressure_.query(now, reading);
+
+    /* Only a process the host can name is a holder to the guest. */
+    const std::size_t room = capacity > memoryReplyFixedSize
+        ? (capacity - memoryReplyFixedSize) /
+            sizeof(virtio_gpu_uml_memory_holder)
+        : 0;
+    const std::size_t limit = std::min<std::size_t>(
+        {query.max_holders, VIRTIO_GPU_UML_MAX_HOLDERS, room});
+    const auto snapshot = UML_GPU_LEDGER.snapshot(
+        now,
+        std::numeric_limits<std::size_t>::max(),
+        std::chrono::milliseconds {query.min_idle_ms},
+        query.min_bytes);
+
+    std::vector<std::uint8_t> reply(memoryReplyFixedSize);
+    std::uint32_t count = 0;
+    for (const auto& holder : snapshot.holders) {
+        if (count >= limit)
+            break;
+        if (holder.pid == 0)
+            continue;
+        virtio_gpu_uml_memory_holder wire {};
+        wire.bytes = holder.bytes;
+        wire.pid = holder.pid;
+        wire.contexts = holder.contexts;
+        wire.idle_ms = static_cast<std::uint32_t>(std::min<std::int64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(holder.idle)
+                .count(),
+            std::numeric_limits<std::uint32_t>::max()));
+        /* A command name is whatever the process chose: keep it to one
+         * printable line, so a reader of the guest's file cannot be handed a
+         * forged line. */
+        const auto length = std::min<std::size_t>(
+            holder.name.size(), VIRTIO_GPU_UML_COMM_LEN - 1);
+        for (std::size_t index = 0; index < length; ++index) {
+            const auto character = static_cast<unsigned char>(holder.name[index]);
+            wire.comm[index] = character < 0x20 || character == 0x7f
+                ? '?'
+                : static_cast<char>(character);
+        }
+        const auto* wireBytes = reinterpret_cast<const std::uint8_t*>(&wire);
+        reply.insert(reply.end(), wireBytes, wireBytes + sizeof(wire));
+        ++count;
+    }
+
+    virtio_gpu_uml_memory fixed {};
+    fixed.hdr.type = VIRTIO_GPU_RESP_OK_UML_MEMORY;
+    fixed.hdr.flags = header.flags &
+        (protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex);
+    fixed.hdr.fence_id = header.fenceId;
+    fixed.hdr.ctx_id = header.contextId;
+    fixed.hdr.ring_idx = header.ringIndex;
+    fixed.budget_bytes = reading.budgetBytes;
+    fixed.used_bytes = reading.usageBytes;
+    fixed.context_bytes = snapshot.totalBytes;
+    fixed.refusals = reading.refusals;
+    fixed.state = (state.pressure ? VIRTIO_GPU_UML_STATE_PRESSURE : 0U) |
+        (state.refused ? VIRTIO_GPU_UML_STATE_REFUSED : 0U);
+    fixed.generation = memoryEventsRaised_;
+    fixed.holder_count = count;
+    std::memcpy(reply.data(), &fixed, sizeof(fixed));
+    return reply;
 }
 
 bool VirtioGpuDevice::displayEventPending() const noexcept
@@ -598,6 +786,15 @@ void VirtioGpuDevice::reset() noexcept
      * mappings. Release them before the transport unmaps those regions. Each
      * tracked renderer object is retired once, then all host bookkeeping is
      * returned to the pristine connection state. */
+    /* No wake may reach the transport once the guest is gone, and the
+     * ledger's clear below is no change anyone is told of. */
+    UML_GPU_LEDGER.setObserver({});
+    memoryPressure_.unsubscribe();
+    UML_GPU_DISPLAY.setGuestReclaims(false);
+    memoryGeneration_ = 0;
+    reportedMemoryGeneration_ = 0;
+    clearedMemoryGeneration_ = 0;
+    memoryEventsRaised_ = 0;
     releaseBlobScanout();
     for (auto& [resourceId, resource] : virglResources_) {
         if (!resource.vectors.empty())
@@ -894,6 +1091,11 @@ VirtioGpuDevice::ProcessResult VirtioGpuDevice::processWithDeferredFence(
         };
     }
 
+    /* The reply to a memory query is cut to the room the guest left, and
+     * the query is no part of the renderer's order. */
+    if (control && command == protocol::GpuCommand::umlGetMemory)
+        return {.response = memoryReport(*header, request, responseCapacity)};
+
     std::optional<DeferredFence> deferredFence;
     std::optional<std::uint32_t> destroyedContextId;
     auto reply = processInternal(
@@ -928,6 +1130,7 @@ bool VirtioGpuDevice::canProcessWhileFencesPending(
     case protocol::GpuCommand::getEdid:
     case protocol::GpuCommand::getCapsetInfo:
     case protocol::GpuCommand::getCapset:
+    case protocol::GpuCommand::umlGetMemory:
     case protocol::GpuCommand::submit3d:
     case protocol::GpuCommand::transferToHost3d:
     case protocol::GpuCommand::transferFromHost3d:
@@ -1060,6 +1263,9 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         return capsetInfo(*capsetInfoRequest);
     }
+
+    case protocol::GpuCommand::umlGetMemory:
+        return memoryReport(*header, request, memoryReplyMaximumSize);
 
     case protocol::GpuCommand::getCapset: {
         const auto* capsetRequest =

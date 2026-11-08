@@ -14,6 +14,8 @@ constexpr std::uint64_t virtioGpuFeatureVirgl = 1ULL << 0U;
 constexpr std::uint64_t virtioGpuFeatureEdid = 1ULL << 1U;
 constexpr std::uint64_t virtioGpuFeatureResourceBlob = 1ULL << 3U;
 constexpr std::uint64_t virtioGpuFeatureContextInit = 1ULL << 4U;
+// The private memory report (kernel/common/gpu/virtio_gpu_uml.h owns the wire).
+constexpr std::uint64_t virtioGpuFeatureUmlMemoryReport = 1ULL << 23U;
 
 constexpr std::size_t gpuControlQueue = 0;
 constexpr std::size_t gpuCursorQueue = 1;
@@ -47,6 +49,7 @@ enum class GpuCommand : std::uint32_t {
     resourceUnmapBlob = 0x0209,
     updateCursor = 0x0300,
     moveCursor = 0x0301,
+    umlGetMemory = 0x0f00,
 };
 
 enum class GpuResponse : std::uint32_t {
@@ -56,6 +59,7 @@ enum class GpuResponse : std::uint32_t {
     okCapset = 0x1103,
     okEdid = 0x1104,
     okMapInfo = 0x1106,
+    okUmlMemory = 0x11f0,
     errorUnspecified = 0x1200,
     errorOutOfMemory = 0x1201,
     errorInvalidScanout = 0x1202,
@@ -83,6 +87,7 @@ constexpr std::size_t gpuBytesPerPixel = 4;
 constexpr std::uint32_t primaryScanoutId = 0;
 constexpr std::uint32_t enabledDisplayMode = 1;
 constexpr std::uint32_t gpuEventDisplay = 1U << 0U;
+constexpr std::uint32_t gpuEventMemory = 1U << 1U;
 constexpr std::uint32_t invalidResourceId = 0;
 constexpr std::uint32_t invalidContextId = 0;
 // Virgl capsets from the stable Virtio-GPU ABI.

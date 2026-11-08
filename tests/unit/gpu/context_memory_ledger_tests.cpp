@@ -449,6 +449,92 @@ void threadsMeetOnOneLedger()
     require(ledger.totalBytes() == 0, "the threads left bytes behind");
 }
 
+/* The device hears of a change of the total through an observer, for a guest
+ * that asked to be told, with no lock held and only for a change. */
+void anObserverHearsOfEveryChangeOfTheTotal()
+{
+    ContextMemoryLedger ledger;
+    int calls = 0;
+    std::uint64_t seen = 0;
+    ledger.contextCreated(1, "t|pid=100|comm=a", true, origin);
+    ledger.contextCreated(2, "t|pid=200|comm=b", false, origin);
+    ledger.venusMemory(1, 10 * mebibyte);
+    require(calls == 0, "an observer that was not set was called");
+
+    ledger.setObserver([&] {
+        ++calls;
+        /* The ledger is not locked: the observer may read it. */
+        seen = ledger.totalBytes();
+    });
+    ledger.venusMemory(1, 5 * mebibyte);
+    require(calls == 1 && seen == 15 * mebibyte, "growth was not reported with its total");
+    ledger.venusMemory(1, 0);
+    require(calls == 1, "a change of nothing was reported");
+    ledger.venusMemory(99, mebibyte);
+    require(calls == 1, "a report for an unknown context was reported");
+    ledger.contextActive(1, origin);
+    ledger.reserveResource(7);
+    require(calls == 1, "activity or an empty reservation was reported");
+
+    ledger.setResourceBytes(7, 4 * mebibyte);
+    require(calls == 1, "a resource no context holds was reported");
+    attach(ledger, 2, 7);
+    require(calls == 2 && seen == 19 * mebibyte, "a resource that gained a holder was not reported");
+    attach(ledger, 1, 7);
+    require(calls == 2, "a second holder of a counted resource was reported");
+    ledger.resourceDetached(1, 7);
+    require(calls == 2, "a holder that left a held resource was reported");
+    ledger.resourceReleased(7);
+    require(calls == 3 && seen == 15 * mebibyte, "a released resource was not reported");
+    ledger.contextDestroyed(1);
+    require(calls == 4 && seen == 0, "a context that took memory with it was not reported");
+    ledger.contextDestroyed(1);
+    require(calls == 4, "a context that was gone was reported");
+
+    ledger.notify();
+    require(calls == 5, "notify did not call the observer");
+    ledger.venusMemory(2, 2 * mebibyte);
+    require(calls == 6 && seen == 2 * mebibyte, "growth after a destroy was not reported");
+    ledger.clear();
+    require(calls == 7 && seen == 0, "clear was not reported");
+    ledger.clear();
+    require(calls == 7, "clearing nothing was reported");
+
+    ledger.setObserver({});
+    ledger.contextCreated(3, "t|pid=300|comm=c", true, origin);
+    ledger.venusMemory(3, mebibyte);
+    ledger.notify();
+    require(calls == 7, "a cleared observer was called");
+}
+
+/* Clearing the observer returns once no call of it is running, so what the
+ * observer touches can go. */
+void clearingTheObserverWaitsForARunningCall()
+{
+    ContextMemoryLedger ledger;
+    ledger.contextCreated(1, "t|pid=100|comm=a", true, origin);
+    std::atomic<bool> inside {false};
+    std::atomic<bool> leave {false};
+    std::atomic<bool> finished {false};
+    ledger.setObserver([&] {
+        inside.store(true);
+        while (!leave.load())
+            std::this_thread::sleep_for(1ms);
+        finished.store(true);
+    });
+    std::thread changing([&] { ledger.venusMemory(1, mebibyte); });
+    while (!inside.load())
+        std::this_thread::sleep_for(1ms);
+    std::thread releasing([&] {
+        std::this_thread::sleep_for(50ms);
+        leave.store(true);
+    });
+    ledger.setObserver({});
+    require(finished.load(), "the observer was cleared while a call of it ran");
+    releasing.join();
+    changing.join();
+}
+
 } // namespace
 
 int main()
@@ -465,5 +551,7 @@ int main()
     theSnapshotKeepsTheLargestHoldersThatAreBigEnough();
     clearForgetsTheGuest();
     threadsMeetOnOneLedger();
+    anObserverHearsOfEveryChangeOfTheTotal();
+    clearingTheObserverWaitsForARunningCall();
     return 0;
 }

@@ -277,6 +277,9 @@ requires reopening Andarium.
   full or the guest is refused, it ends the cached background app that holds
   the most, over the guest's shell. It acts only on a holder the guest kernel
   names by process, never on the foreground, visible, perceptible or home app.
+  It stands down while the guest's own low-memory killer reclaims the budget
+  (`guest_reclaims`, runtime API 29), which is then the only one that ends an
+  app.
 - **Session ends.** The runtime records how each session ended
   ([`docs/architecture.md`](../docs/architecture.md)). The next launch keeps
   that record as the previous session's (`PreviousSession`) and, after an end

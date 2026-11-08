@@ -66,6 +66,14 @@ if(TARGET uml_gpu_context_memory_ledger)
         LIBRARIES UML::GpuContextMemoryLedger Threads::Threads)
 endif()
 
+# When the guest is told its graphics memory is under pressure: the evaluator
+# needs no GPU device either.
+if(TARGET uml_gpu_memory_pressure)
+    uml_add_gpu_unit_test(gpu-memory-pressure
+        uml_gpu_memory_pressure_tests memory_pressure_tests.cpp
+        LIBRARIES UML::GpuMemoryPressure)
+endif()
+
 uml_add_gpu_unit_test(gpu-metal-submit-timing-collector
     uml_gpu_metal_submit_timing_tests metal_submit_timing_tests.cpp
     LIBRARIES Threads::Threads
@@ -574,6 +582,14 @@ if(TARGET uml_gpu_service)
             ${_uml_gpu_device_directory}
             ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user
             ${CMAKE_CURRENT_SOURCE_DIR}
+        UNIT_DIRECTORY)
+
+    # The private memory report: the device with a renderer that has a budget.
+    uml_add_gpu_unit_test(gpu-device-memory-report
+        uml_gpu_device_memory_report_tests
+        virtio_gpu_device_memory_report_tests.cpp
+        LIBRARIES uml_gpu_protocol_device_test_variant
+        INCLUDES ${_uml_gpu_device_directory} ${CMAKE_CURRENT_SOURCE_DIR}
         UNIT_DIRECTORY)
 
     uml_add_gpu_unit_test(gpu-device-command-atomicity

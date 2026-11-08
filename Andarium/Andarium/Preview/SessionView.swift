@@ -37,7 +37,7 @@ struct SessionView: View {
             if model.session.showStats {
                 StatsPill(readout: model.session.readout, memoryMiB: guestModel.memoryMiB, recovery: mode == .recovery)
                     .transition(.move(edge: .top).combined(with: .opacity))
-                    .padding(.top, 36)
+                    .padding(.top, StatsPlacement.top)
                     .allowsHitTesting(false)
             }
         }

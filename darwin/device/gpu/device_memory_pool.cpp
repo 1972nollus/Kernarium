@@ -145,6 +145,12 @@ void DeviceMemoryPool::setReclaim(Reclaim reclaim)
     reclaim_ = std::move(reclaim);
 }
 
+std::uint64_t DeviceMemoryPool::reclaim()
+{
+    std::lock_guard lock(reclaimMutex_);
+    return reclaim_ ? reclaim_() : 0;
+}
+
 bool DeviceMemoryPool::reserve(std::uint64_t bytes)
 {
     const std::uint64_t charged = charge(bytes);

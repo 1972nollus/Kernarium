@@ -57,6 +57,9 @@ struct GraphicsMemory {
     std::uint64_t usageBytes {};
     /* What the guest's contexts hold of it (ContextMemoryLedger). */
     std::uint64_t contextBytes {};
+    /* Whether a reclaimer in the guest acts on the host's memory reports
+     * (Display::guestReclaims): the host's own then stands down. */
+    bool guestReclaims {};
     /* The holders that fit the request, largest first. */
     std::vector<ContextMemoryLedger::Holder> holders;
 };

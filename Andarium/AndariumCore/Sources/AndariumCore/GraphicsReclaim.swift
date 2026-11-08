@@ -34,18 +34,22 @@ public struct GraphicsMemoryReading: Equatable, Sendable {
     public var contextBytes: UInt64
     /// The refusals the guest was answered with, since its display was made.
     public var refusals: UInt64
+    /// Whether the guest's own low-memory killer asks the host for the budget's
+    /// holders and ends them itself.
+    public var guestReclaims: Bool
     /// The holders that are quiet and large enough to be asked for, largest
     /// first.
     public var holders: [GraphicsHolder]
 
     public init(
         budgetBytes: UInt64, usageBytes: UInt64, contextBytes: UInt64, refusals: UInt64 = 0,
-        holders: [GraphicsHolder] = []
+        guestReclaims: Bool = false, holders: [GraphicsHolder] = []
     ) {
         self.budgetBytes = budgetBytes
         self.usageBytes = usageBytes
         self.contextBytes = contextBytes
         self.refusals = refusals
+        self.guestReclaims = guestReclaims
         self.holders = holders
     }
 }
@@ -217,6 +221,9 @@ public enum GraphicsReclaimResult: Equatable, Sendable {
 /// - At most one app ends per `killInterval` and `killsPerEpisode` in one
 ///   episode of pressure, which lasts until `calmReads` readings in a row
 ///   show none. An app that stays after it was asked is not asked again.
+/// - It stands down while the guest's own low-memory killer reclaims the
+///   budget (`GraphicsMemoryReading.guestReclaims`): that one decides, and
+///   this starts again from nothing when it stops.
 public struct GraphicsReclaim: Equatable, Sendable {
     public static let nearFullMargin: UInt64 = 96 << 20
     public static let confirmingReads = 2
@@ -266,7 +273,7 @@ public struct GraphicsReclaim: Equatable, Sendable {
 
     /// Takes one reading and says whether to try to end an app now.
     public mutating func observe(_ reading: GraphicsMemoryReading, at now: ContinuousClock.Instant) -> Bool {
-        guard reading.budgetBytes > 0 else {
+        guard reading.budgetBytes > 0, !reading.guestReclaims else {
             reset()
             return false
         }
