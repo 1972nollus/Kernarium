@@ -2,18 +2,19 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Refuse a build for a Mac (Designed for iPad) whose products are in a temporary directory.
 
-An Apple silicon Mac runs Andarium from an install of the build's products
-directory, and Gatekeeper (syspolicyd) refuses an app installed from a system
-temporary directory: /tmp, /var/tmp and the per-user $TMPDIR (all below
+An Apple silicon Mac runs Andarium or Kernarium from an install of the build's
+products directory, and Gatekeeper (syspolicyd) refuses an app installed from a
+system temporary directory: /tmp, /var/tmp and the per-user $TMPDIR (all below
 /private) get "Denying target with bad app wrapper", whatever the app's
-signature, the group of its files or the framework variant it embeds. The run
-then ends "Test crashed with signal kill before establishing connection" after
-a Gatekeeper dialog, so the build fails first and says why. A build for a
+signature, the group of its files or the framework variant it embeds. The test
+run then ends "Test crashed with signal kill before establishing connection"
+(Andarium) or "The test runner hung before establishing connection" (Kernarium)
+after a Gatekeeper dialog, so the build fails first and says why. A build for a
 device or the Simulator may use such a directory, so only a Mac destination
 (Xcode's TARGET_DEVICE_PLATFORM_NAME is macosx) is checked.
 
-The Xcode project runs it as the first build phase of the Andarium target, in
-the environment of a run-script phase (TARGET_DEVICE_PLATFORM_NAME,
+Each application's Xcode project runs it as the first build phase of its
+target, in the environment of a run-script phase (TARGET_DEVICE_PLATFORM_NAME,
 TARGET_BUILD_DIR).
 """
 
@@ -51,7 +52,7 @@ def main(environment: dict[str, str]) -> int:
     print(
         f"error: the products directory {products} is below {root}, a system temporary directory. "
         "Gatekeeper rejects an iPad app installed from there on a Mac (syspolicyd: bad app wrapper), "
-        "and the test run is killed before it starts. Build with -derivedDataPath outside /tmp, /var/tmp "
+        "and the app never starts. Build with -derivedDataPath outside /tmp, /var/tmp "
         "and $TMPDIR.",
         file=sys.stderr,
     )
