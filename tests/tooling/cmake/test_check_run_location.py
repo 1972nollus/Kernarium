@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Andarium/scripts/check-run-location.py refuses a Mac build in a temporary directory.
+"""scripts/check-run-location.py refuses a Mac build in a temporary directory.
 
 The script runs in an Xcode run-script phase, where the destination is
 TARGET_DEVICE_PLATFORM_NAME and the products directory TARGET_BUILD_DIR. The
@@ -11,14 +11,14 @@ from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
+import argparse
 import pathlib
 import subprocess
 import sys
 import tempfile
 import unittest
 
-REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
-SCRIPT = REPOSITORY / "Andarium/scripts/check-run-location.py"
+SCRIPT: pathlib.Path
 BOUND_SECONDS = 30
 # A products directory below no temporary directory; it need not exist.
 ELSEWHERE = "/opt/xcode-products/Build/Products/Debug-iphoneos"
@@ -68,4 +68,8 @@ class RunLocationTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--checker", type=pathlib.Path, required=True)
+    options, remaining = parser.parse_known_args()
+    SCRIPT = options.checker
+    unittest.main(argv=[sys.argv[0], *remaining])

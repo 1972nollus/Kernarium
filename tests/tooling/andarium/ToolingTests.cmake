@@ -59,13 +59,3 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/andarium/test_capture_screens.py
     LABELS andarium
     TIMEOUT 60)
-
-# A Mac run of the application is killed by Gatekeeper when the build's
-# products are in a system temporary directory, so the first build phase
-# refuses that directory for a Mac destination and no other.
-uml_add_tooling_test(
-    NAME andarium-run-location
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/andarium/test_check_run_location.py
-    LABELS andarium
-    TIMEOUT 60)
