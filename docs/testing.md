@@ -120,7 +120,7 @@ test's header holds the mechanics.
 | `guest-gbm-dmabuf` | `UML_GBM_DMABUF_PROBE_BINARY` | the virtio-gpu dma-buf contract |
 | `guest-drm-vblank` | `UML_DRM_FLIP_PROBE_BINARY` | Virtio-GPU's vblank pacing |
 | `guest-aarch32-kernel` | built from `tests/integration/aarch32/` | the kernel's AArch32 task support (needs `python3`, `as`, `ld` in the rootfs) |
-| `apple-audio-playback`, `-interruption` | `UML_TEST_APPLE_AUDIO=ON` | the real macOS audio output and the iOS interruption behavior (the latter needs an iOS Simulator device) |
+| `apple-audio-playback`, `-interruption` | `UML_TEST_APPLE_AUDIO=ON` | the real macOS audio output and the iOS interruption behavior (the latter needs an iOS Simulator runtime, and runs in a simulator device it creates and deletes) |
 
 The probe sources are built for the guest architecture; each header says how.
 The real microphone is checked by hand because granting access is the user's
@@ -287,7 +287,10 @@ hosted in `Andarium` and runs on an iPad, in the Simulator and as an iPad app on
 an Apple silicon Mac (`xcodebuild test -scheme Andarium`). The hosted tests
 share the application's one key window: a test that replaces its root view
 controller or connects a window takes it with `HostWindow.take()`, and none
-opens the system's Settings or another app.
+opens the system's Settings or another app. The bundle's principal class
+(`AndariumTestBundle`) shows the side keys' tip in every session of the run,
+whatever the device's tip store says, except in an `ANDARIUM_HOLD_SECONDS`
+harness launch, which hides it.
 
 The opt-in suites each need a `TEST_RUNNER_ANDARIUM_*` switch that the suite's
 header names: rotation, motion compatibility and over-vsock, shutdown flow,

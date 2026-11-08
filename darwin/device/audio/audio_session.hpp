@@ -22,6 +22,13 @@ enum class Client : std::uint8_t {
 [[nodiscard]] bool acquire(Client client) noexcept;
 void release(Client client) noexcept;
 
+/* The IO cycle, in seconds, that `client` asks for while it holds the session
+ * (0 asks for none). The session runs at the shortest cycle its clients ask
+ * for, rounded by the system to one the hardware supports, from the next
+ * acquire() on. macOS configures each output engine itself, and the call does
+ * nothing there. */
+void preferIoCycle(Client client, double seconds) noexcept;
+
 /* Whether another app plays audio that wants the session to itself (the
  * session's secondaryAudioShouldBeSilencedHint). It is the question a client
  * asks before it takes the session back without being told to: a client must
