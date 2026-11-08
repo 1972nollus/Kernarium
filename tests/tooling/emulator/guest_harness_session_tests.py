@@ -14,6 +14,8 @@ import io
 import os
 import pathlib
 import re
+import select
+import shlex
 import signal
 import subprocess
 import sys
@@ -234,6 +236,75 @@ class AttachedGuestSessionTests(unittest.TestCase):
             )
             self.assertIn("stderr is the terminal", process.output())
             self.assertEqual(process.host_output(), "")
+
+    def test_the_console_keeps_what_an_exited_emulator_wrote(self) -> None:
+        # A harness on a loaded host can read an emulator's last lines only
+        # after it has exited, so this one reads nothing until then. The
+        # guest kernel's console makes the terminal non-blocking; a shell
+        # leaves it blocking.
+        lines = "PASS probe verdict\\n", "Darwin host fault: signal=4\\n"
+        nonblocking = (
+            "import fcntl, os\n"
+            "flags = fcntl.fcntl(1, fcntl.F_GETFL)\n"
+            "fcntl.fcntl(1, fcntl.F_SETFL, flags | os.O_NONBLOCK)\n"
+            f"os.write(1, b'{lines[0]}')\n"
+            f"os.write(2, b'{lines[1]}')\n"
+            "os._exit(3)\n"
+        )
+        stand_ins = {
+            "blocking": (
+                "#!/bin/sh\n"
+                f"printf '{lines[0]}'\n"
+                f"printf '{lines[1]}' >&2\n"
+                "exit 3\n"
+            ),
+            "non-blocking": (
+                "#!/bin/sh\n"
+                f"exec {shlex.quote(sys.executable)} -I -S -c "
+                f"{shlex.quote(nonblocking)}\n"
+            ),
+        }
+        for mode, stand_in in stand_ins.items():
+            with self.subTest(mode):
+                self.emulator.write_text(stand_in, encoding="utf-8")
+                with guest_support.ConsoleProcess(
+                    [str(self.emulator)]
+                ) as process:
+                    deadline = time.monotonic() + PROCESS_WAIT_SECONDS
+                    while (
+                        process.return_code is None
+                        and time.monotonic() < deadline
+                    ):
+                        time.sleep(0.01)
+                    self.assertEqual(process.return_code, 3)
+                    self.assertTrue(
+                        process.wait_for_exit(PROCESS_WAIT_SECONDS)
+                    )
+                    self.assertEqual(
+                        process.output(),
+                        "PASS probe verdict\nDarwin host fault: signal=4",
+                    )
+
+    def test_a_console_wait_wakes_when_a_silent_emulator_exits(self) -> None:
+        # The harness holds the terminal open, so the console reports no end
+        # when the emulator exits, and a wait wakes on the exit itself. The
+        # stand-in exits without output once it reads the line the test
+        # writes after the console is set up.
+        self.emulator.write_text(
+            "#!/bin/sh\nread line\nexit 0\n", encoding="utf-8"
+        )
+        with guest_support.ConsoleProcess([str(self.emulator)]) as process:
+            process._write("\n")
+            deadline = time.monotonic() + PROCESS_WAIT_SECONDS
+            while process.return_code is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertEqual(process.return_code, 0)
+            readable, _, _ = select.select(
+                process._readable(), [], [], PROCESS_WAIT_SECONDS
+            )
+            self.assertTrue(readable)
+            process._drain()
+            self.assertEqual(process.output(), "")
 
     def test_a_timed_out_command_keeps_what_it_printed(self) -> None:
         self.emulator.write_text("#!/bin/sh\nexec /bin/sh\n", encoding="utf-8")
