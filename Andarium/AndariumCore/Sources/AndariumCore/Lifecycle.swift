@@ -12,6 +12,8 @@ public enum Phase: Equatable, Sendable {
 public enum HomeNotice: Equatable, Sendable {
     /// iOS ended Andarium while the guest was paused out of the foreground.
     case closedInBackground
+    /// The previous session ended badly, as its session record says.
+    case sessionEnded(SessionEndNotice)
 }
 
 /// Whether a start may go ahead.

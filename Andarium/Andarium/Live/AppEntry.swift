@@ -120,19 +120,16 @@ struct AppEntry {
         let markerDirectory = launch.instance == nil ? Self.supportDirectory() : locations.directory
         #endif
         let marker = PauseMarker(url: markerDirectory.appendingPathComponent("pause.json"))
-        if marker.consume(), guest != nil {
+        let closedInBackground = marker.consume()
+        if closedInBackground, guest != nil {
             model.notice = .closedInBackground
             print("Andarium: the previous process ended out of the foreground; the guest starts again from boot")
         }
-        // How the previous session ended, before the next boot overwrites
-        // it: a copy stays beside the record for diagnostics.
-        let sessionRecord = markerDirectory.appendingPathComponent("session.txt")
-        if let previous = SessionRecord.read(at: sessionRecord) {
-            print("Andarium: \(previous.summary)")
-            let kept = markerDirectory.appendingPathComponent("previous-session.txt")
-            try? FileManager.default.removeItem(at: kept)
-            try? FileManager.default.copyItem(at: sessionRecord, to: kept)
-        }
+        // The session records and MetricKit's reports live beside the marker.
+        let sessionRecord = markerDirectory.appendingPathComponent(BugReportAttachments.sessionRecord)
+        model.adoptDiagnostics(
+            in: markerDirectory, containers: Self.containerPaths(), endedOutOfForeground: closedInBackground)
+        ExitReports.shared.start(keepingIn: markerDirectory)
         if carried != nil {
             #if APP_STORE
             let watched = freeSpace
@@ -231,6 +228,16 @@ struct AppEntry {
     }
 
     /// `Library/Application Support/`, for the application's own small files.
+    /// The paths that name this install of Andarium, which leave the device
+    /// in no bug report.
+    static func containerPaths() -> [String] {
+        [
+            NSHomeDirectory(),
+            Bundle.main.bundleURL.deletingLastPathComponent().path,
+            FileManager.default.temporaryDirectory.path,
+        ]
+    }
+
     static func supportDirectory() -> URL {
         (try? FileManager.default.url(
             for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
