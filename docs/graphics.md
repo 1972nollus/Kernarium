@@ -252,7 +252,13 @@ KosmicKrisp is the one place every allocation passes: every device the process
 creates, Venus guests' and host GL's alike, reserves a heap from the pool before
 Metal makes it, so allocations that each fit alone never together take the
 process past B. A reservation that does not fit first frees what the host GL
-driver caches and is decided again.
+driver caches and is decided again. Memory the host frees leaves Metal's counter
+at once but the ledger only later, within milliseconds or at its next sweep. The
+pool sees the release in Metal's counter, and when the request would fit once
+the ledger had caught up with it, waits for the ledger (re-reading it every
+millisecond, for 300 ms at most) rather than refuse. A request that follows no
+release, or would not fit even then, is refused at once, and a wait that
+reached its bound is not repeated until Metal's counter falls again.
 
 - `vkAllocateMemory` of any type is refused with
   `VK_ERROR_OUT_OF_DEVICE_MEMORY` when the pool cannot hold it. That covers
