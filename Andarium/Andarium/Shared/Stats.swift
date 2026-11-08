@@ -143,7 +143,7 @@ enum StatsTint {
 /// safe-area edge.
 enum StatsPlacement {
     /// The capsule's distance below the top safe-area edge.
-    static let top: CGFloat = 36
+    static let top: CGFloat = 24
     /// The capsule's height.
     static let height: CGFloat = 40
     /// The graphics notice's distance below the capsule.
