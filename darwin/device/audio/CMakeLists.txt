@@ -25,3 +25,9 @@ target_link_libraries(uml_audio_device
         UML::VhostUserTransport
     "-framework AVFAudio"
     "-framework Foundation")
+if(UML_APPLE_PLATFORM STREQUAL "macos")
+    # The output's IO cycle is a device property there (OutputCycle).
+    target_link_libraries(uml_audio_device PRIVATE
+        "-framework AudioToolbox"
+        "-framework CoreAudio")
+endif()
