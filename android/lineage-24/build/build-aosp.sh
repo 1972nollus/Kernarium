@@ -467,6 +467,8 @@ fi
 	fail "the overlay that releases the home app's memory pin is absent"
 [[ "$PRODUCT_PACKAGES" == *" SecureElement "* ]] ||
 	fail "the OMAPI service that SEService clients bind on demand is absent"
+[[ "$PRODUCT_PACKAGES" == *" EasterEgg "* ]] ||
+	fail "the easter egg that the platform logo screen opens is absent"
 [[ "$PRODUCT_PACKAGES" == *" com.android.hardware.thermal "* ]] ||
 	fail "the example thermal HAL that the thermal manager needs is absent"
 [[ "$PRODUCT_PACKAGES" == *" com.android.hardware.cas "* ]] ||

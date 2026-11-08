@@ -139,6 +139,15 @@ BOOT_OPENGLES_VERSION = 0x30002
 OPENGLES_DEQP_LEVEL_FEATURE = "android.software.opengles.deqp.level"
 OPENGLES_DEQP_LEVEL = 132776705  # 2026-03-01
 UML_INIT_OPENGLES_COPY = "setprop ro.opengles.version ${ro.boot.opengles.version}"
+# The Venus HAL makes vkAllocateMemory wait for the host's reply, so a refusal of the host's GPU
+# budget reaches the application as VK_ERROR_OUT_OF_DEVICE_MEMORY instead of failing the ring and
+# aborting the process. Mesa reads its VN_PERF option as this property; vendor init sets it at
+# early-init, before any process that loads the driver starts, and only there. The driver loads in
+# applications, SurfaceFlinger and programs run from the shell (the CTS among them), and each must
+# be able to read the property, or Mesa reads no option and allocates asynchronously.
+VENUS_PERF_PROPERTY = "debug.mesa.vn.perf"
+VENUS_PERF_COPY = f"setprop {VENUS_PERF_PROPERTY} no_async_mem_alloc"
+VENUS_DRIVER_DOMAINS = ("untrusted_app", "surfaceflinger", "shell")
 # The retired AOSP external/mesa3d stack: its EGL and GLES libraries, and the
 # directory it loaded its driver from.
 RETIRED_EGL_ENTRIES = {
@@ -1325,6 +1334,20 @@ def check_boot_policy(
     if UML_INIT_TIMEOUT_COPY not in early_init:
         fail("UML init policy does not copy the hardware timeout multiplier at early-init")
     for trigger, commands in actions.items():
+        for command in commands:
+            if command.startswith(f"setprop {VENUS_PERF_PROPERTY} ") and (
+                trigger != "early-init" or command != VENUS_PERF_COPY
+            ):
+                fail(
+                    f"UML init policy runs '{command}' at '{trigger}', not "
+                    f"'{VENUS_PERF_COPY}' at early-init"
+                )
+    if VENUS_PERF_COPY not in early_init:
+        fail(
+            f"UML init policy does not run '{VENUS_PERF_COPY}' at early-init: a host GPU "
+            "budget refusal would abort a Vulkan application"
+        )
+    for trigger, commands in actions.items():
         if UML_INIT_DENSITY_COPY in commands and trigger != UML_INIT_DENSITY_TRIGGER:
             fail(f"UML init policy copies the display density under '{trigger}'")
     if UML_INIT_DENSITY_COPY not in actions.get(UML_INIT_DENSITY_TRIGGER, []):
@@ -1528,8 +1551,8 @@ def check_setup_wizard_art(overlay: zipfile.ZipFile) -> None:
 # reviewed as the flow its first action reaches, in order, and it may define nothing else.
 SETUP_WIZARD_NAMESPACE = "http://schemas.android.com/apk/res/com.google.android.setupwizard"
 SETUP_WIZARD_FLOWS = {
-    "lineage_wizard_script.xml": ("welcome", "locale", "datetime", "theme_settings", "finish"),
-    "lineage_wizard_script_user.xml": ("welcome", "theme_settings", "finish"),
+    "lineage_wizard_script.xml": ("welcome", "locale", "datetime", "theme_settings"),
+    "lineage_wizard_script_user.xml": ("welcome", "theme_settings"),
 }
 SETUP_WIZARD_HIDDEN = (
     "bluetooth_setup",
@@ -1642,6 +1665,21 @@ OVERLAY_CONFIGURATION = re.compile(r"[A-Z_]+/overlay/config/[^/]+\.xml")
 OVERLAY_THEME_PROPERTY = "ro.boot.vendor.overlay.theme"
 
 
+# Settings' "Android version" row opens the platform logo screen, and that screen starts the easter
+# egg by its PLATLOGO category, so the image carries the egg's package. The framework's product list
+# decides where it lands, hence any of the three application directories.
+EASTER_EGG_APK = re.compile(r"(?:SYSTEM|SYSTEM_EXT|PRODUCT)/(?:priv-)?app/EasterEgg/EasterEgg\.apk")
+
+
+def check_easter_egg(infos: dict[str, zipfile.ZipInfo]) -> None:
+    """The easter egg that the platform logo screen opens is in the image."""
+    if not any(EASTER_EGG_APK.fullmatch(name) for name in infos):
+        fail(
+            "EasterEgg.apk is missing from the image: the Android version row opens the logo screen, "
+            "which starts the egg (com.android.egg)"
+        )
+
+
 def check_navigation_mode(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
     """The wizard leaves the navigation mode alone, and both modes stay available."""
     info = infos.get(SETUP_WIZARD_APK)
@@ -1674,13 +1712,14 @@ def check_navigation_mode(archive: zipfile.ZipFile, infos: dict[str, zipfile.Zip
 
 
 # Trebuchet's stock default workspace names Google applications and widgets that the image does not
-# ship, so a fresh guest lost most of its items and showed the rest on the second page, with an empty
-# first page and dock. The product's runtime resource overlay for Launcher3QuickStep carries one layout
-# per grid the launcher can pick, and each puts the image's six launcher applications on the first
-# page, with an empty dock and no widget. The tracked layouts are checked as a table of reviewed
-# components (each one's APK must be in the image) and the overlay must hold every layout. The overlay
-# compiles the layouts, so the check reads their strings in the overlay's string pools, as the Setup
-# Wizard check does, and a layout of the stock launcher fails on its Google names.
+# ship, so a fresh guest lost most of its items. The product's runtime resource overlay for
+# Launcher3QuickStep carries one layout per grid the launcher can pick, and each holds the dock
+# (hotseat) of Files and Settings and nothing else: no item on the workspace and no widget. Calendar,
+# Gallery, Music and Calculator stay installed and reach the person through the app drawer. The tracked
+# layouts are checked as a table of reviewed components (each one's APK must be in the image) and the
+# overlay must hold every layout. The overlay compiles the layouts, so the check reads their strings
+# in the overlay's string pools, as the Setup Wizard check does, and a layout of the stock launcher
+# fails on its Google names.
 LAUNCHER_OVERLAY = (
     "PRODUCT/overlay/Launcher3QuickStep__lineage_andarium__auto_generated_rro_product.apk"
 )
@@ -1689,24 +1728,31 @@ LAUNCHER_LAYOUTS = (
 )
 LAUNCHER_NAMESPACE = "http://schemas.android.com/apk/res-auto/com.android.launcher3"
 LAUNCHER_GRIDS = ("4x5", "5x5", "5x6", "5x7", "6x5", "6x6")
-# (package, class) of each application with a launcher activity, and where its APK is.
+LAUNCHER_FILES = ("com.android.documentsui", "com.android.documentsui.LauncherActivity")
+LAUNCHER_SETTINGS = ("com.android.settings", "com.android.settings.Settings")
+# (package, class) of each application with a launcher activity, and where its APK is. All six stay in
+# the image; the app drawer lists them.
 LAUNCHER_APPS = {
-    ("com.android.settings", "com.android.settings.Settings"): "SYSTEM_EXT/priv-app/Settings/Settings.apk",
+    LAUNCHER_SETTINGS: "SYSTEM_EXT/priv-app/Settings/Settings.apk",
     ("org.lineageos.etar", "com.android.calendar.AllInOneActivity"): "PRODUCT/app/Etar/Etar.apk",
     ("org.lineageos.glimpse", "org.lineageos.glimpse.MainActivity"): "PRODUCT/app/Glimpse/Glimpse.apk",
     ("org.lineageos.twelve", "org.lineageos.twelve.MainActivity"): "PRODUCT/app/Twelve/Twelve.apk",
     ("com.android.calculator2", "com.android.calculator2.Calculator"):
         "PRODUCT/app/ExactCalculator/ExactCalculator.apk",
-    ("com.android.documentsui", "com.android.documentsui.LauncherActivity"):
-        "SYSTEM/priv-app/DocumentsUI/DocumentsUI.apk",
+    LAUNCHER_FILES: "SYSTEM/priv-app/DocumentsUI/DocumentsUI.apk",
 }
+# What the home screen holds: the dock, in the order Files then Settings, and nothing on the workspace.
+LAUNCHER_DOCK = (LAUNCHER_FILES, LAUNCHER_SETTINGS)
+LAUNCHER_HOTSEAT_CONTAINER = "-101"
+# Each grid's dock slots and the slots of Files and Settings: the pair is centred in the dock.
+LAUNCHER_DOCK_SLOTS = {"4x5": 4, "5x5": 5, "5x6": 5, "5x7": 5, "6x5": 6, "6x6": 6}
+LAUNCHER_DOCK_RANKS = {"4x5": (1, 2), "5x5": (1, 3), "5x6": (1, 3), "5x7": (1, 3), "6x5": (2, 3), "6x6": (2, 3)}
 LAUNCHER_FORBIDDEN_NAMES = ("google", "vending", "deskclock", "alarmclock", "@string/", "@xml/")
-LAUNCHER_ATTRIBUTES = ("packageName", "className", "screen", "x", "y")
+LAUNCHER_ATTRIBUTES = ("packageName", "className", "container", "screen", "x", "y")
 
 
 def check_launcher_layout(grid: str, source: str, text: str) -> None:
-    """One tracked layout: the six reviewed applications on screen 0 of a grid, and nothing else."""
-    columns, rows = (int(part) for part in grid.split("x"))
+    """One tracked layout: Files and Settings in the dock of a grid, and nothing on the workspace."""
     try:
         root = ET.fromstring(text)
     except ET.ParseError as error:
@@ -1719,8 +1765,9 @@ def check_launcher_layout(grid: str, source: str, text: str) -> None:
             for name in LAUNCHER_FORBIDDEN_NAMES:
                 if name in value.lower():
                     fail(f"{source} names {name!r} in {value!r}: the image ships no such application")
-    seen: dict[tuple[str, str], tuple[int, int]] = {}
-    cells: set[tuple[int, int]] = set()
+    slots = LAUNCHER_DOCK_SLOTS[grid]
+    seen: dict[tuple[str, str], int] = {}
+    ranks: set[int] = set()
     for item in root:
         if item.tag != "favorite":
             fail(f"{source} holds a <{item.tag}>: the layout may hold only applications")
@@ -1731,34 +1778,46 @@ def check_launcher_layout(grid: str, source: str, text: str) -> None:
         if sorted(attributes) != sorted(LAUNCHER_ATTRIBUTES):
             fail(
                 f"{source} has a favorite with attributes {sorted(attributes)}, "
-                f"not {sorted(LAUNCHER_ATTRIBUTES)} (a hotseat, folder, uri or title item is not allowed)"
+                f"not {sorted(LAUNCHER_ATTRIBUTES)} (a folder, uri or title item is not allowed)"
             )
         if any(not name.startswith("{" + LAUNCHER_NAMESPACE + "}") for name in item.attrib):
             fail(f"{source} has a favorite attribute outside the launcher namespace")
         component = (attributes["packageName"], attributes["className"])
         if component not in LAUNCHER_APPS:
             fail(f"{source} names {component[0]}/{component[1]}, which is not in the reviewed table")
+        if attributes["container"] != LAUNCHER_HOTSEAT_CONTAINER:
+            fail(
+                f"{source} puts {component[1]} in container {attributes['container']}: the workspace is "
+                "empty, and only the dock holds items"
+            )
+        if component not in LAUNCHER_DOCK:
+            fail(f"{source} puts {component[1]} in the dock: only Files and Settings are there, the app drawer holds the rest")
         if component in seen:
             fail(f"{source} names {component[0]}/{component[1]} twice")
         try:
             screen, x, y = (int(attributes[name]) for name in ("screen", "x", "y"))
         except ValueError:
             fail(f"{source} has a favorite whose screen, x or y is not a number")
-        if screen != 0:
-            fail(f"{source} puts {component[1]} on screen {screen}: every item is on the first page")
-        if not (0 <= x < columns and 0 <= y < rows):
-            fail(f"{source} puts {component[1]} at ({x}, {y}), outside the {grid} grid")
-        if (x, y) in cells:
-            fail(f"{source} puts two items at ({x}, {y})")
-        cells.add((x, y))
-        seen[component] = (x, y)
-    if set(seen) != set(LAUNCHER_APPS):
-        missing = sorted(app[1] for app in set(LAUNCHER_APPS) - set(seen))
-        fail(f"{source} lacks {', '.join(missing)}: it holds exactly the six reviewed applications")
+        if not 0 <= screen < slots:
+            fail(f"{source} puts {component[1]} in dock slot {screen}, outside the {slots} slots of the {grid} dock")
+        if x != screen or y != 0:
+            fail(f"{source} puts {component[1]} at ({x}, {y}) in slot {screen}: a dock item's column is its slot and its row 0")
+        if screen in ranks:
+            fail(f"{source} puts two items in dock slot {screen}")
+        ranks.add(screen)
+        seen[component] = screen
+    if set(seen) != set(LAUNCHER_DOCK):
+        missing = sorted(app[1] for app in set(LAUNCHER_DOCK) - set(seen))
+        fail(f"{source} lacks {', '.join(missing)}: the dock holds exactly Files and Settings")
+    if tuple(seen[component] for component in LAUNCHER_DOCK) != LAUNCHER_DOCK_RANKS[grid]:
+        fail(
+            f"{source} puts Files and Settings in slots {seen[LAUNCHER_FILES]} and {seen[LAUNCHER_SETTINGS]}, "
+            f"not the centred {LAUNCHER_DOCK_RANKS[grid][0]} and {LAUNCHER_DOCK_RANKS[grid][1]} of the {slots} slots"
+        )
 
 
 def check_launcher_workspace(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
-    """The overlay carries the first-page layouts, and every application they name is in the image."""
+    """The overlay carries the dock layouts, and every application of the image is installed."""
     for apk in LAUNCHER_APPS.values():
         if apk not in infos:
             fail(f"{apk} is missing: the launcher's default workspace names its application")
@@ -1781,9 +1840,12 @@ def check_launcher_workspace(archive: zipfile.ZipFile, infos: dict[str, zipfile.
         def holds(text: str) -> bool:
             return text.encode() in payload or text.encode("utf-16-le") in payload
 
-        for _package, component in LAUNCHER_APPS:
+        for _package, component in LAUNCHER_DOCK:
             if not holds(component):
                 fail(f"{LAUNCHER_OVERLAY}'s res/xml/{name} does not name {component}")
+        for _package, component in sorted(set(LAUNCHER_APPS) - set(LAUNCHER_DOCK)):
+            if holds(component):
+                fail(f"{LAUNCHER_OVERLAY}'s res/xml/{name} names {component}: the home screen holds only the dock")
         for stock in LAUNCHER_FORBIDDEN_NAMES[:4]:
             if holds(stock):
                 fail(f"{LAUNCHER_OVERLAY}'s res/xml/{name} is a stock layout: it names {stock}")
@@ -2676,6 +2738,7 @@ def check_kernel_policy(
         (platform_policy, vendor_policy, system_ext_policy),
     )
     check_adbd_launch_policy(contexts, (platform_policy, vendor_policy, system_ext_policy))
+    check_venus_option_policy(contexts, (platform_policy, vendor_policy, system_ext_policy))
 
 
 def media_codec_limit(codec: ET.Element, name: str) -> ET.Element:
@@ -3236,6 +3299,35 @@ def check_vendor_init_triggers(
                     f"the trigger 'on {trigger}' names {name}, labelled {label}, which "
                     "vendor_init may not read; init drops the trigger"
                 )
+
+
+def cil_allows_property_set(policies: tuple[bytes, ...], domain: str, label: str) -> bool:
+    """Whether a domain may set the properties of a label, directly or through attributes."""
+    setters = cil_types_and_attributes(policies, domain)
+    settable = cil_types_and_attributes(policies, label)
+    return any(
+        CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode()) in setters
+        and CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(2).decode()) in settable
+        and b"set" in match.group(3).split()
+        for policy in policies
+        for match in CIL_PROPERTY_SET_RULE.finditer(policy)
+    )
+
+
+def check_venus_option_policy(contexts: list[str], policies: tuple[bytes, ...]) -> None:
+    """vendor_init may set the Venus driver option, and every domain that loads the driver may read it."""
+    label = property_label(VENUS_PERF_PROPERTY, contexts) or "default_prop"
+    if not cil_allows_property_set(policies, "vendor_init", label):
+        fail(
+            f"vendor_init may not set {VENUS_PERF_PROPERTY}, labelled {label}: Venus would "
+            "allocate asynchronously"
+        )
+    for domain in VENUS_DRIVER_DOMAINS:
+        if not cil_allows_file_read(policies, domain, label):
+            fail(
+                f"{domain} may not read {VENUS_PERF_PROPERTY}, labelled {label}: Venus would "
+                "allocate asynchronously there"
+            )
 
 
 # The virtio-gpu device paces the display with a vblank timer, so the present fences of
@@ -3923,6 +4015,7 @@ def main() -> None:
         check_no_statistics_uploader(archive, infos)
         check_setup_wizard_branding(archive, infos)
         check_navigation_mode(archive, infos)
+        check_easter_egg(infos)
         check_launcher_workspace(archive, infos)
         check_network_time(archive, infos)
         check_flip_to_screen_off(archive, infos)

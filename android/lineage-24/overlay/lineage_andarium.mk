@@ -263,7 +263,6 @@ KERNARIUM_REMOVED_PACKAGES := \
     DeviceDiagnostics \
     DynamicSystemInstallationService \
     Dialer \
-    EasterEgg \
     EmergencyInfo \
     EyesFreeVidService \
     Gallery2 \

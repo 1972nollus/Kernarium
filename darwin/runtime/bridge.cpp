@@ -8,6 +8,7 @@
 #include "guest_files.hpp"
 #include "kernel_crash_frames.hpp"
 #include "memory/shared_backing.hpp"
+#include "session_record.hpp"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -196,9 +197,12 @@ void darwin_uml_guest_shutdown(int kind, const char *command)
  * kernel's frames, which sit in the alias of the image's __TEXT,__uml_elf
  * section, move to the section itself first. That is the last work before the
  * abort and takes no lock, so everything that may wait is done before it.
+ * Before it, the session record says the guest crashed and the panicking
+ * thread takes the panic's name, which the crash report shows.
  */
 void darwin_uml_abort(void)
 {
+	::uml::runtime::record_kernel_crash();
 	::uml::device::remove_registered_socket_paths();
 	::uml::runtime::translate_kernel_frames_for_crash_report();
 	signal(SIGABRT, SIG_DFL);
@@ -215,6 +219,8 @@ void darwin_uml_exit(int status, void *caller)
 {
 	dprintf(STDERR_FILENO, "Darwin: ELF exit(%d) called from %p\n",
 		status, caller);
+	::uml::runtime::end_session_record(
+		::uml::runtime::SessionEnd::kernel_exit, status);
 	::uml::device::remove_registered_socket_paths();
 	_exit(status);
 }

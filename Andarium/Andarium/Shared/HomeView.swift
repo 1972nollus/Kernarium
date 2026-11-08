@@ -189,6 +189,12 @@ struct HomeView: View {
                     text: "The guest was shut down in the background.",
                     onClose: { withAnimation { model.notice = nil } }
                 )
+            case .sessionEnded(let ended):
+                NoticeCard(
+                    symbol: "exclamationmark.triangle.fill", color: .orange,
+                    title: ended.title, text: ended.text,
+                    onClose: { withAnimation { model.notice = nil } }
+                )
             }
         }
     }

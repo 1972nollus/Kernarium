@@ -75,6 +75,17 @@ uml_add_tooling_test(
     LABELS audit;package
     TIMEOUT 180)
 
+# A Mac run of an iPad application is refused by Gatekeeper when the build's
+# products are in a system temporary directory, so the first build phase of each
+# application's target refuses that directory for a Mac destination and no other.
+uml_add_tooling_test(
+    NAME apple-run-location
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_check_run_location.py
+        --checker ${PROJECT_SOURCE_DIR}/scripts/check-run-location.py
+    LABELS audit;package
+    TIMEOUT 60)
+
 # scripts/build-xcframework.sh takes its exact public API from the headers
 # through this check, so a public change needs no second list.
 uml_add_tooling_test(

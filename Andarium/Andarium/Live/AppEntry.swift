@@ -120,10 +120,16 @@ struct AppEntry {
         let markerDirectory = launch.instance == nil ? Self.supportDirectory() : locations.directory
         #endif
         let marker = PauseMarker(url: markerDirectory.appendingPathComponent("pause.json"))
-        if marker.consume(), guest != nil {
+        let closedInBackground = marker.consume()
+        if closedInBackground, guest != nil {
             model.notice = .closedInBackground
             print("Andarium: the previous process ended out of the foreground; the guest starts again from boot")
         }
+        // The session records and MetricKit's reports live beside the marker.
+        let sessionRecord = markerDirectory.appendingPathComponent(BugReportAttachments.sessionRecord)
+        model.adoptDiagnostics(
+            in: markerDirectory, containers: Self.containerPaths(), endedOutOfForeground: closedInBackground)
+        ExitReports.shared.start(keepingIn: markerDirectory)
         if carried != nil {
             #if APP_STORE
             let watched = freeSpace
@@ -136,7 +142,8 @@ struct AppEntry {
             }
             #endif
             let runtime = LiveRuntime(
-                model: model, storage: storage, marker: marker, keyStore: adbKeyStore, freeSpace: watched)
+                model: model, storage: storage, marker: marker, keyStore: adbKeyStore,
+                sessionRecord: sessionRecord, freeSpace: watched)
             model.driver = runtime
             model.refreshPlan()
             // Access the person took away while Andarium was closed takes the
@@ -221,6 +228,16 @@ struct AppEntry {
     }
 
     /// `Library/Application Support/`, for the application's own small files.
+    /// The paths that name this install of Andarium, which leave the device
+    /// in no bug report.
+    static func containerPaths() -> [String] {
+        [
+            NSHomeDirectory(),
+            Bundle.main.bundleURL.deletingLastPathComponent().path,
+            FileManager.default.temporaryDirectory.path,
+        ]
+    }
+
     static func supportDirectory() -> URL {
         (try? FileManager.default.url(
             for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true

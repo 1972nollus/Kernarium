@@ -512,6 +512,15 @@ uml_add_guest_integration_test(
     TIMEOUT 600
     CPUS 4)
 
+# A session record says how the guest ended: a kernel panic with its message,
+# a power-off, the kernel's exit on SIGTERM, and "running" after a SIGKILL.
+uml_add_guest_integration_test(
+    NAME guest-session-record
+    SCRIPT kernel/run_guest_session_record.py
+    LABELS guest;kernel
+    TIMEOUT 600
+    CPUS 2)
+
 # Every kind of UBD request, traced allocation by allocation, reaches the disk
 # and reads back intact while the driver allocates no memory to submit or run
 # it.

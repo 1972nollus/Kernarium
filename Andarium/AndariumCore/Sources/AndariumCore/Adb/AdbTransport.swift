@@ -48,7 +48,7 @@ public final class DescriptorTransport: AdbTransport, @unchecked Sendable {
         var done = 0
         while done < count {
             let fd = try currentDescriptor()
-            try Self.waitReadable(fd)
+            try waitReadable(fd)
             let got = data.withUnsafeMutableBytes { buffer in
                 Darwin.read(fd, buffer.baseAddress! + done, count - done)
             }
@@ -101,10 +101,16 @@ public final class DescriptorTransport: AdbTransport, @unchecked Sendable {
     /// Darwin socket pair can miss the end its peer announces with
     /// `shutdown(SHUT_WR)` when the two happen together, and then sleeps for
     /// ever; `poll` does not miss it, and a local `shutdown` wakes it too.
-    private static func waitReadable(_ fd: Int32) throws {
+    /// `poll` never wakes for a descriptor closed under it, though, so the
+    /// wait also looks for a `shutdown` once a second: a stray close
+    /// elsewhere in the process cannot hold it past a cancel or a timeout.
+    private func waitReadable(_ fd: Int32) throws {
         var entry = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-        while poll(&entry, 1, -1) < 0 {
-            if errno != EINTR { throw translated(errno) }
+        while true {
+            let ready = poll(&entry, 1, 1000)
+            if ready > 0 { return }
+            if ready < 0, errno != EINTR { throw Self.translated(errno) }
+            _ = try currentDescriptor()
         }
     }
 

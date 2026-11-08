@@ -10,6 +10,7 @@
 #include "guest_statistics.hpp"
 #include "kernel_signal_scope.hpp"
 #include "native_kernel_layout.hpp"
+#include "session_record.hpp"
 #include "thread_fence.hpp"
 #include "virtual_jetsam.hpp"
 #include "testing.hpp"
@@ -531,8 +532,11 @@ public:
 #if UML_EMULATOR_TESTING
 		if (const auto entry = test_kernel_entry(kernel_view_);
 		    entry != nullptr) {
-			if (!prepared.informational)
+			if (!prepared.informational) {
+				(void)::uml::runtime::begin_session_record(
+					prepared.session_record_path, arguments);
 				run_end_recorder.emplace(*this);
+			}
 			/* The kernel's own process state is the run's to restore, as
 			 * the loader restores it around a real kernel. */
 			const ::uml::runtime::KernelSignalScope kernel_signals{0, 0};
@@ -541,8 +545,11 @@ public:
 		}
 #endif
 #if UML_EMULATOR_HAS_KERNEL_RUNNER
-		if (!prepared.informational)
+		if (!prepared.informational) {
+			(void)::uml::runtime::begin_session_record(
+				prepared.session_record_path, arguments);
 			run_end_recorder.emplace(*this);
+		}
 		const auto result = uml_elf_run(kernel_view_.data(),
 			kernel_view_.size(), native_layout.load_bias,
 			native_layout.reserved ? native_layout.window_start : 0U,
@@ -868,6 +875,13 @@ private:
 		restartable_ = end.kind == UML_EMULATOR_RUN_END_RESTART;
 		power_off_pending_ = end.kind == UML_EMULATOR_RUN_END_POWER_OFF &&
 			::uml::runtime::process_guest_spent();
+		using ::uml::runtime::SessionEnd;
+		::uml::runtime::end_session_record(
+			end.kind == UML_EMULATOR_RUN_END_STOPPED ? SessionEnd::stopped :
+			end.kind == UML_EMULATOR_RUN_END_RESTART ?
+				SessionEnd::restarted :
+			end.kind == UML_EMULATOR_RUN_END_POWER_OFF ?
+				SessionEnd::powered_off : SessionEnd::failed, 0);
 		std::lock_guard lock{run_end_mutex_};
 		run_end_ = end;
 	}
