@@ -1,0 +1,88 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 22:02:55 +0900
+Subject: [PATCH] uml: virtio_uml: send in-band kicks without an
+ acknowledgement
+
+With in-band notifications every kick was a round trip on the main
+socket: the kicking CPU held sock_lock with its interrupts off until
+the backend acknowledged the kick. A backend that reads the kick only
+after the request it is running, such as a graphics submission that
+runs for hundreds of milliseconds, kept that CPU off its interrupts for
+as long, and every other CPU that kicked the device spun on the lock.
+Under user-mode Linux every device interrupt is taken on CPU 0, so a
+kick from CPU 0 also stalled every other device, sound among them.
+
+Send the kick as a message that asks for no reply. sock_lock still
+keeps it whole and out of another request's round trip, ordering on
+the socket still puts it ahead of any later request, and a backend that
+has gone still shows as a failed send. The backend must accept a kick
+that asks for no acknowledgement, as the protocol allows.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/um/drivers/virtio_uml.c | 36 +++++++++++++++++++++++++-----------
+ 1 file changed, 25 insertions(+), 11 deletions(-)
+
+diff --git a/arch/um/drivers/virtio_uml.c b/arch/um/drivers/virtio_uml.c
+index 61c5ef5b7f2f9b8a2c30a45235331818c74ed613..c2c51e745557776ec1b822cd456dac63dbe3f153 100644
+--- a/arch/um/drivers/virtio_uml.c
++++ b/arch/um/drivers/virtio_uml.c
+@@ -347,11 +347,9 @@ static int vhost_user_recv_req(struct virtio_uml_device *vu_dev,
+  *
+  * Only their order pairs a reply with its request, so nothing else may be
+  * sent on the socket between the two: sock_lock covers the whole round trip.
+- * In-band notifications make every kick such a round trip, sent from any CPU
+- * and from atomic context, while another CPU may be reading the device's
+- * configuration. A reply read after sock_lock was dropped could be taken by
+- * that kick, which would then report a healthy backend as gone, and the
+- * reader would take the kick's acknowledgement in its place.
++ * In-band kicks are sent from any CPU and from atomic context, while another
++ * CPU may be reading the device's configuration; they ask for no reply, and
++ * sock_lock keeps each of them whole and out of another request's round trip.
+  */
+ static int vhost_user_round_trip(struct virtio_uml_device *vu_dev,
+ 				 struct vhost_user_msg *msg,
+@@ -1050,6 +1048,23 @@ static int vhost_user_set_vring_state(struct virtio_uml_device *vu_dev,
+ 	return vhost_user_send(vu_dev, &msg, NULL, 0);
+ }
+ 
++/*
++ * Notify the backend in-band that @index has new buffers. The kick asks for no
++ * acknowledgement: the backend may be running a long request when it reads
++ * the kick, and the kicking CPU, which holds sock_lock with its interrupts
++ * off, would wait for the whole request. A disconnect still shows here.
++ */
++static int vhost_user_kick_inband(struct virtio_uml_device *vu_dev, u32 index)
++{
++	struct vhost_user_msg msg = {
++		.header.request = VHOST_USER_VRING_KICK,
++		.header.size = sizeof(msg.payload.vring_state),
++		.payload.vring_state.index = index,
++	};
++
++	return vhost_user_round_trip(vu_dev, &msg, NULL, 0, NULL, 0);
++}
++
+ static int vhost_user_set_vring_num(struct virtio_uml_device *vu_dev,
+ 				    u32 index, u32 num)
+ {
+@@ -1143,13 +1158,12 @@ static bool vu_notify(struct virtqueue *vq)
+ 
+ 	if (info->kick_fd < 0) {
+ 		/*
+-		 * An in-band notification is a synchronous round trip on the
+-		 * main socket. Its transient failures are already retried or
+-		 * waited out inside that round trip, so anything it reports
+-		 * here is a genuine transport failure.
++		 * An in-band notification is a message on the main socket.
++		 * Its transient failures are already retried or waited out
++		 * inside the send, so anything it reports here is a genuine
++		 * transport failure.
+ 		 */
+-		rc = vhost_user_set_vring_state(vu_dev, VHOST_USER_VRING_KICK,
+-						vq->index, 0);
++		rc = vhost_user_kick_inband(vu_dev, vq->index);
+ 		if (!rc)
+ 			return true;
+ 	} else {
