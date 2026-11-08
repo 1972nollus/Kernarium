@@ -236,8 +236,13 @@ launch and assemble a bundle on an Apple silicon Mac (`--help`). Xcode's local
 install service, driven by `xcodebuild test`, is the only command-line launcher
 for this mode, and it passes each `TEST_RUNNER_`-prefixed variable to the app
 without the prefix. An iOS application reads nothing outside its container, so
-the launcher copies the rootfs into it. The shared schemes gather no code
-coverage; a coverage run passes `-enableCodeCoverage YES`.
+the launcher copies the rootfs into it. Derived data for a Mac run of either
+application is never in a system temporary directory (`/tmp`, `/var/tmp`,
+`$TMPDIR`): Gatekeeper rejects the installed app there ("bad app wrapper") and
+the run never starts, so the first build phase of each application's target
+(`scripts/check-run-location.py`, `apple-run-location`) fails a Mac build below
+one. The shared schemes gather no code coverage; a coverage run passes
+`-enableCodeCoverage YES`.
 
 On a connected iOS device, Android runs go through Andarium
 (`tests/perf/run_ios_device_android.py`, [`Andarium/README.md`](../Andarium/README.md#automation))
@@ -294,12 +299,7 @@ tests (including Android storage and the touch-cancel path), the side keys'
 pass-through of touches to Android, the ADB-over-network hold and the
 background disk locks (which also requires a guest that was allocating
 buffers when the GPU was held to suspend). The storage test signs its helper
-APK with the AOSP test key, never a release key. Derived data for a Mac run is
-never in a system temporary directory (`/tmp`, `/var/tmp`, `$TMPDIR`):
-Gatekeeper rejects the installed app there ("bad app wrapper") and kills the
-run before its tests start, so the target's first build phase
-(`scripts/check-run-location.py`, `apple-run-location`) fails a Mac
-build below one. When derived data is on a
+APK with the AOSP test key, never a release key. When derived data is on a
 removable volume, macOS prompts once for access and the launch hangs until
 answered; build to the internal disk instead.
 

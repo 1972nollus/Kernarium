@@ -98,7 +98,7 @@ disk, partition layout, kernel command line and manifest into
 The `AndariumTests` bundle runs hosted in the application on an iPad, in the
 iOS Simulator or, as an iPad app, on an Apple silicon Mac (whose derived data
 must be outside the temporary directories,
-[`docs/testing.md`](../docs/testing.md#andarium)). For the Simulator,
+[`docs/testing.md`](../docs/testing.md#apple-builds-and-kernarium)). For the Simulator,
 package its slices first (below), then:
 
 ```sh
