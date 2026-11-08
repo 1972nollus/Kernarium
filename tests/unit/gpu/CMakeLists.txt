@@ -328,6 +328,15 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY TIMEOUT 240)
 
+    # A draw whose upload memory the budget refuses is skipped with
+    # GL_OUT_OF_MEMORY; the host does not copy into a buffer it never got.
+    uml_add_gpu_unit_test(gpu-host-gl-upload-refusal
+        uml_gpu_host_gl_upload_refusal_tests
+        host_gl_upload_refusal_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries} UML::HostGpuMemory
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY TIMEOUT 240)
+
     # The device memory pool frees the host GL driver's cache before it
     # refuses a reservation: the driver releases it for any thread, with no
     # context current (EGL_MESA_context_trim).
