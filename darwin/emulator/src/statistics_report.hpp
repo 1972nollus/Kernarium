@@ -15,7 +15,8 @@ namespace uml::emulator {
  * share of the guest's vCPUs that computed, the frames that reached the
  * display and the frames the guest offered, per second, the memory the guest
  * and the host report and, with a display, how many graphics allocations the
- * host has refused the guest. It is measurement tooling with no UI, built from
+ * host has refused the guest and, with a device memory budget, how much of it
+ * the host holds. It is measurement tooling with no UI, built from
  * the same calls the iOS applications make, so a Mac validates their figures.
  * The report keeps no clock and reads no source: it turns the samples it is
  * given into text.
@@ -37,6 +38,10 @@ struct StatisticsSample final {
 	/* How many times the host told the guest its GPU had no room for an
 	 * allocation, since the display was made; none without a display. */
 	std::optional<std::uint64_t> gpu_memory_refusals;
+	/* The device memory budget and what the host holds against it; both stay
+	 * 0 without a budget. */
+	std::uint64_t gpu_memory_budget_bytes {};
+	std::uint64_t gpu_memory_used_bytes {};
 };
 
 /* The guest kernel's own memory figures. */
@@ -116,6 +121,14 @@ public:
 		if (sample.gpu_memory_refusals)
 			text += " gpu-refusals " +
 				std::to_string(*sample.gpu_memory_refusals);
+		if (sample.gpu_memory_budget_bytes != 0U) {
+			char memory[64];
+			(void)std::snprintf(memory, sizeof(memory),
+				" gpu-memory %llu/%llu MiB",
+				mebibytes(sample.gpu_memory_used_bytes),
+				mebibytes(sample.gpu_memory_budget_bytes));
+			text += memory;
+		}
 		return text;
 	}
 
