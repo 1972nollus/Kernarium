@@ -796,6 +796,7 @@ private:
 				reading.presented_frames = frames->presentedFrames;
 				reading.offered_frames = frames->guestFrames;
 			}
+			reading.gpu_memory_refusals = gpu_->memoryRefusals();
 			scanout = gpu_->guestScanoutActive();
 		}
 		/* A guest whose display is off may have suspended itself, and the

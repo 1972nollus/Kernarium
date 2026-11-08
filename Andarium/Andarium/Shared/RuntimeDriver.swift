@@ -131,6 +131,11 @@ protocol RuntimeDriver: AnyObject {
     /// One reading of the running guest's host-side figures, taken off the
     /// main thread; nil when no guest runs.
     func readStatistics() async -> StatsSample?
+    /// How many graphics allocations the host has refused the running guest,
+    /// since its display was made; nil when no guest runs. It reads one
+    /// counter, never waits for the guest and may be asked while the
+    /// statistics are not shown.
+    func readGraphicsRefusals() async -> UInt64?
     /// The guest kernel's own memory figures; nil when they could not be
     /// had: the kernel does not answer the request yet, or asking could wake
     /// a guest that sleeps. The caller keeps the last figures then. It may

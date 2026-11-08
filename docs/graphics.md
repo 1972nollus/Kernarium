@@ -273,6 +273,14 @@ The counter includes memory the guest has freed while its blob resource is still
 referenced, so a loop that reallocates large images can be refused while its
 live memory is below B.
 
+The device counts each OpenGL resource creation it answers with out of memory
+on the display (`Display::memoryRefusals`), so a refusal the host reclaimed and
+retried past is not counted and a restarted guest does not reset the count. The
+applications read it as `gpu_memory_refusals` of the runtime's statistics, and
+the macOS launchers print it as `gpu-refusals` with `--stats`. A Venus
+allocation the host refused is not counted: the guest learns of it inside the
+renderer.
+
 ### Android guest requirements
 
 The Android guest reaches the same renderer by a separate route: one Soong port

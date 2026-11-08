@@ -14,6 +14,8 @@ struct Readout {
     var fps: Int?
     var history: [Int] = []
     private var phase = 0
+    /// The preview's capture holds the history as it was given.
+    private var holds = false
 
     init() {}
 
@@ -25,15 +27,32 @@ struct Readout {
         history = meter.history
     }
 
+    /// The mock readings a seeded history starts from, oldest first.
+    private static let seedHistory = [28, 31, 26, 40, 35, 30, 33, 29, 36, 34]
+
+    /// A session that has `count` readings so far, for the preview's stats
+    /// captures: 0 is a session before its first reading, every figure
+    /// still a dash. The readout then holds still, so a capture shows
+    /// exactly that history.
+    init(previewReadings count: Int, memoryMiB limit: Int) {
+        history = Array(Self.seedHistory.suffix(count))
+        holds = true
+        guard count > 0 else { return }
+        cpu = history.last
+        memoryUsedBytes = UInt64(min(limit - 120, 1380)) * Limits.bytesPerMiB
+        fps = 60
+    }
+
     /// The preview's mock figures.
     mutating func tick(memoryMiB limit: Int) {
+        guard !holds else { return }
         phase += 1
         let wave = [0, 6, -4, 12, 3, -7, 9, -2]
         let load = max(4, min(97, 31 + wave[phase % wave.count]))
         cpu = load
         memoryUsedBytes = UInt64(min(limit - 120, 1380 + (phase * 7) % 160)) * Limits.bytesPerMiB
         fps = phase % 5 == 0 ? 58 : 60
-        history = Array(((history.isEmpty ? [28, 31, 26, 40, 35, 30, 33, 29, 36, 34] : history) + [load]).suffix(10))
+        history = Array(((history.isEmpty ? Self.seedHistory : history) + [load]).suffix(StatsMeter.historyLength))
     }
 
     /// What a figure shows before the first reading.
@@ -102,17 +121,26 @@ struct StatsOverlay: View {
     }
 }
 
-/// The last CPU values as bars, 100% filling the frame.
+/// The last CPU values as bars, 100% filling the frame. It always draws one
+/// bar per history slot, newest on the right; a slot with no reading yet is
+/// a dimmed bar at the floor, so the bars keep their width as values arrive.
 struct Sparkline: View {
     let values: [Int]
+    var slots = StatsMeter.historyLength
+
+    /// One entry per slot, oldest first; `nil` where no reading exists yet.
+    static func slotValues(_ values: [Int], slots: Int) -> [Int?] {
+        let recent = values.suffix(slots).map { Optional($0) }
+        return Array(repeating: nil, count: max(0, slots - recent.count)) + recent
+    }
 
     var body: some View {
         GeometryReader { geo in
             HStack(alignment: .bottom, spacing: 1.5) {
-                ForEach(Array(values.enumerated()), id: \.offset) { _, v in
+                ForEach(Array(Self.slotValues(values, slots: slots).enumerated()), id: \.offset) { _, v in
                     Capsule()
-                        .fill(Color.accentColor)
-                        .frame(height: max(2, geo.size.height * CGFloat(v) / 100))
+                        .fill(v == nil ? Color.accentColor.opacity(0.25) : Color.accentColor)
+                        .frame(height: max(2, geo.size.height * CGFloat(v ?? 0) / 100))
                 }
             }
             .frame(maxHeight: .infinity, alignment: .bottom)

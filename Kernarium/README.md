@@ -329,7 +329,9 @@ processors that computed and the rate of presented frames.
 `read_guest_memory` asks the guest kernel through the management console, so it
 is never sent where it could wake a guest that sleeps (`-EAGAIN`) and is called
 away from the main thread. `KernariumStatistics.hpp` holds the rules, with
-`kernarium-statistics` as their test.
+`kernarium-statistics` as their test. The reading also counts the graphics
+allocations the host has refused the guest (`gpu_memory_refusals`, runtime API
+26), which Andarium turns into a notice; Kernarium reads none.
 
 ## Simulator
 
