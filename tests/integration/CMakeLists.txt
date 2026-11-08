@@ -630,6 +630,34 @@ uml_add_guest_integration_test(
     TIMEOUT 300
     CPUS 2)
 
+# The delay a playing Virtio sound stream reports, which a player keeps its
+# pictures in step with, says when the frame written last is heard: the
+# frames queued, and on the null audio output nothing more.
+uml_add_guest_integration_test(
+    NAME guest-virtio-sound-delay
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/audio/virtio_sound_delay_probe.py
+        --guest-argument=--audio-output=null
+        --console-failure "WARNING:|Oops|BUG:|Call Trace:"
+        --ncpus 2 --probe-timeout 60
+    LABELS guest;audio
+    TIMEOUT 300
+    CPUS 2)
+if(UML_TEST_APPLE_AUDIO)
+    # The same on the host's output, which adds its own latency: the same
+    # for every period, and under half a second.
+    uml_add_guest_integration_test(
+        NAME guest-virtio-sound-delay-host
+        SCRIPT support/run_guest_probe.py
+        ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/audio/virtio_sound_delay_probe.py
+            --guest-argument=--audio-output=host --probe-argument=500
+            --console-failure "WARNING:|Oops|BUG:|Call Trace:"
+            --ncpus 2 --probe-timeout 60
+        LABELS guest;audio
+        TIMEOUT 300
+        CPUS 2)
+endif()
+
 # Path and name strings copied from user memory keep their contract.
 uml_add_guest_integration_test(
     NAME guest-user-strings

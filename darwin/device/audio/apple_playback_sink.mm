@@ -114,42 +114,36 @@ struct PlaybackState final {
     {
     }
 
+    // `latencyBytes` is how long the period still takes to be heard (see
+    // PlaybackCompletion): the periods still queued are the guest's to count.
     void finish(
         std::uint64_t requestId,
         PlaybackOutcome outcome,
-        std::uint32_t periodBytes) noexcept
+        std::uint32_t latencyBytes) noexcept
     {
-        std::uint32_t remaining {};
-        if (!consumePending(remaining))
+        if (!consumePending())
             return;
         finished[static_cast<std::size_t>(outcome)].fetch_add(
             1, std::memory_order_relaxed);
         completions.push({
             .requestId = requestId,
-            .latencyBytes = remaining * periodBytes,
+            .latencyBytes = latencyBytes,
             .outcome = outcome,
         });
         wake->notify();
     }
 
-    void discard() noexcept
-    {
-        std::uint32_t ignored {};
-        (void)consumePending(ignored);
-    }
+    void discard() noexcept { (void)consumePending(); }
 
 private:
-    [[nodiscard]] bool consumePending(std::uint32_t& remaining) noexcept
+    [[nodiscard]] bool consumePending() noexcept
     {
         auto previous = pending.load(std::memory_order_acquire);
         while (previous != 0 &&
                !pending.compare_exchange_weak(
                    previous, previous - 1U, std::memory_order_acq_rel)) {
         }
-        if (previous == 0)
-            return false;
-        remaining = previous - 1U;
-        return true;
+        return previous != 0;
     }
 
 public:
@@ -162,6 +156,9 @@ public:
     // them.
     std::array<std::atomic<std::uint64_t>, 3> finished {};
     std::atomic<std::uint64_t> finishedByMute {};
+    // What a period the output consumed reports, set whenever the output
+    // starts (measureOutputLatency).
+    std::atomic<std::uint32_t> outputLatencyBytes {};
 #if TARGET_OS_IPHONE
     // Bumped when a mute takes over the queued periods: the completion
     // handlers of buffers scheduled before it then stand down.
@@ -399,8 +396,12 @@ public:
         }
         @try {
             NSError* error = nil;
-            if ((!engine_.isRunning && ![engine_ startAndReturnError:&error]) ||
-                ![player_ playAndReturnError:&error]) {
+            const bool engineRuns =
+                engine_.isRunning || [engine_ startAndReturnError:&error];
+            // Before the player plays, so that its first completion has it.
+            if (engineRuns)
+                measureOutputLatency();
+            if (!engineRuns || ![player_ playAndReturnError:&error]) {
                 deactivateSession();
                 failToStart();
                 return true;
@@ -583,10 +584,11 @@ public:
 #endif
             {
                 NSError* error = nil;
-                if (activateSession() &&
-                    (engine_.isRunning ||
-                     [engine_ startAndReturnError:&error]) &&
-                    [player_ playAndReturnError:&error]) {
+                const bool engineRuns = activateSession() &&
+                    (engine_.isRunning || [engine_ startAndReturnError:&error]);
+                if (engineRuns)
+                    measureOutputLatency();
+                if (engineRuns && [player_ playAndReturnError:&error]) {
                     faulted_ = false;
                 } else {
                     abortPending();
@@ -620,7 +622,6 @@ private:
         std::uint64_t ticket,
         std::uint64_t requestId)
     {
-        const auto periodBytes = state->periodBytes;
 #if TARGET_OS_IPHONE
         const auto epoch = state->epoch.load(std::memory_order_acquire);
 #endif
@@ -636,8 +637,9 @@ private:
               auto expected = ticket;
               if (slot.ticket.compare_exchange_strong(
                       expected, 0, std::memory_order_acq_rel)) {
-                  state->finish(
-                      requestId, PlaybackOutcome::played, periodBytes);
+                  state->finish(requestId, PlaybackOutcome::played,
+                      state->outputLatencyBytes.load(
+                          std::memory_order_relaxed));
               }
             }];
     }
@@ -896,6 +898,7 @@ private:
         @try {
             NSError* error = nil;
             if (engine_.isRunning || [engine_ startAndReturnError:&error]) {
+                measureOutputLatency();
                 leaveMute();
                 playing = [player_ playAndReturnError:&error];
             }
@@ -988,8 +991,8 @@ private:
         if (state.slots[oldest].ticket.compare_exchange_strong(
                 expected, 0, std::memory_order_acq_rel)) {
             state.finishedByMute.fetch_add(1, std::memory_order_relaxed);
-            state.finish(state.slots[oldest].requestId,
-                PlaybackOutcome::played, state.periodBytes);
+            state.finish(
+                state.slots[oldest].requestId, PlaybackOutcome::played, 0);
         }
     }
 
@@ -1104,6 +1107,71 @@ private:
         paceCounts_ = counts;
     }
 
+    /* A period completes once the player has consumed it, before it is
+     * heard: the output reads it a cycle, and on macOS a safety offset,
+     * ahead of the hardware, which then takes its own latency. A played
+     * completion reports all of it (PlaybackCompletion). Each route has its
+     * own, so the device thread measures it whenever the engine starts,
+     * before the player gets a period. */
+    void measureOutputLatency() noexcept
+    {
+        double seconds = 0.0;
+        @try {
+            seconds = outputLatency();
+        } @catch (NSException*) {
+        }
+        // The bound keeps a wrong value from overflowing the status; even a
+        // wireless output stays well inside it.
+        seconds = std::isfinite(seconds) ? std::clamp(seconds, 0.0, 5.0) : 0.0;
+        const auto frames =
+            static_cast<std::uint32_t>(std::lround(seconds * format_.sampleRate));
+        state_->outputLatencyBytes.store(
+            frames * format_.streamDescription->mBytesPerFrame,
+            std::memory_order_relaxed);
+    }
+
+#if TARGET_OS_IPHONE
+    // The session's output latency and IO cycle, which together are the
+    // output's latency on iOS.
+    [[nodiscard]] double outputLatency() const
+    {
+        AVAudioSession* const session = [AVAudioSession sharedInstance];
+        return session.outputLatency + session.IOBufferDuration;
+    }
+#else
+    // The device's and its stream's latency, which the engine reports, and
+    // the cycle and safety offset by which the device reads ahead of them,
+    // which it counts in its own frames.
+    [[nodiscard]] double outputLatency() const
+    {
+        const double presentation = engine_.outputNode.presentationLatency;
+        AudioUnit unit = engine_.outputNode.audioUnit;
+        const double rate = [engine_.outputNode outputFormatForBus:0].sampleRate;
+        AudioDeviceID device = kAudioObjectUnknown;
+        UInt32 size = sizeof(device);
+        if (unit == nullptr || rate <= 0.0 ||
+            AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+                kAudioUnitScope_Global, 0, &device, &size) != noErr)
+            return presentation + outputCycle_;
+        UInt32 cycle = 0;
+        size = sizeof(cycle);
+        if (AudioUnitGetProperty(unit, kAudioDevicePropertyBufferFrameSize,
+                kAudioUnitScope_Global, 0, &cycle, &size) != noErr)
+            cycle = static_cast<UInt32>(std::lround(outputCycle_ * rate));
+        const AudioObjectPropertyAddress address {
+            kAudioDevicePropertySafetyOffset,
+            kAudioObjectPropertyScopeOutput,
+            kAudioObjectPropertyElementMain,
+        };
+        UInt32 safety = 0;
+        size = sizeof(safety);
+        if (AudioObjectGetPropertyData(
+                device, &address, 0, nullptr, &size, &safety) != noErr)
+            safety = 0;
+        return presentation + (cycle + safety) / rate;
+    }
+#endif
+
 #if !TARGET_OS_IPHONE
     /* Asks the output device for the stream's IO cycle (OutputCycle), which
      * the device counts in its own frames and only within the range it
@@ -1176,7 +1244,7 @@ private:
                 state->slots[index].ticket.exchange(0, std::memory_order_acq_rel);
             if (ticket != 0)
                 state->finish(state->slots[index].requestId,
-                              PlaybackOutcome::discarded, state->periodBytes);
+                              PlaybackOutcome::discarded, 0);
         }
     }
 

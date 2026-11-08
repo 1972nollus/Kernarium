@@ -39,6 +39,15 @@ from an output problem. A stopped stream holds its queued periods; a released
 stream returns every queued period at once, as the Virtio sound specification
 requires.
 
+## Latency
+
+A completed period's status reports, as the device latency, how long its sound
+still takes to be heard. The guest adds it to the frames it still has queued
+(ALSA's `snd_pcm_delay()`), so it never counts queued periods. A period the
+output consumed reports the output's own latency, including the IO cycle by
+which it reads ahead, measured whenever the output starts; a period nothing
+plays (paced, muted or released) reports 0.
+
 ## Interruptions on iOS
 
 When the system takes the audio session (a call, Siri, another app's audio),
@@ -95,11 +104,13 @@ tests make no sound. `host` is the default.
 ## Tests
 
 `virtio-sound-protocol`, `virtio-sound-microphone` (over fakes, never opening
-the microphone or showing a prompt), `audio-mute-clock`, `audio-output-cycle` and
+the microphone or showing a prompt), `audio-mute-clock`, `audio-output-cycle`,
 `guest-virtio-sound-suspend` (a guest suspended under a playing and a paused
 stream, see [`../../../kernel/common/README.md`](../../../kernel/common/README.md))
-cover the device. `UML_TEST_APPLE_AUDIO=ON` adds `apple-audio-playback` and
-`apple-audio-interruption` (see
+and `guest-virtio-sound-delay` (a guest's `snd_pcm_delay()` against when its
+last period completes) cover the device. `UML_TEST_APPLE_AUDIO=ON` adds
+`apple-audio-playback`, `apple-audio-interruption` and
+`guest-virtio-sound-delay-host` (see
 [`../../../docs/testing.md`](../../../docs/testing.md)); a real interruption on
 a device comes from Kernarium's `AudioInterrupter` test application (see
 [`../../../Kernarium/README.md`](../../../Kernarium/README.md)).

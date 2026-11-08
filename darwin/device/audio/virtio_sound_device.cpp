@@ -279,7 +279,7 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processControl(
             state_ = StreamState::released;
             // A release returns every queued period at once.
             for (const auto& transfer : paced_)
-                ready_.push_back({transfer.requestId, 0});
+                ready_.push_back(transfer.requestId);
             paced_.clear();
         }
         rearmClock();
@@ -397,8 +397,7 @@ bool VirtioSoundDevice::takeQueueCompletion(
         auto outcome = PlaybackOutcome::played;
         std::uint64_t requestId {};
         if (!ready_.empty()) {
-            requestId = ready_.front().requestId;
-            latencyBytes = ready_.front().latencyBytes;
+            requestId = ready_.front();
             ready_.pop_front();
         } else {
             PlaybackCompletion playback;
@@ -468,13 +467,8 @@ void VirtioSoundDevice::releasePacedTransfers(ClockTime now)
 {
     while (!paced_.empty() && paced_.front().timed &&
            paced_.front().due <= now) {
-        const auto requestId = paced_.front().requestId;
+        ready_.push_back(paced_.front().requestId);
         paced_.pop_front();
-        ready_.push_back({
-            requestId,
-            static_cast<std::uint32_t>(paced_.size()) *
-                parameters_.periodBytes,
-        });
     }
 }
 

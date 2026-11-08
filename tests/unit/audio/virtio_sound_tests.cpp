@@ -555,7 +555,9 @@ void pacesPlaybackWhileTheSinkCannotPlay()
     auto completed = serve(fixture);
     require(completed.size() == 1 && completed[0].first == 1);
     require(completed[0].second.status == protocol::Status::ok);
-    require(completed[0].second.latencyBytes == selected.periodBytes);
+    // Nothing of a paced period is heard after it completes, and the guest
+    // counts the periods it still has queued itself: no latency.
+    require(completed[0].second.latencyBytes == 0);
     require(*fixture.clock->armed == start + 10ms);
 
     // The guest refills as its periods complete; the clock keeps its pace.
@@ -566,7 +568,7 @@ void pacesPlaybackWhileTheSinkCannotPlay()
     fixture.clock->time = start + 10ms;
     completed = serve(fixture);
     require(completed.size() == 1 && completed[0].first == 2);
-    require(completed[0].second.latencyBytes == selected.periodBytes);
+    require(completed[0].second.latencyBytes == 0);
     fixture.clock->time = start + 15ms;
     completed = serve(fixture);
     require(completed.size() == 1 && completed[0].first == 3);
