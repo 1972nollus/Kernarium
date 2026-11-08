@@ -549,6 +549,8 @@ for property in \
 	[[ "$PRODUCT_PRODUCT_PROPERTIES" == *" $property "* ]] ||
 		fail "required UML audio property is absent: $property"
 done
+[[ "$PRODUCT_PRODUCT_PROPERTIES" == *" ro.lmk.gpu_reclaim=true "* ]] ||
+	fail "required lmkd property is absent: ro.lmk.gpu_reclaim=true"
 [[ "$(get_build_var LOCAL_USE_VENDOR_AUDIO_CONFIGURATION)" == true ]] ||
 	fail "the UML product must own its minimal primary audio policy"
 for package in \

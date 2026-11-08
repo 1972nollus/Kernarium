@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Label the complete Virtio-GPU sysfs device used by Mesa enumeration.
 genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.0 u:object_r:sysfs_gpu:s0
+# The host's report of graphics memory pressure is a file of that device's DRM card. It
+# has a type of its own, so that lmkd's GPU reclaim (route p0027) is the only domain
+# that reads it and asks the host for a new one.
+genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.0/drm/card0/gpu_memory_report u:object_r:sysfs_gpu_memory:s0
 # The Virtio battery's sysfs path carries its position among the Virtio devices
 # the host passes on the kernel command line. The standalone macOS launcher
 # (darwin/app/macos/main.cpp) and the Kernarium iOS runtime

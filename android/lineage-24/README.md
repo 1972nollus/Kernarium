@@ -244,6 +244,10 @@ outcomes are known and not defects of the image:
   `fstab.uml`), enabled at `sys.boot_completed`. PinnerService does not lock the
   home app's files, and `kernarium_reclaim_boot_apps.sh` kills only the cached
   processes of a reviewed list of boot-started apps after boot completes.
+- lmkd ends the cached app that holds the most host graphics memory while the
+  kernel reports host GPU pressure in `/sys/class/drm/card0/gpu_memory_report`
+  (route `p0027`; `ro.lmk.gpu_reclaim`, set by the product, turns it on). It does
+  nothing on a kernel without the file.
 - The virtio-gpu display is paced by a kernel vblank timer, so the product drops
   the inherited `present_fence_not_reliable` property and the guest needs a
   kernel with the pacing. Incremental installs need a kernel with Incremental FS.
