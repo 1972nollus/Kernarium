@@ -450,6 +450,15 @@ uml_add_guest_integration_test(
     TIMEOUT 300
     CPUS 2)
 
+# Two-vCPU guest: output a serial line still queues when the guest powers off
+# reaches the host.
+uml_add_guest_integration_test(
+    NAME guest-console-queued-output
+    SCRIPT console/run_guest_console_queued_output.py
+    LABELS guest;console;smoke
+    TIMEOUT 300
+    CPUS 2)
+
 # The interpreter runs BPF callbacks through its fixed entry-point pool.
 uml_add_guest_integration_test(
     NAME guest-bpf-callbacks
