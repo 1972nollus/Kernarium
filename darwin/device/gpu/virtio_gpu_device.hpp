@@ -249,6 +249,11 @@ private:
     std::vector<std::uint32_t> blobMappingOwners_;
     std::unordered_set<std::uint32_t> contexts_;
     std::unordered_set<std::uint32_t> venusContexts_;
+    /* The contexts whose last failed SUBMIT_3D failed for want of memory. The
+     * guest driver makes a blob's storage with a command in its context's
+     * stream and then creates the blob, so the blob the renderer does not know
+     * after such a failure is that storage's refusal. */
+    std::unordered_set<std::uint32_t> storageRefusedContexts_;
     std::vector<std::uint8_t> transferStaging_;
     /* A Virgl scanout's CPU readback. The first flush that reads back sizes
      * it to the whole scanout; it is released when the scanout changes size,

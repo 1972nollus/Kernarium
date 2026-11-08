@@ -567,6 +567,7 @@ void VirtioGpuDevice::reset() noexcept
     UML_GPU_RENDERER.resetFenceState();
     contexts_.clear();
     venusContexts_.clear();
+    storageRefusedContexts_.clear();
     virglResources_.clear();
     blobResources_.clear();
     std::fill(blobMappingOwners_.begin(), blobMappingOwners_.end(),
@@ -1086,6 +1087,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         UML_GPU_RENDERER.destroyContext(header->contextId);
         contexts_.erase(header->contextId);
         venusContexts_.erase(header->contextId);
+        storageRefusedContexts_.erase(header->contextId);
         if (destroyedContextId != nullptr)
             *destroyedContextId = header->contextId;
         return success;
@@ -1176,6 +1178,14 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             header->contextId,
             request.subspan(sizeof(*submit), submit->size));
         if (submitResult != 0) {
+            if (submitResult == ENOMEM || submitResult == -ENOMEM) {
+                try {
+                    storageRefusedContexts_.insert(header->contextId);
+                } catch (const std::bad_alloc&) {
+                    /* The blob that follows is then answered as invalid,
+                     * and not counted: the guest fails it either way. */
+                }
+            }
             std::fprintf(
                 stderr,
                 "Virtio-GPU renderer submit failed: context=%u bytes=%u "
@@ -1329,8 +1339,20 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             };
             if (UML_GPU_RENDERER.createResourceBlob(resource) != 0) {
                 blobResources_.erase(iterator);
+                /* The guest made this blob's storage with the command just
+                 * before it. When the renderer had no room for that, the
+                 * blob is unknown here, and the answer is the one a
+                 * creation the host driver refused gets: the guest's
+                 * creation fails with -ENOMEM and the display counts the
+                 * refusal. Any other failure is a blob described wrongly. */
+                const bool noRoom =
+                    storageRefusedContexts_.erase(header->contextId) != 0;
+                if (noRoom)
+                    UML_GPU_DISPLAY.recordMemoryRefusal();
                 return response(
-                    *header, protocol::GpuResponse::errorInvalidParameter);
+                    *header,
+                    noRoom ? protocol::GpuResponse::errorOutOfMemory
+                           : protocol::GpuResponse::errorInvalidParameter);
             }
             return success;
         } catch (const std::bad_alloc&) {
