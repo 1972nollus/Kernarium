@@ -67,10 +67,11 @@ struct HomeView: View {
         } message: {
             Text("Everything the guest has stored is deleted. This can\u{2019}t be undone.")
         }
-        .alert("Not enough free space", isPresented: $model.startBlocked) {
+        .alert(StartSpace.title, isPresented: $model.startBlocked) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Starting needs \(Formats.size(bytes: Limits.startReserveBytes)) free for the guest's own writes. This \(model.host.name) has \(Formats.size(bytes: model.host.freeStorageBytes)) free.")
+            Text(StartSpace(neededBytes: Limits.startReserveBytes, freeBytes: model.host.freeStorageBytes)
+                .message(device: model.host.name))
         }
     }
 

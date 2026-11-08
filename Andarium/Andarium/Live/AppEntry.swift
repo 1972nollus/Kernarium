@@ -277,9 +277,7 @@ struct AppEntry {
     }
 
     static func freeStorageBytes() -> UInt64 {
-        let values = try? URL(fileURLWithPath: NSHomeDirectory())
-            .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-        return UInt64(max(values?.volumeAvailableCapacityForImportantUsage ?? 0, 0))
+        HostStorage.freeBytes()
     }
 }
 

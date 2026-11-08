@@ -24,6 +24,22 @@ struct GuestRunEndTests {
         #expect(failed.systemName != shutDown.systemName)
     }
 
+    /// Android's runtime returns an error status for a run the host stopped,
+    /// and a run the person ended, with Shut down on the screen over a guest
+    /// paused for space, is not an error.
+    @Test
+    func aRunTheApplicationStoppedIsAShutdownWhateverTheStatus() {
+        let stopped = GuestRunEnd(result: -4, requested: true)
+        #expect(stopped.title == "Guest shut down")
+        #expect(stopped.message == "Relaunch Kernarium to start it again.")
+        #expect(stopped.systemName == GuestRunEnd(result: 0).systemName)
+
+        // Without the request the same status is an error.
+        let failed = GuestRunEnd(result: -4)
+        #expect(failed.title == "Guest stopped with an error")
+        #expect(failed.message.contains("-4"))
+    }
+
     /// A guest that restarted itself again and again is not an error of the
     /// runtime, and the notice does not print the status the runtime used to
     /// say so.

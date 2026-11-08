@@ -391,7 +391,7 @@ enum RootfsImage {
     static let defaultFilename = "kde-20260929-r2.erofs"
     static let environmentKey = "KERNARIUM_ROOTFS"
 
-    static var documentsDirectory: URL {
+    nonisolated static var documentsDirectory: URL {
         FileManager.default.urls(
             for: .documentDirectory,
             in: .userDomainMask

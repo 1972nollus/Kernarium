@@ -16,9 +16,11 @@ package with no UIKit, SwiftUI or runtime dependency, tested with `swift test`
 ```text
 Core/                                  GuestHostCore, a Swift package both
                                        applications import: sizes and their text,
-                                       the free-space thresholds (RunSpace), and
-                                       the pause for space (SpacePauser,
-                                       SuspensionCheck, SpacePause)
+                                       the device's free space (HostStorage), the
+                                       free-space thresholds (RunSpace), the start
+                                       check's text (StartSpace), and the pause
+                                       for space (SpacePauser, SuspensionCheck,
+                                       SpacePause)
 Sources/KernariumRuntimeLoader.h/.mm   loads the embedded runtime framework and
                                        wraps its C API (Runtime/KernariumRuntime.h)
 Sources/GuestDisplay.swift             the Metal view that shows the guest's display,

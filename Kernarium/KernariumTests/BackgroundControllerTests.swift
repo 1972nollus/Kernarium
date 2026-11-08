@@ -794,6 +794,179 @@ struct BackgroundControllerTests {
         #expect(effects.calls.isEmpty)
     }
 
+    // MARK: Space pause
+
+    /// A guest paused for space is resident and suspended: an edge that wrote
+    /// its storage back, quiesced it or resumed it would end the suspension,
+    /// and a quiesce would write the RAM image the device has no room for.
+    @Test
+    func anEdgeLeavesAGuestPausedForSpaceAloneAndHoldsTheGPU() {
+        let effects = Effects()
+        let policy = controller(.off, effects)
+        policy.spacePauseBegan()
+        #expect(policy.spaceHeld)
+        #expect(!policy.guestRuns)
+
+        policy.didEnterBackground()
+        #expect(effects.calls == ["hold"])
+        #expect(policy.phase == .quiesced)
+
+        // The return releases the GPU and wakes nothing.
+        policy.willEnterForeground()
+        #expect(effects.calls == ["hold", "release"])
+        #expect(policy.phase == .foreground)
+        #expect(policy.spaceHeld)
+    }
+
+    @Test
+    func everyModeLeavesAGuestPausedForSpaceAlone() {
+        for mode in BackgroundMode.allCases {
+            let effects = Effects()
+            effects.pictureInPictureCanStart = true
+            effects.jobActive = true
+            let policy = controller(mode, effects)
+            policy.spacePauseBegan()
+            policy.didEnterBackground()
+            #expect(effects.calls == ["hold"], "\(mode)")
+            #expect(policy.phase == .quiesced, "\(mode)")
+            #expect(effects.deadlines.isEmpty, "\(mode)")
+        }
+    }
+
+    /// The pause begins while the policy keeps the guest running unseen: what
+    /// ran it ends first, so the suspension is not throttled, and the GPU of a
+    /// window that closes is held.
+    @Test
+    func aPauseForSpaceEndsWhatKeepsTheGuestRunningUnseen() {
+        let window = Effects()
+        window.pictureInPictureCanStart = true
+        window.pictureInPictureActive = true
+        let windowPolicy = controller(.pictureInPicture, window)
+        windowPolicy.didEnterBackground()
+        windowPolicy.pictureInPictureDidStart()
+        #expect(windowPolicy.phase == .keptRunning)
+        window.calls.removeAll()
+
+        windowPolicy.spacePauseBegan()
+        #expect(window.calls == [
+            "throttle off", "trim off", "hold", "stop pip",
+        ])
+        #expect(windowPolicy.phase == .quiesced)
+        // Closing the window afterwards asks nothing more of the guest.
+        windowPolicy.pictureInPictureDidStop()
+        #expect(!window.calls.contains { $0.hasPrefix("quiesce") })
+
+        let job = Effects()
+        job.jobActive = true
+        let jobPolicy = controller(.keepRunning, job)
+        jobPolicy.didEnterBackground()
+        #expect(jobPolicy.phase == .jobRunning)
+        job.calls.removeAll()
+
+        jobPolicy.spacePauseBegan()
+        // The job's hold stays, and the guest is no longer trimmed.
+        #expect(job.calls == ["trim off"])
+        #expect(jobPolicy.phase == .quiesced)
+        // The job ending afterwards writes and quiesces nothing.
+        jobPolicy.jobDidEnd()
+        #expect(job.calls == ["trim off"])
+
+        let waiting = Effects()
+        waiting.pictureInPictureCanStart = true
+        let waitingPolicy = controller(.pictureInPicture, waiting)
+        waitingPolicy.didEnterBackground()
+        #expect(waitingPolicy.phase == .awaitingPictureInPicture)
+        waiting.calls.removeAll()
+
+        waitingPolicy.spacePauseBegan()
+        #expect(waiting.calls == ["end picture-in-picture"])
+        #expect(waitingPolicy.phase == .quiesced)
+        // The window the system starts later does not run the guest again.
+        waitingPolicy.pictureInPictureDidStart()
+        #expect(waitingPolicy.phase == .quiesced)
+        #expect(!waiting.calls.contains("release"))
+    }
+
+    /// The window that the system starts as the app left is not wanted for a
+    /// guest the pause ended before it opened, and no deadline wakes it.
+    @Test
+    func theWindowDeadlineOfAGuestPausedForSpaceDoesNothing() {
+        let effects = Effects()
+        effects.pictureInPictureCanStart = true
+        let policy = controller(.pictureInPicture, effects)
+        policy.didEnterBackground()
+        policy.spacePauseBegan()
+        effects.calls.removeAll()
+
+        effects.expire()
+        #expect(effects.calls.isEmpty)
+        #expect(policy.phase == .quiesced)
+    }
+
+    @Test
+    func aPauseThatEndsInTheForegroundAsksNothingOfTheGuest() {
+        let effects = Effects()
+        let policy = controller(.off, effects)
+        policy.spacePauseBegan()
+        policy.spacePauseEnded(guestSuspended: true)
+        #expect(!policy.spaceHeld)
+        #expect(policy.guestRuns)
+        #expect(effects.calls.isEmpty)
+
+        // The edges are the policy's again.
+        policy.didEnterBackground()
+        #expect(effects.calls == ["hold", "quiesce background"])
+        policy.willEnterForeground()
+        #expect(effects.calls.suffix(2) == ["release", "resume"])
+    }
+
+    /// A guest that could not be suspended runs on. Behind an application that
+    /// left the foreground it is paused as the background asks, which is what
+    /// the edge would have done.
+    @Test
+    func aGuestThatCouldNotBePausedIsQuiescedByTheBackgroundAfterwards() {
+        let effects = Effects()
+        let policy = controller(.off, effects)
+        policy.spacePauseBegan()
+        policy.didEnterBackground()
+        effects.calls.removeAll()
+
+        policy.spacePauseEnded(guestSuspended: false)
+        #expect(effects.calls == ["quiesce background"])
+        #expect(policy.phase == .quiesced)
+        #expect(!policy.spaceHeld)
+
+        policy.willEnterForeground()
+        #expect(effects.calls.suffix(2) == ["release", "resume"])
+    }
+
+    @Test
+    func aGuestThatCouldNotBePausedInTheForegroundKeepsRunning() {
+        let effects = Effects()
+        let policy = controller(.off, effects)
+        policy.spacePauseBegan()
+        policy.spacePauseEnded(guestSuspended: false)
+        #expect(effects.calls.isEmpty)
+        #expect(policy.guestRuns)
+        #expect(policy.isForeground)
+    }
+
+    @Test
+    func theSpacePauseCallsAreIdempotent() {
+        let effects = Effects()
+        effects.jobActive = true
+        let policy = controller(.keepRunning, effects)
+        policy.spacePauseEnded(guestSuspended: true)
+        #expect(effects.calls.isEmpty)
+
+        policy.didEnterBackground()
+        policy.spacePauseBegan()
+        effects.calls.removeAll()
+        policy.spacePauseBegan()
+        #expect(effects.calls.isEmpty)
+        #expect(policy.phase == .quiesced)
+    }
+
     @Test
     func eachGuestKeepsItsOwnModeAndDefaultsToPausing() throws {
         let suite = "background-settings-\(UUID().uuidString)"

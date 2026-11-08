@@ -245,6 +245,12 @@ final class BackgroundController {
     private var startDeadline: (any BackgroundCancellable)?
     private var keepScheduled: (any BackgroundCancellable)?
     private var guestQuiesced = false
+    /// The guest is paused for want of space on the device
+    /// (`GuestSpacePause`), which only the person ends. While it is, no edge
+    /// resumes the guest, writes its storage back or quiesces it: any of them
+    /// would end the suspension, and a quiesce would write the RAM image the
+    /// device has no room for.
+    private(set) var spaceHeld = false
     /// The Android screen this controller turned off, to turn on again.
     private var screenTurnedOff = false
     /// What keeps the process scheduled while a hold an automation launch put
@@ -265,6 +271,14 @@ final class BackgroundController {
         let chosen = mode()
         // The edge the hold's timing is measured from.
         print("Kernarium: background edge, mode \(chosen.rawValue)")
+        // A guest paused for space stays as it is, and resident: the GPU is
+        // held as for any guest that leaves the foreground, and nothing else
+        // is asked of it.
+        if spaceHeld {
+            holdGPU()
+            phase = .quiesced
+            return
+        }
         if chosen == .keepRunning && effects.jobActive {
             enterBackgroundWithJob(until: deadline)
             return
@@ -344,6 +358,50 @@ final class BackgroundController {
         guard phase == .jobRunning else { return }
         effects.setPageCacheTrimming(false)
         quiesce(reason: "job ended")
+    }
+
+    /// Whether the guest is running as far as the policy can say: it has not
+    /// paused it for the background, and the space pause has not stopped it.
+    var guestRuns: Bool { phase != .quiesced && !spaceHeld }
+
+    /// Whether the application is in the foreground.
+    var isForeground: Bool { phase == .foreground }
+
+    /// The guest is being paused for space. A guest the policy keeps running
+    /// out of sight stops being kept: whatever runs it unseen ends first, so
+    /// the suspension is not throttled, and the policy stands as for a guest
+    /// it paused, without a quiesce of its own.
+    func spacePauseBegan() {
+        guard !spaceHeld else { return }
+        spaceHeld = true
+        switch phase {
+        case .keptRunning:
+            endKeptRunning()
+            holdGPU()
+            effects.stopPictureInPicture()
+            phase = .quiesced
+        case .jobRunning:
+            // The job's GPU hold stays; the guest no longer needs trimming.
+            effects.setPageCacheTrimming(false)
+            phase = .quiesced
+        case .awaitingPictureInPicture:
+            endWait()
+            phase = .quiesced
+        case .foreground, .quiesced:
+            break
+        }
+    }
+
+    /// The pause for space ended: the person resumed the guest, or it could
+    /// not be paused and runs on. A guest that runs on, behind an application
+    /// that has left the foreground, is paused as the background asks, which
+    /// is what the edge would have done.
+    func spacePauseEnded(guestSuspended: Bool) {
+        guard spaceHeld else { return }
+        spaceHeld = false
+        if !guestSuspended && phase == .quiesced && !guestQuiesced {
+            quiesce(reason: "background")
+        }
     }
 
     /// The Picture in Picture window is on screen.

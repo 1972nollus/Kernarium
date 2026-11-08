@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import Foundation
+import GuestHostCore
 import UIKit
 
 /// iOS can reclaim a suspended application without running any more of its
@@ -64,6 +65,9 @@ final class GuestPersistence {
         pictureInPicture?.controller = controller
         let edges: [(Notification.Name, @MainActor () -> Void)] = [
             (UIApplication.willResignActiveNotification, {
+                // A write-back is a console request, which ends the
+                // suspension of a guest paused for space.
+                guard self.background?.spaceHeld != true else { return }
                 self.flush(
                     reason: "inactive",
                     departure: .flush,
@@ -79,6 +83,9 @@ final class GuestPersistence {
             }),
             (UIApplication.willTerminateNotification, {
                 BackgroundSession.shared.willTerminate()
+                // A guest paused for space has written everything back, and
+                // a quiesce would write its RAM to a device short of space.
+                guard self.background?.spaceHeld != true else { return }
                 self.flush(
                     reason: "terminating",
                     departure: .quiesce,
@@ -115,6 +122,40 @@ final class GuestPersistence {
             kernarium_runtime_loader_resume()
             Task { @MainActor in
                 BackgroundSession.shared.guestResumeFinished()
+            }
+        }
+    }
+
+    /// Like `resumeGuest()`, and says on the main actor when the guest is back.
+    func resumeGuest(finished: @escaping @MainActor () -> Void) {
+        BackgroundSession.shared.guestResumeStarted()
+        queue.async {
+            kernarium_runtime_loader_resume()
+            Task { @MainActor in
+                BackgroundSession.shared.guestResumeFinished()
+                finished()
+            }
+        }
+    }
+
+    /// Writes the guest's storage back and suspends it with its RAM kept in
+    /// the process, for a device too short of space for a hibernation image,
+    /// behind whatever the queue already holds. Says on the main actor once
+    /// the runtime has returned.
+    func quiesceResident(
+        reason: String,
+        finished: @escaping @MainActor () -> Void
+    ) {
+        let assertion = BackgroundTaskAssertion(named: "guest-sync")
+        queue.async {
+            let unflushed = kernarium_runtime_loader_quiesce_resident()
+            Task { @MainActor in
+                print(
+                    "Kernarium: guest storage settled on \(reason), RAM " +
+                        "kept (\(unflushed) unflushed)"
+                )
+                assertion.end()
+                finished()
             }
         }
     }
@@ -217,6 +258,49 @@ protocol PictureInPictureWindow: AnyObject {
     var canStart: Bool { get }
     var isActive: Bool { get }
     func stop()
+}
+
+/// Pausing a guest for want of space on the real runtime, on the queue the
+/// other guest requests share so that a quick resume comes after the suspend.
+@MainActor
+final class SystemSpacePauseEffects: SpacePauseEffects {
+    private let persistence: GuestPersistence
+    /// Statistics requests wait for the guest and never overlap.
+    private let statisticsQueue = DispatchQueue(
+        label: "com.imxieyi.Kernarium.space-statistics",
+        qos: .utility
+    )
+
+    init(persistence: GuestPersistence) {
+        self.persistence = persistence
+    }
+
+    func resumeGuest(finished: @escaping @MainActor () -> Void) {
+        persistence.resumeGuest(finished: finished)
+    }
+
+    func suspendGuestResident(
+        reason: String,
+        finished: @escaping @MainActor () -> Void
+    ) {
+        persistence.quiesceResident(reason: reason, finished: finished)
+    }
+
+    func guestProcessorTime() async -> UInt64? {
+        await withCheckedContinuation { continuation in
+            statisticsQueue.async {
+                var reading = kernarium_runtime_statistics()
+                reading.struct_size = UInt32(
+                    MemoryLayout<kernarium_runtime_statistics>.size
+                )
+                let answered =
+                    kernarium_runtime_loader_read_statistics(&reading) == 0
+                continuation.resume(
+                    returning: answered ? reading.processor_time_ns : nil
+                )
+            }
+        }
+    }
 }
 
 /// The runtime's request gate for the guest's GPU.

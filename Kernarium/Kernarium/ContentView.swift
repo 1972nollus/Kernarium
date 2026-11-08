@@ -2,6 +2,7 @@
 
 import Combine
 import Foundation
+import GuestHostCore
 import MetalKit
 import SwiftUI
 
@@ -10,6 +11,7 @@ struct ContentView: View {
     @ObservedObject private var launcher = EmulatorLauncher.shared
     @ObservedObject private var backgroundSession = BackgroundSession.shared
     @ObservedObject private var backgroundJob = BackgroundJob.shared
+    @ObservedObject private var spacePause = GuestSpacePause.shared
     /// Whether the running guest chose the keep-running mode, which is what
     /// offers the button that starts its job.
     @State private var keepRunningChosen = false
@@ -50,8 +52,18 @@ struct ContentView: View {
                     .allowsHitTesting(guestViewMode == .serialConsole)
                     .accessibilityHidden(guestViewMode != .serialConsole)
 
-                if case let .ended(result) = launcher.phase {
-                    GuestEndedNotice(end: GuestRunEnd(result: result))
+                if let shortage = launcher.startShortage {
+                    StartShortageNotice(shortage: shortage) {
+                        launcher.retryStart()
+                    }
+                    .padding()
+                } else if case let .ended(result) = launcher.phase {
+                    GuestEndedNotice(
+                        end: GuestRunEnd(
+                            result: result,
+                            requested: launcher.stopRequested
+                        )
+                    )
                         .padding()
                 } else if let warning = launcher.gpuBudgetWarning {
                     GPUBudgetWarningNotice(warning: warning) {
@@ -85,6 +97,20 @@ struct ContentView: View {
             floatingButtons
         }
         .ignoresSafeArea(.keyboard)
+        .overlay {
+            // Over the guest and its controls: the guest is not running.
+            if let pause = spacePause.pause {
+                SpacePauseOverlay(
+                    pause: pause,
+                    resume: { spacePause.resume() },
+                    shutDown: { spacePause.shutDown() },
+                    checkAgain: { spacePause.checkAgain() }
+                )
+            }
+        }
+        .animation(
+            .easeInOut(duration: 0.2), value: spacePause.pause != nil
+        )
         .background {
             SceneCoverageReader { sceneCoversScreen = $0 }
         }
@@ -95,9 +121,11 @@ struct ContentView: View {
             serialConsole.startObserving()
             let window = GuestPictureInPicture.shared
             window.wanted = {
-                EmulatorLauncher.shared.runningGuestName.map {
-                    BackgroundSettings().mode(forGuest: $0)
-                } == .pictureInPicture
+                // A guest paused for space is not shown in a window.
+                !GuestSpacePause.shared.holdsGuest &&
+                    EmulatorLauncher.shared.runningGuestName.map {
+                        BackgroundSettings().mode(forGuest: $0)
+                    } == .pictureInPicture
             }
             GuestPersistence.shared.startObserving(
                 guest: { EmulatorLauncher.shared.runningGuestName },
@@ -124,6 +152,14 @@ struct ContentView: View {
         ) { _ in
             GuestPictureInPicture.shared.refresh()
             refreshKeepRunning()
+        }
+        .onChange(of: spacePause.pause != nil) { _, paused in
+            // The screen over the guest says why it is paused, and a sheet
+            // or a keyboard would cover it.
+            guard paused else { return }
+            settingsPresented = false
+            framebufferKeyboardVisible = false
+            serialConsole.resignFirstResponder()
         }
         .onChange(of: launcher.phase) { _, phase in
             GuestPictureInPicture.shared.guestRunningChanged(phase == .running)
@@ -354,6 +390,14 @@ enum GuestViewMode {
 /// How this launch's guest run ended, as the application reports it.
 struct GuestRunEnd: Equatable {
     let result: Int32
+    /// The application stopped the run, as Shut down on the screen over a
+    /// guest paused for space does. An Android run the host stops returns an
+    /// error status by contract, because only the guest's own power-off
+    /// leaves a process another run may start in, and the person who asked for
+    /// the stop did not meet an error.
+    var requested = false
+
+    private var shutDown: Bool { result == 0 || requested }
 
     /// The runtime stopped a guest that restarted itself again and again
     /// within seconds of booting. A guest that restarts once in a while is
@@ -364,7 +408,7 @@ struct GuestRunEnd: Equatable {
 
     var title: String {
         if restartedInALoop { return "Guest kept restarting" }
-        return result == 0 ? "Guest shut down" : "Guest stopped with an error"
+        return shutDown ? "Guest shut down" : "Guest stopped with an error"
     }
 
     var message: String {
@@ -374,14 +418,14 @@ struct GuestRunEnd: Equatable {
                 "seconds of booting, so Kernarium stopped booting it. " +
                 relaunch
         }
-        return result == 0
+        return shutDown
             ? relaunch
             : "The runtime returned \(result). \(relaunch)"
     }
 
     var systemName: String {
         if restartedInALoop { return "arrow.trianglehead.2.clockwise.rotate.90" }
-        return result == 0 ? "power" : "exclamationmark.triangle"
+        return shutDown ? "power" : "exclamationmark.triangle"
     }
 }
 
@@ -399,6 +443,30 @@ private struct GuestEndedNotice: View {
         )
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("guestEndedNotice")
+    }
+}
+
+/// Shown over the guest views when the device has too little free space for
+/// the guest to start. Nothing started; Check again tries once more.
+private struct StartShortageNotice: View {
+    let shortage: StartSpace
+    let checkAgain: () -> Void
+
+    var body: some View {
+        VStack(spacing: 14) {
+            GuestNoticeCard(
+                systemName: "externaldrive.badge.exclamationmark",
+                title: StartSpace.title,
+                message: shortage.message(device: EmulatorLauncher.deviceName)
+                    + " " + shortage.advice(device: EmulatorLauncher.deviceName),
+                messageStyle: .primary
+            )
+            Button("Check again", action: checkAgain)
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("startShortageCheckAgainButton")
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("startShortageNotice")
     }
 }
 
@@ -781,8 +849,10 @@ enum GuestRunPhase: Equatable {
 }
 
 @MainActor
-final class EmulatorLauncher: ObservableObject {
-    static let shared = EmulatorLauncher(configuration: .load())
+final class EmulatorLauncher: ObservableObject, SpaceRun {
+    static let shared: EmulatorLauncher = EmulatorLauncher(
+        configuration: .load(), space: { GuestSpacePause.shared }
+    )
 
     private let configuration: EmulatorConfiguration
     /// The job that keeps the guest running in the background, which ends
@@ -794,19 +864,48 @@ final class EmulatorLauncher: ObservableObject {
     /// Set at launch when the application's memory limit leaves the host GPU
     /// less than its floor; the guest boots regardless.
     @Published private(set) var gpuBudgetWarning: GPUBudgetWarning?
+    /// Set while the device has too little free space for the guest to start.
+    /// Nothing started: the guest starts once there is room and the person
+    /// asks again.
+    @Published private(set) var startShortage: StartSpace?
     private var restartIndicator = GuestRestartIndicator()
     /// The name the running guest's own settings are stored under.
     private(set) var runningGuestName: String?
     private(set) var runningGuestIsAndroid = false
+    /// The application asked the run to stop, which is how a run the person
+    /// ended ends.
+    private(set) var stopRequested = false
     private var thermalObserver: NSObjectProtocol?
+    /// The view and geometry of a start the free space refused, for asking
+    /// again.
+    private var refusedStart: (GuestMetalView, GuestDisplayGeometry)?
+    private let freeSpace: @Sendable () -> UInt64
+    /// What pauses the guest when the device runs short of space while it
+    /// runs; the unit tests' launchers have none.
+    private let space: (() -> GuestSpacePause)?
 
     var retinaMode: Bool { configuration.retinaMode }
 
     /// The unit tests make launchers of their own, with a job of their own.
-    init(configuration: EmulatorConfiguration, job: BackgroundJob? = nil) {
+    init(
+        configuration: EmulatorConfiguration,
+        job: BackgroundJob? = nil,
+        freeSpace: @escaping @Sendable () -> UInt64 = {
+            SpaceHarness.current.freeSpace()
+        },
+        space: (() -> GuestSpacePause)? = nil
+    ) {
         self.configuration = configuration
         self.job = job ?? .shared
+        self.freeSpace = freeSpace
+        self.space = space
     }
+
+    // MARK: SpaceRun
+
+    var isActive: Bool { phase == .running && !restarting }
+
+    var guestName: String { runningGuestIsAndroid ? "Android" : "Linux" }
 
     fileprivate func start(
         view: GuestMetalView,
@@ -823,6 +922,23 @@ final class EmulatorLauncher: ObservableObject {
             print("Kernarium: Documents/\(rootfsFilename) is missing")
             return
         }
+        if let shortage = Self.startShortage(
+            for: selection, freeBytes: freeSpace()
+        ) {
+            // Every layout of the guest view asks to start while the run is
+            // idle, so a refusal is said, and published, once.
+            if startShortage == nil {
+                print(
+                    "Kernarium: not enough free space to start: " +
+                        "\(shortage.message(device: Self.deviceName))"
+                )
+            }
+            refusedStart = (view, geometry)
+            if startShortage != shortage { startShortage = shortage }
+            return
+        }
+        refusedStart = nil
+        if startShortage != nil { startShortage = nil }
         runningGuestName = rootfsFilename
         runningGuestIsAndroid = selection.flavor == .android
         guard kernarium_runtime_loader_select(
@@ -875,6 +991,7 @@ final class EmulatorLauncher: ObservableObject {
             gpuBudgetWarning = GPUBudgetWarning(plan: plan)
         }
         phase = .running
+        space?().runStarted()
         startThermalObservation()
         let size = GuestInputCoordinateSpace.boundedDisplaySize(
             geometry.pixelSize
@@ -968,6 +1085,7 @@ final class EmulatorLauncher: ObservableObject {
     }
 
     func finished(result: Int32) {
+        space?().runEnded()
         stopThermalObservation()
         restartIndicator.runEnded()
         restarting = false
@@ -981,7 +1099,35 @@ final class EmulatorLauncher: ObservableObject {
     }
 
     func stop() {
+        stopRequested = true
         kernarium_runtime_loader_request_stop()
+    }
+
+    /// What a start lacks in free space, nil when there is enough. A guest's
+    /// disk grows as it writes: a start needs room for its first writes, and
+    /// a bundle that has no data disk yet needs the first start's.
+    static func startShortage(
+        for selection: GuestSelection, freeBytes: UInt64
+    ) -> StartSpace? {
+        let firstStart: Bool
+        if case let .bundle(bundle) = selection {
+            firstStart = !FileManager.default.fileExists(
+                atPath: bundle.dataDisk.path
+            )
+        } else {
+            firstStart = false
+        }
+        return StartSpace(freeBytes: freeBytes, firstStart: firstStart)
+    }
+
+    /// What the screen calls the device: "iPad", "iPhone".
+    static var deviceName: String { UIDevice.current.model }
+
+    /// Check again, over a start the free space refused: the guest starts
+    /// when there is room now.
+    func retryStart() {
+        guard let (view, geometry) = refusedStart else { return }
+        start(view: view, geometry: geometry)
     }
 
     func dismissGPUBudgetWarning() {

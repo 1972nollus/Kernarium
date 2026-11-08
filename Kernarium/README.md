@@ -285,6 +285,41 @@ decides what the lifecycle edges do and acts only through
   `BackgroundPolicy.swift` and `GuestGPUHold.swift` document the order of the
   edges.
 
+### Low space on the device
+
+A guest's disk grows as the guest writes (the Linux overlay in the temporary
+directory, an Android bundle's `data.img`), and a write the device cannot take
+stops the guest. The thresholds and the pause itself are
+[GuestHostCore](../GuestHost/README.md), which Andarium shares.
+
+- A start needs room for the guest's first writes (`StartSpace`: 1.5 GiB, and
+  3 GiB for a bundle that has no data disk yet). On a device short of it a
+  notice covers the guest views, nothing starts, and Check again tries once
+  more.
+- While a run is on, `GuestSpacePause` reads the free space now and then and
+  pauses the guest below 1 GiB. The runtime suspends it with its RAM kept in
+  the process (`quiesce_resident`), because a hibernation image is the write
+  the device has no room for; the guest's processor time standing still
+  confirms the suspension, and a screen over the guest offers Resume and Shut
+  down. A guest that does not hold still is called so, with Shut down and
+  Check again.
+- Resume reads the space again and wakes the guest at 1.5 GiB or more. Shut
+  down is the run's stop, the same as leaving the guest: the suspension
+  already wrote the guest's storage back, nothing is asked of the guest, and
+  the run ends with the notice that the guest shut down. Kernarium has no
+  clean power-off request.
+- No lifecycle edge wakes a paused guest. While `BackgroundController
+  .spaceHeld`, an edge holds the guest's GPU and does nothing else, in every
+  background mode, so the guest stays suspended and resident in the
+  background; the Picture in Picture window and the keep-running job end when
+  the pause begins. The watch reads the space only while the policy leaves
+  the guest running.
+- `KERNARIUM_SPACE_HARNESS=1` makes a file `free-space-mib` in Documents,
+  holding a number, stand for the device's free space while it exists, and a
+  file `space-answer` there (`resume`, `shutdown` or `check`) answer the
+  screen once it offers that answer, so a test drives the pause without
+  filling the disk.
+
 ## Statistics
 
 An application that shows how hard the guest works asks the runtime, which
