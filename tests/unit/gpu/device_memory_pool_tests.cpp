@@ -302,6 +302,260 @@ void accountedBytesCountOnlyWhatTheSystemCounts()
     require(accountedGpuBytes(0, most, 0) == 0, "the largest import");
 }
 
+/* Metal's counter falls the moment memory is freed, and the graphics ledger
+ * beside it follows later; the pool counts the larger of the two, and reads
+ * Metal's counter alone as its prompt reading. */
+struct Accounts {
+    Counter metal;
+    Counter ledger;
+    [[nodiscard]] std::uint64_t allocated() const
+    {
+        return uml::gpu::accountedGpuBytes(
+            metal.bytes.load(), 0, ledger.bytes.load());
+    }
+    [[nodiscard]] std::uint64_t prompt() const
+    {
+        return uml::gpu::madeGpuBytes(metal.bytes.load(), 0);
+    }
+};
+
+/* A pool over the accounts, which have read the same bytes once so that the
+ * pool has a reading to compare the next with. */
+DeviceMemoryPool makePool(Accounts& accounts)
+{
+    return DeviceMemoryPool(
+        100 * page, [&accounts] { return accounts.allocated(); }, page,
+        [&accounts] { return accounts.prompt(); });
+}
+
+void takeAReading(DeviceMemoryPool& pool)
+{
+    require(pool.reserve(page), "a page is admitted");
+    pool.release(page);
+}
+
+void waitsForALedgerThatLagsARelease()
+{
+    /* The hook frees 80 of 90 pages: Metal's counter shows it at once, and
+     * the ledger stands still for 60 ms, as it does until its sweep, and then
+     * follows. A reservation of 40 pages fits once the ledger follows, and
+     * the pool waits for it instead of refusing. */
+    Accounts accounts;
+    accounts.metal.bytes = 90 * page;
+    accounts.ledger.bytes = 90 * page;
+    DeviceMemoryPool pool = makePool(accounts);
+    std::thread ledger;
+    pool.setReclaim([&]() -> std::uint64_t {
+        accounts.metal.bytes = 10 * page;
+        ledger = std::thread([&] {
+            std::this_thread::sleep_for(60ms);
+            accounts.ledger.bytes = 10 * page;
+        });
+        return 4;
+    });
+    require(pool.reserve(40 * page),
+        "a reservation that fits once the ledger follows is admitted");
+    ledger.join();
+    require(pool.refusals() == 0, "nothing was refused");
+    require(pool.reclaimed() == 1, "the rescue is counted");
+    require(pool.settleWaits() == 1 && pool.settleAdmissions() == 1,
+        "the wait is counted");
+    require(pool.settleWaitedMicroseconds() >= 50000,
+        "the pool waited for the still ledger");
+    require(pool.usage() == 50 * page, "the reservation and the memory left");
+    pool.release(40 * page);
+
+    /* A ledger that already followed needs no wait. */
+    pool.setReclaim({});
+    require(pool.reserve(40 * page), "a settled ledger admits at once");
+    require(pool.settleWaits() == 1, "no wait was needed");
+    pool.release(40 * page);
+}
+
+void aReleaseThatHappenedBeforeTheRefusalIsWaitedFor()
+{
+    /* No hook: the guest freed the memory, and the pool sees Metal's counter
+     * lower than at its last reading when it decides. */
+    Accounts accounts;
+    accounts.metal.bytes = 90 * page;
+    accounts.ledger.bytes = 90 * page;
+    DeviceMemoryPool pool = makePool(accounts);
+    takeAReading(pool);
+    accounts.metal.bytes = 10 * page;
+    std::thread ledger([&] {
+        std::this_thread::sleep_for(20ms);
+        accounts.ledger.bytes = 10 * page;
+    });
+    require(pool.reserve(40 * page), "a release the pool did not cause");
+    ledger.join();
+    require(pool.settleWaits() == 1 && pool.settleAdmissions() == 1,
+        "the pool waited for it");
+    pool.release(40 * page);
+}
+
+void aFullBudgetIsRefusedAtOnce()
+{
+    /* Nothing was released, so there is nothing to wait for: neither Metal's
+     * counter nor the ledger has room. */
+    Accounts accounts;
+    accounts.metal.bytes = 90 * page;
+    accounts.ledger.bytes = 90 * page;
+    DeviceMemoryPool pool = makePool(accounts);
+    pool.setReclaim([]() -> std::uint64_t { return 2; });
+    require(!pool.reserve(20 * page), "a full budget refuses");
+    require(pool.refusals() == 1 && pool.refusalsAfterRelease() == 1,
+        "the refusal is counted");
+    require(pool.settleWaits() == 0, "the pool did not wait");
+
+    /* A request past the limit is no ledger's lag. */
+    require(!pool.reserve(101 * page), "a request past the limit is refused");
+    require(pool.settleWaits() == 0, "the impossible is not waited for");
+
+    /* A release that does not make room for the request is not waited for
+     * either: 20 pages freed leave 70 held, and 40 more would pass the limit
+     * however long the ledger takes. */
+    accounts.metal.bytes = 70 * page;
+    require(!pool.reserve(40 * page), "a release too small refuses");
+    require(pool.settleWaits() == 0, "it is refused at once");
+}
+
+void aMarginalRequestIsNotWaitedForTwice()
+{
+    /* Metal's counter shows 10 pages and the ledger 90: the extras the counter
+     * omits keep it above for good. With no release the request that Metal's
+     * figure would admit is refused at once. */
+    Accounts accounts;
+    accounts.metal.bytes = 10 * page;
+    accounts.ledger.bytes = 90 * page;
+    DeviceMemoryPool pool = makePool(accounts);
+    require(!pool.reserve(40 * page), "the ledger holds");
+    require(pool.settleWaits() == 0, "no release, no wait");
+
+    /* A release the ledger never repays is waited for once: the wait runs out
+     * its bound, and the next refusals are not waited for. */
+    accounts.metal.bytes = 60 * page;
+    takeAReading(pool);
+    accounts.metal.bytes = 10 * page;
+    const auto begun = std::chrono::steady_clock::now();
+    require(!pool.reserve(40 * page), "a ledger that holds refuses");
+    require(std::chrono::steady_clock::now() - begun >=
+            DeviceMemoryPool::settleLimit,
+        "the pool waited out its bound");
+    require(pool.settleWaits() == 1 && pool.settleAdmissions() == 0,
+        "the wait was counted and did not admit");
+    require(pool.usage() == 90 * page, "a refusal charges nothing");
+
+    require(!pool.reserve(40 * page), "the same request is refused again");
+    require(!pool.reserve(30 * page), "so is another that fits Metal's figure");
+    require(pool.settleWaits() == 1, "a wait that gave up is not repeated");
+    require(pool.reserve(5 * page), "what the ledger admits is admitted");
+    pool.release(5 * page);
+
+    /* The next release is waited for again, and the ledger repays it. */
+    accounts.metal.bytes = 60 * page;
+    takeAReading(pool);
+    accounts.metal.bytes = 10 * page;
+    std::thread ledger([&] {
+        std::this_thread::sleep_for(10ms);
+        accounts.ledger.bytes = 10 * page;
+    });
+    require(pool.reserve(40 * page), "a fresh release is waited for");
+    ledger.join();
+    require(pool.settleWaits() == 2 && pool.settleAdmissions() == 1,
+        "the second wait admitted");
+    pool.release(40 * page);
+}
+
+void aLedgerThatFallsTooSlowlyEndsAtTheBound()
+{
+    /* The ledger keeps falling, a page every 5 ms, and would take longer than
+     * the bound to show the room for 80 pages. */
+    Accounts accounts;
+    accounts.metal.bytes = 90 * page;
+    accounts.ledger.bytes = 90 * page;
+    DeviceMemoryPool pool = makePool(accounts);
+    takeAReading(pool);
+    accounts.metal.bytes = 10 * page;
+    std::atomic<bool> stop {};
+    std::thread ledger([&] {
+        while (!stop && accounts.ledger.bytes > 10 * page) {
+            std::this_thread::sleep_for(5ms);
+            accounts.ledger.bytes -= page;
+        }
+    });
+    const auto begun = std::chrono::steady_clock::now();
+    const bool admitted = pool.reserve(80 * page);
+    const auto waited = std::chrono::steady_clock::now() - begun;
+    stop = true;
+    ledger.join();
+    require(!admitted, "a ledger that is too slow refuses");
+    require(waited >= DeviceMemoryPool::settleLimit,
+        "the pool waited out its bound");
+    require(pool.settleWaits() == 1 && pool.settleAdmissions() == 0,
+        "the wait was counted and did not admit");
+}
+
+void aWaitEndsWhenAnotherTakesTheRoom()
+{
+    /* The pool waits for the ledger to repay 80 pages and for room for 50.
+     * Another consumer then takes 50 pages of Metal's counter, so the room is
+     * gone however the ledger falls, and the wait ends without running out
+     * its bound. */
+    Accounts accounts;
+    accounts.metal.bytes = 90 * page;
+    accounts.ledger.bytes = 90 * page;
+    DeviceMemoryPool pool = makePool(accounts);
+    takeAReading(pool);
+    accounts.metal.bytes = 10 * page;
+    std::thread other([&] {
+        std::this_thread::sleep_for(20ms);
+        accounts.metal.bytes = 60 * page;
+    });
+    const auto begun = std::chrono::steady_clock::now();
+    const bool admitted = pool.reserve(50 * page);
+    const auto waited = std::chrono::steady_clock::now() - begun;
+    other.join();
+    require(!admitted, "the room was taken");
+    require(waited < DeviceMemoryPool::settleLimit,
+        "the wait ended when the room was gone");
+    require(pool.settleWaits() == 1 && pool.settleAdmissions() == 0,
+        "the pool waited while the room could still come");
+}
+
+void theWaitHoldsNoLock()
+{
+    /* While one thread waits for the ledger, another reads the usage and
+     * returns a reservation: the wait holds no lock of the pool. The ledger
+     * keeps falling, so the wait lasts about 30 ms. */
+    Accounts accounts;
+    accounts.metal.bytes = 80 * page;
+    accounts.ledger.bytes = 80 * page;
+    DeviceMemoryPool pool = makePool(accounts);
+    require(pool.reserve(5 * page), "a reservation to give back");
+    accounts.metal.bytes = 10 * page;
+    std::atomic<bool> admitted {};
+    std::atomic<bool> stop {};
+    std::thread waiter([&] { admitted = pool.reserve(50 * page); });
+    while (pool.settleWaits() == 0)
+        std::this_thread::yield();
+    std::thread ledger([&] {
+        while (!stop && accounts.ledger.bytes > 10 * page) {
+            std::this_thread::sleep_for(1ms);
+            accounts.ledger.bytes -= page;
+        }
+    });
+    std::thread other([&] {
+        (void)pool.usage();
+        pool.release(5 * page);
+    });
+    other.join();
+    require(!admitted, "the waiter is still waiting when the other is done");
+    waiter.join();
+    stop = true;
+    ledger.join();
+    require(admitted, "the waiter is admitted once the ledger follows");
+}
+
 void importsDoNotFillThePool()
 {
     /* A guest's host-visible allocations are shared-memory segments the
@@ -355,6 +609,13 @@ int main()
     reclaimsBeforeRefusing();
     hookRunsWithoutThePoolsLocks();
     setReclaimWaitsForARunningHook();
+    waitsForALedgerThatLagsARelease();
+    aReleaseThatHappenedBeforeTheRefusalIsWaitedFor();
+    aFullBudgetIsRefusedAtOnce();
+    aMarginalRequestIsNotWaitedForTwice();
+    aLedgerThatFallsTooSlowlyEndsAtTheBound();
+    aWaitEndsWhenAnotherTakesTheRoom();
+    theWaitHoldsNoLock();
     std::puts("device memory pool: allocations that reserve first never "
               "pass the limit together");
     return 0;

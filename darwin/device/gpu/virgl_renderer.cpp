@@ -337,7 +337,16 @@ VirglRenderer::VirglRenderer()
                         uml::platform::hostGpuAllocatedBytes(), imported,
                         uml::platform::hostGraphicsFootprintBytes());
                 },
-                static_cast<std::uint64_t>(getpagesize()));
+                static_cast<std::uint64_t>(getpagesize()),
+                /* The ledger follows a release a few milliseconds after the
+                 * counter does; the pool waits for it when this alone shows
+                 * the room. */
+                [] {
+                    const std::uint64_t imported =
+                        virgl_renderer_get_imported_host_memory();
+                    return madeGpuBytes(
+                        uml::platform::hostGpuAllocatedBytes(), imported);
+                });
             const virgl_renderer_device_memory_pool pool {
                 .limit = limit,
                 .data = deviceMemoryPool.get(),
