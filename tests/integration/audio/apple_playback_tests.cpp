@@ -4,6 +4,7 @@
 
 #include <poll.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -20,6 +21,35 @@ void require(bool condition, const char* message)
         throw std::runtime_error(message);
 }
 
+/* A period the output has consumed is heard after the output's own latency,
+ * and the guest counts the periods still queued itself: every completion of
+ * a stream reports the same latency, however many periods are queued, and
+ * it is never nothing. */
+class Latency final {
+public:
+    void add(const uml::audio::PlaybackCompletion& completion)
+    {
+        low_ = std::min(low_, completion.latencyBytes);
+        high_ = std::max(high_, completion.latencyBytes);
+    }
+
+    void check(const char* stream) const
+    {
+        // Stereo 16-bit frames at 48 kHz.
+        constexpr double bytesPerMillisecond = 48.0 * 4.0;
+        std::printf("%s: every period reports %.1f to %.1f ms of output latency\n",
+                stream, low_ / bytesPerMillisecond, high_ / bytesPerMillisecond);
+        require(low_ == high_,
+                "the Apple output's reported latency changed with the queue");
+        require(high_ > 0 && high_ <= 5000 * bytesPerMillisecond,
+                "the Apple output reported no latency of its own");
+    }
+
+private:
+    std::uint32_t low_ {UINT32_MAX};
+    std::uint32_t high_ {};
+};
+
 void playback(uml::audio::PlaybackSink& sink, uml::audio::PeriodClock& clock)
 {
     constexpr std::uint32_t frames = 1024;
@@ -33,6 +63,7 @@ void playback(uml::audio::PlaybackSink& sink, uml::audio::PeriodClock& clock)
     std::array<std::uint8_t, periodBytes> pcm {};
     std::uint64_t queued {};
     std::set<std::uint64_t> completed;
+    Latency latency;
     bool started {};
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
     while (completed.size() != periods && std::chrono::steady_clock::now() < deadline) {
@@ -70,11 +101,13 @@ void playback(uml::audio::PlaybackSink& sink, uml::audio::PeriodClock& clock)
                     completion.requestId <= queued, "invalid Apple audio completion");
             require(completed.insert(completion.requestId).second,
                     "duplicate Apple audio completion");
+            latency.add(completion);
         }
     }
     require(completed.size() == periods, "Apple audio playback did not complete");
     sink.stop();
     sink.release();
+    latency.check("Apple playback");
     std::printf("PASS Apple playback: %zu stereo PCM periods consumed\n", completed.size());
 }
 /* A low-latency guest keeps four 5 ms periods queued and hands one back as
@@ -122,6 +155,7 @@ void lowLatencyPlayback(uml::audio::PlaybackSink& sink, uml::audio::PeriodClock&
     const auto end = started + std::chrono::milliseconds(2500);
     std::uint64_t completedSinceSettled {};
     std::uint64_t ranDry {};
+    Latency latency;
     while (std::chrono::steady_clock::now() < end) {
         pollfd descriptor {clock.descriptor(), POLLIN, 0};
         require(poll(&descriptor, 1, 50) >= 0, "Apple audio completion poll failed");
@@ -132,6 +166,7 @@ void lowLatencyPlayback(uml::audio::PlaybackSink& sink, uml::audio::PeriodClock&
         while (sink.takeCompletion(completion)) {
             require(completion.outcome == uml::audio::PlaybackOutcome::played,
                     "Apple audio dropped a low-latency period");
+            latency.add(completion);
             --pending;
             completed = true;
             if (std::chrono::steady_clock::now() >= settled)
@@ -152,6 +187,7 @@ void lowLatencyPlayback(uml::audio::PlaybackSink& sink, uml::audio::PeriodClock&
     require(ranDry == 0, "the Apple output ran out of low-latency periods");
     require(completedSinceSettled >= 380 && completedSinceSettled <= 420,
             "the Apple output did not play low-latency periods in real time");
+    latency.check("Apple low-latency playback");
 }
 } // namespace
 

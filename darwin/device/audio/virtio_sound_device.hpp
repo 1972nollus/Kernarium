@@ -78,11 +78,6 @@ private:
         bool timed {};
     };
 
-    struct ReadyCompletion final {
-        std::uint64_t requestId {};
-        std::uint32_t latencyBytes {};
-    };
-
     [[nodiscard]] std::chrono::nanoseconds playbackPeriod() const noexcept;
     void pace(std::uint64_t requestId);
     void timePacedTransfers();
@@ -106,7 +101,10 @@ private:
     // its completions, so completing at once would drain it in no time and
     // underrun every write.
     std::deque<PacedTransfer> paced_;
-    std::deque<ReadyCompletion> ready_;
+    // The requests of periods the device completes itself, paced or
+    // released. Nothing of theirs is heard after they complete, so their
+    // status reports no latency.
+    std::deque<std::uint64_t> ready_;
     // When the paced data queued so far would finish playing.
     ClockTime playHead_ {};
 

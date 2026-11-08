@@ -120,7 +120,7 @@ test's header holds the mechanics.
 | `guest-gbm-dmabuf` | `UML_GBM_DMABUF_PROBE_BINARY` | the virtio-gpu dma-buf contract |
 | `guest-drm-vblank` | `UML_DRM_FLIP_PROBE_BINARY` | Virtio-GPU's vblank pacing |
 | `guest-aarch32-kernel` | built from `tests/integration/aarch32/` | the kernel's AArch32 task support (needs `python3`, `as`, `ld` in the rootfs) |
-| `apple-audio-playback`, `-interruption` | `UML_TEST_APPLE_AUDIO=ON` | the real macOS audio output and the iOS interruption behavior (the latter needs an iOS Simulator runtime, and runs in a simulator device it creates and deletes) |
+| `apple-audio-playback`, `-interruption`, `guest-virtio-sound-delay-host` | `UML_TEST_APPLE_AUDIO=ON` | the real macOS audio output, the iOS interruption behavior (which needs an iOS Simulator runtime, and runs in a simulator device it creates and deletes) and a guest's stream delay on the real output |
 
 The probe sources are built for the guest architecture; each header says how.
 The real microphone is checked by hand because granting access is the user's
