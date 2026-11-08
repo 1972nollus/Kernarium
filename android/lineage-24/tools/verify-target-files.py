@@ -1642,6 +1642,21 @@ OVERLAY_CONFIGURATION = re.compile(r"[A-Z_]+/overlay/config/[^/]+\.xml")
 OVERLAY_THEME_PROPERTY = "ro.boot.vendor.overlay.theme"
 
 
+# Settings' "Android version" row opens the platform logo screen, and that screen starts the easter
+# egg by its PLATLOGO category, so the image carries the egg's package. The framework's product list
+# decides where it lands, hence any of the three application directories.
+EASTER_EGG_APK = re.compile(r"(?:SYSTEM|SYSTEM_EXT|PRODUCT)/(?:priv-)?app/EasterEgg/EasterEgg\.apk")
+
+
+def check_easter_egg(infos: dict[str, zipfile.ZipInfo]) -> None:
+    """The easter egg that the platform logo screen opens is in the image."""
+    if not any(EASTER_EGG_APK.fullmatch(name) for name in infos):
+        fail(
+            "EasterEgg.apk is missing from the image: the Android version row opens the logo screen, "
+            "which starts the egg (com.android.egg)"
+        )
+
+
 def check_navigation_mode(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
     """The wizard leaves the navigation mode alone, and both modes stay available."""
     info = infos.get(SETUP_WIZARD_APK)
@@ -3947,6 +3962,7 @@ def main() -> None:
         check_no_statistics_uploader(archive, infos)
         check_setup_wizard_branding(archive, infos)
         check_navigation_mode(archive, infos)
+        check_easter_egg(infos)
         check_launcher_workspace(archive, infos)
         check_network_time(archive, infos)
         check_flip_to_screen_off(archive, infos)

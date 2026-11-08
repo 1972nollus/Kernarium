@@ -820,6 +820,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wizard_branding_variant: str | None = None,
                           navigation_variant: str | None = None,
                           launcher_variant: str | None = None,
+                          easter_egg_variant: str | None = None,
                           network_time_variant: str | None = None,
                           flip_variant: str | None = None,
                           reclaim_variant: str | None = None,
@@ -1947,6 +1948,14 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 # are the component names.
                 if launcher_variant != "no-documentsui":
                     archive.writestr("SYSTEM/priv-app/DocumentsUI/DocumentsUI.apk", release_apk)
+                # The easter egg that the platform logo screen opens; the framework's list installs it
+                # as a platform application.
+                if easter_egg_variant is None:
+                    archive.writestr("SYSTEM/app/EasterEgg/EasterEgg.apk", release_apk)
+                elif easter_egg_variant == "product-partition":
+                    archive.writestr("PRODUCT/app/EasterEgg/EasterEgg.apk", release_apk)
+                elif easter_egg_variant == "wrong-directory":
+                    archive.writestr("SYSTEM/app/Egg/EasterEgg.apk", release_apk)
                 if launcher_variant != "no-overlay":
                     layout_strings = [name for pair in launcher_dock for name in pair]
                     if launcher_variant == "six-application-layout":
@@ -2463,6 +2472,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         disabled_configuration = root / "navigation-configuration-disabled.zip"
         write_fixture(disabled_configuration, navigation_variant="config-disables-gestural")
         run_tool(verifier, "--target-files", disabled_configuration, *kernel_options, check=True)
+        # The framework's product list decides which application directory holds the easter egg.
+        egg_in_product = root / "easter-egg-in-product.zip"
+        write_fixture(egg_in_product, easter_egg_variant="product-partition")
+        run_tool(verifier, "--target-files", egg_in_product, *kernel_options, check=True)
         # The overlay's string pools may be UTF-16, as the build packs them.
         utf16_layouts = root / "launcher-layouts-utf16.zip"
         write_fixture(utf16_layouts, launcher_variant="utf16-layout")
@@ -2928,6 +2941,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("launcher-layout-without-files", {"launcher_variant": "lacks-files"}),
             ("launcher-overlay-with-the-six-application-layout", {"launcher_variant": "six-application-layout"}),
             ("launcher-layout-names-an-application-the-image-lacks", {"launcher_variant": "no-documentsui"}),
+            ("missing-easter-egg", {"easter_egg_variant": "missing"}),
+            ("easter-egg-in-a-directory-of-another-name", {"easter_egg_variant": "wrong-directory"}),
             ("ntp-server-left", {"network_time_variant": "ntp-server"}),
             ("ntp-server-left-in-a-qualified-definition",
              {"network_time_variant": "ntp-server-in-a-qualified-table"}),
@@ -3659,6 +3674,10 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("launcher-overlay-with-the-six-application-layout-cause", {"launcher_variant": "six-application-layout"},
              "res/xml/default_workspace_4x5.xml names com.android.calculator2.Calculator: the home screen "
              "holds only the dock"),
+            ("missing-easter-egg-cause", {"easter_egg_variant": "missing"},
+             "EasterEgg.apk is missing from the image: the Android version row opens the logo screen"),
+            ("easter-egg-in-a-directory-of-another-name-cause", {"easter_egg_variant": "wrong-directory"},
+             "EasterEgg.apk is missing from the image: the Android version row opens the logo screen"),
             ("launcher-layout-names-an-application-the-image-lacks-cause", {"launcher_variant": "no-documentsui"},
              "SYSTEM/priv-app/DocumentsUI/DocumentsUI.apk is missing: the launcher's default workspace"),
             ("ntp-server-left-cause", {"network_time_variant": "ntp-server"},
@@ -5590,6 +5609,7 @@ def verify_package_assertions(android_root: Path) -> None:
         "KernariumWifiOverlay",
         "KernariumPinnerOverlay",
         "SecureElement",
+        "EasterEgg",
         "kernarium_net_setup",
         "kernarium_wifi_network_script",
         "kernarium_reclaim_boot_apps_script",

@@ -352,7 +352,9 @@ product omits: HAL APEXes with no Darwin UML hardware, AVF guest payloads, OTA
 and DSU executables, and Cuttlefish host-monitoring services. The build and the
 verifier reject any excluded module that reappears. The thermal and CAS HAL
 APEXes (CTS needs both) stay, as do DeviceLock, Virtualization and the modular
-framework containers, which the platform SDK classes link.
+framework containers, which the platform SDK classes link. EasterEgg stays
+too: Settings' Android version row opens the platform logo screen, which starts
+the egg, and the verifier requires its package.
 
 Android suspends itself when the screen is off and nothing holds a wakelock, and
 this machine's adb host arrives over the network, which only briefly wakes a
