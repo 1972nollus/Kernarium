@@ -235,7 +235,7 @@ index aea5e1b60e7f331b5d1cb9a4bb357ace6511631e..ff2339a0e05832a57c3caebf229852b2
  }
  
 diff --git a/drivers/gpu/drm/virtio/virtgpu_ioctl.c b/drivers/gpu/drm/virtio/virtgpu_ioctl.c
-index d619ee042590d48b26f0c82ab2a258b98c3dde23..3b3fc7a73ce3cb05280a68f6c06e376db5a3548a 100644
+index ad0e56b27f0859e62cee72bcb12bbf7cf6ea194a..c692bea8af88b9c7744cd7e112ff33b9d22264e5 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_ioctl.c
 +++ b/drivers/gpu/drm/virtio/virtgpu_ioctl.c
 @@ -32,13 +32,14 @@

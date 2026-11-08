@@ -290,10 +290,11 @@ low-space pause (a real guest paused through a free-space number the test
 sets, its CPU time standing still), Retina memory, the ADB-over-vsock guest
 tests (including Android storage and the touch-cancel path), the side keys'
 pass-through of touches to Android, the ADB-over-network hold and the
-background disk locks. The storage test signs its helper APK with the AOSP
-test key, never a release key. When derived data is on a removable volume,
-macOS prompts once for access and the launch hangs until answered; build to
-the internal disk instead.
+background disk locks (which also requires a guest that was allocating
+buffers when the GPU was held to suspend). The storage test signs its helper
+APK with the AOSP test key, never a release key. When derived data is on a
+removable volume, macOS prompts once for access and the launch hangs until
+answered; build to the internal disk instead.
 
 Tooling tests cover `scripts/check-privacy-manifests.py`
 (`ios-privacy-manifests`, which `package-ios-frameworks.sh` also runs on every
