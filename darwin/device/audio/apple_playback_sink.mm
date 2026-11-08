@@ -4,16 +4,22 @@
 
 #include "audio_session.hpp"
 #include "playback_mute_clock.hpp"
+#include "playback_output_cycle.hpp"
 #include "protocol.hpp"
 
 #import <AVFAudio/AVFAudio.h>
 #import <Foundation/Foundation.h>
 #import <TargetConditionals.h>
+#if !TARGET_OS_IPHONE
+#import <AudioToolbox/AudioToolbox.h>
+#import <CoreAudio/CoreAudio.h>
+#endif
 
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
@@ -300,6 +306,9 @@ public:
             periodFrames_ = frameCapacity;
             periodsPerSecond_ = static_cast<double>(parameters.sampleRate) /
                 static_cast<double>(frameCapacity);
+            outputCycle_ = OutputCycle::seconds(parameters);
+            // iOS asks the session, which the next activation applies.
+            session::preferIoCycle(session::Client::playback, outputCycle_);
             paceSampled_ = {};
             for (std::size_t index = 0; index < state->slotCount; ++index) {
                 state->slots[index].buffer = [[AVAudioPCMBuffer alloc]
@@ -320,6 +329,9 @@ public:
                 fault("the engine would not connect");
                 return false;
             }
+#if !TARGET_OS_IPHONE
+            applyOutputCycle();
+#endif
             configured_ = true;
             prepared_ = false;
             running_ = false;
@@ -557,6 +569,10 @@ public:
                 if (!muted_)
 #endif
                     abortPending();
+#if !TARGET_OS_IPHONE
+                // The output may be another device now.
+                applyOutputCycle();
+#endif
                 [engine_ prepare];
                 faulted_ = false;
             }
@@ -1088,6 +1104,44 @@ private:
         paceCounts_ = counts;
     }
 
+#if !TARGET_OS_IPHONE
+    /* Asks the output device for the stream's IO cycle (OutputCycle), which
+     * the device counts in its own frames and only within the range it
+     * supports. Core Audio keeps the cycle for this process alone. A device
+     * that refuses keeps its own cycle, which only lengthens the latency. */
+    void applyOutputCycle() noexcept
+    {
+        @try {
+            AudioUnit unit = engine_.outputNode.audioUnit;
+            const double rate = [engine_.outputNode outputFormatForBus:0].sampleRate;
+            if (unit == nullptr || outputCycle_ <= 0.0 || rate <= 0.0)
+                return;
+            AudioDeviceID device = kAudioObjectUnknown;
+            UInt32 size = sizeof(device);
+            if (AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+                    kAudioUnitScope_Global, 0, &device, &size) != noErr)
+                return;
+            const AudioObjectPropertyAddress address {
+                kAudioDevicePropertyBufferFrameSizeRange,
+                kAudioObjectPropertyScopeOutput,
+                kAudioObjectPropertyElementMain,
+            };
+            AudioValueRange range {};
+            size = sizeof(range);
+            if (AudioObjectGetPropertyData(
+                    device, &address, 0, nullptr, &size, &range) != noErr ||
+                range.mMaximum < range.mMinimum || range.mMinimum < 1.0)
+                return;
+            const auto frames = static_cast<UInt32>(std::clamp(
+                std::lround(outputCycle_ * rate),
+                std::lround(range.mMinimum), std::lround(range.mMaximum)));
+            (void)AudioUnitSetProperty(unit, kAudioDevicePropertyBufferFrameSize,
+                kAudioUnitScope_Global, 0, &frames, sizeof(frames));
+        } @catch (NSException*) {
+        }
+    }
+#endif
+
     void failToStart() noexcept
     {
         // Periods queued before the start will never play.
@@ -1173,6 +1227,8 @@ private:
     std::chrono::steady_clock::time_point paceLogged_ {};
     std::array<std::uint64_t, 4> paceCounts_ {};
     double periodsPerSecond_ {};
+    // The IO cycle the stream asks of the output, in seconds.
+    double outputCycle_ {};
     std::uint32_t periodFrames_ {};
     // Periods the guest has handed in, and how many of them the sink refused
     // to play because the output is unavailable: device thread only.
