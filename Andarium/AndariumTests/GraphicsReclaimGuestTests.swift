@@ -4,12 +4,14 @@ import Foundation
 import Testing
 @testable import Andarium
 
-/// The graphics memory reading and the activity manager's process list on a
-/// real guest. Runs alone with ANDARIUM_GRAPHICS_RECLAIM_TESTS=1 and
+/// The graphics memory reading, the activity manager's process list and the
+/// end of a cached app on a real guest. Runs alone with
+/// ANDARIUM_GRAPHICS_RECLAIM_TESTS=1 and
 /// ANDARIUM_GUEST_INSTANCE=graphics-reclaim, on a Mac (Designed for iPad) or
-/// an iPad, with an isolated guest. The test installs nothing and ends no
-/// app: it reads the budget through the runtime and parses what `dumpsys
-/// activity lru` prints, which the policy's exactness rests on.
+/// an iPad, with an isolated guest. It reads the budget through the runtime,
+/// parses what `dumpsys activity lru` prints, which the policy's exactness
+/// rests on, and ends one cached app the guest started itself, named by a
+/// holder the test makes up, through the shell the application uses.
 @MainActor
 struct GraphicsReclaimGuestTests {
     @Test(.timeLimit(.minutes(25)))
@@ -38,9 +40,18 @@ struct GraphicsReclaimGuestTests {
             #expect(quiet.holders.isEmpty, "a holder quiet for a day on a guest that has just booted")
 
             // The process list the policy reads parses on the real guest.
-            let list = try await operations.shell(AndroidProcessList.command, limit: .seconds(60))
+            // Android starts its apps for a while after it reports the boot done.
+            var list = try await operations.shell(AndroidProcessList.command, limit: .seconds(60))
+            var processes = AndroidProcessList.parse(list.text)
+            let listDeadline = ContinuousClock.now + .seconds(180)
+            while ContinuousClock.now < listDeadline,
+                processes.count <= 10 || !processes.contains(where: { $0.standing == .cached && $0.uid.hasPrefix("u0a") })
+            {
+                try await Task.sleep(for: .seconds(5))
+                list = try await operations.shell(AndroidProcessList.command, limit: .seconds(60))
+                processes = AndroidProcessList.parse(list.text)
+            }
             #expect(list.exitCode == 0)
-            let processes = AndroidProcessList.parse(list.text)
             print("GRAPHICS_RECLAIM: \(processes.count) processes; standings "
                 + "\(processes.filter { $0.standing == .cached }.count) cached, "
                 + "\(processes.filter { $0.standing == .previous }.count) previous")
@@ -48,6 +59,29 @@ struct GraphicsReclaimGuestTests {
             #expect(processes.contains { $0.name == "system" }, "system_server is not in the parsed list")
             #expect(processes.contains { $0.standing == .kept })
             #expect(processes.allSatisfy { $0.pid > 0 && !$0.label.isEmpty && !$0.state.isEmpty })
+
+            // A cached app ends through the application's own shell. The
+            // holder is made up from the process list, which a kernel that
+            // names the creating process gives the real one.
+            let victim = try #require(
+                processes.first { $0.standing == .cached && $0.uid.hasPrefix("u0a") && $0.user == 0 },
+                "the guest has no cached app to end: \(list.text.prefix(600))")
+            let holder = GraphicsHolder(
+                pid: victim.pid, bytes: GraphicsReclaim.minimumHolderBytes, idle: .seconds(60),
+                name: String(victim.name.suffix(15)))
+            let made = GraphicsMemoryReading(
+                budgetBytes: reading.budgetBytes, usageBytes: reading.budgetBytes,
+                contextBytes: reading.budgetBytes, refusals: 0, holders: [holder])
+            let result = await driver.reclaimGraphicsMemory(made, using: GraphicsReclaim())
+            print("GRAPHICS_RECLAIM: ended \(victim.name) (\(victim.pid)): \(result)")
+            #expect(result == .ended(package: victim.package, pid: victim.pid, bytes: holder.bytes))
+            var gone = false
+            for _ in 0..<10 where !gone {
+                try await Task.sleep(for: .seconds(1))
+                let after = try await operations.shell(AndroidProcessList.command, limit: .seconds(60))
+                gone = !AndroidProcessList.parse(after.text).contains { $0.pid == victim.pid }
+            }
+            #expect(gone, "\(victim.name) (\(victim.pid)) was asked to end and is still there")
 
             // Without the kernel's process naming no holder has a pid, and
             // nothing is ended.
