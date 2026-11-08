@@ -3,3 +3,4 @@
 # export again; never edit this directory by hand.
 patch	Revert-Give-mediaprovider_app-mlstrustedsubject.patch
 patch	Restore-the-neverallows-that-SD-card-support-relaxed.patch
+patch	sepolicy-label-ro.lmk.gpu_reclaim-like-lmkd-s-other-settings.patch
