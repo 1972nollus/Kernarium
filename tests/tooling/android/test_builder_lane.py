@@ -835,6 +835,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           adbd_launch_unreadable: bool = False,
                           venus_policy_variant: str | None = None,
                           vendor_property_variant: str | None = None,
+                          audio_ring_variant: str | None = None,
                           soc_variant: str | None = None,
                           board_variant: str | None = None,
                           video_properties: dict[str, str] | None = None,
@@ -1462,10 +1463,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 # The real platform policy is 3.4 MB; the filler keeps the fixture realistic in size.
                 archive.writestr(
                     "SYSTEM/etc/selinux/plat_sepolicy.cil",
-                    "(typeattributeset coredomain (adbd init system_server))\n"
+                    "(typeattributeset coredomain (adbd init system_server"
+                    + (" hal_audio_default" if audio_ring_variant == "core-hal" else "")
+                    + "))\n"
                     + "(typeattributeset domain ("
                     + ("" if adbd_launch_unreadable else "adbd ")
-                    + "init system_server vendor_init untrusted_app surfaceflinger"
+                    + "init system_server vendor_init untrusted_app surfaceflinger hal_audio_default"
                     + ("" if venus_policy_variant == "shell-unreadable" else " shell")
                     + "))\n"
                     # The Venus driver option is a debug property that vendor_init sets and every
@@ -1473,6 +1476,15 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     + "(allow domain debug_prop (file (read getattr map open)))\n"
                     + ("" if venus_policy_variant == "vendor-init-cannot-set"
                        else "(allow vendor_init debug_prop (property_service (set)))\n")
+                    # Every vendor domain reads vendor_default_prop, through the attribute the
+                    # compiler generates for the platform's rule.
+                    + "(typeattributeset base_typeattr_410 (and (domain ) "
+                    "(not (appdomain coredomain ))))\n"
+                    + ("" if audio_ring_variant == "hal-unreadable"
+                       else "(allow base_typeattr_410 vendor_default_prop "
+                       "(file (read getattr map open)))\n")
+                    + ("" if audio_ring_variant == "vendor-init-cannot-set"
+                       else "(allow vendor_init vendor_default_prop (property_service (set)))\n")
                     +
                     "(allow domain boot_status_prop (file (read getattr map open)))\n"
                     "(allow domain bootloader_prop (file (read getattr map open)))\n"
@@ -1495,7 +1507,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "persist.sys.usb.config  u:object_r:system_prop:s0 exact string\n"
                     "persist.adb.tls_server.enable  u:object_r:system_adbd_prop:s0 exact bool\n"
                     "init.svc.  u:object_r:init_service_status_prop:s0\n"
-                    "debug.  u:object_r:debug_prop:s0\n",
+                    "debug.  u:object_r:debug_prop:s0\n"
+                    "ro.hardware.  u:object_r:vendor_default_prop:s0\n"
+                    "ro.hardware.audio.primary  u:object_r:exported_default_prop:s0 exact string\n",
                 )
                 archive.writestr(
                     "VENDOR/etc/selinux/vendor_property_contexts",
@@ -2251,6 +2265,16 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         "no-incremental": "",
                         "incremental-off": "ro.incremental.enable=0\n",
                     }.get(vendor_property_variant, "ro.incremental.enable=1\n")
+                    # The primary audio HAL's ALSA ring: four periods of one HAL buffer each.
+                    + {
+                        "missing": "",
+                        "default-count": "ro.hardware.audio.tinyalsa.period_count=2\n"
+                        "ro.hardware.audio.tinyalsa.period_size_multiplier=4\n",
+                    }.get(
+                        audio_ring_variant,
+                        "ro.hardware.audio.tinyalsa.period_count=4\n"
+                        "ro.hardware.audio.tinyalsa.period_size_multiplier=4\n",
+                    )
                     + (
                         f"ro.hardware.{vendor_hal_property}=selected\n"
                         if vendor_hal_property
@@ -3042,6 +3066,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("venus-sync-cleared-at-boot", {"init_variant": "venus-sync-cleared-at-boot"}),
             ("vendor-init-cannot-set-venus-option", {"venus_policy_variant": "vendor-init-cannot-set"}),
             ("shell-cannot-read-venus-option", {"venus_policy_variant": "shell-unreadable"}),
+            ("missing-audio-ring", {"audio_ring_variant": "missing"}),
+            ("default-audio-ring-count", {"audio_ring_variant": "default-count"}),
+            ("audio-hal-cannot-read-ring", {"audio_ring_variant": "hal-unreadable"}),
+            ("core-audio-hal-cannot-read-ring", {"audio_ring_variant": "core-hal"}),
+            ("vendor-init-cannot-set-ring", {"audio_ring_variant": "vendor-init-cannot-set"}),
             ("timeout-copy-without-default", {"init_variant": "timeout-copy-without-default"}),
             ("angle-copy", {"init_variant": "angle-copy"}),
             ("ungated-density", {"init_variant": "ungated-density"}),
@@ -3346,6 +3375,19 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "vendor_init may not set debug.mesa.vn.perf, labelled debug_prop"),
             ("shell-cannot-read-venus-option-cause", {"venus_policy_variant": "shell-unreadable"},
              "shell may not read debug.mesa.vn.perf, labelled debug_prop"),
+            ("missing-audio-ring-cause", {"audio_ring_variant": "missing"},
+             r"unexpected vendor audio property ro\.hardware\.audio\.tinyalsa\.period_count: \[\]"),
+            ("default-audio-ring-count-cause", {"audio_ring_variant": "default-count"},
+             r"unexpected vendor audio property ro\.hardware\.audio\.tinyalsa\.period_count: "
+             r"\['2'\]"),
+            ("audio-hal-cannot-read-ring-cause", {"audio_ring_variant": "hal-unreadable"},
+             "hal_audio_default may not read ro.hardware.audio.tinyalsa.period_count, "
+             "labelled vendor_default_prop"),
+            ("core-audio-hal-cannot-read-ring-cause", {"audio_ring_variant": "core-hal"},
+             "hal_audio_default may not read ro.hardware.audio.tinyalsa.period_count"),
+            ("vendor-init-cannot-set-ring-cause", {"audio_ring_variant": "vendor-init-cannot-set"},
+             "vendor_init may not set ro.hardware.audio.tinyalsa.period_count, "
+             "labelled vendor_default_prop"),
             ("timeout-copy-without-default-cause",
              {"init_variant": "timeout-copy-without-default"},
              "runs 'setprop ro.hw_timeout_multiplier \\$\\{ro.boot.hw_timeout_multiplier\\}' "
@@ -5828,6 +5870,12 @@ def verify_hal_selections(android_root: Path) -> None:
     # each.
     if command_line.count("nbd.nbds_max=0") != 1:
         fail("boot command line does not turn the network block devices off once")
+
+    # The primary audio output's ALSA period is one 5 ms HAL buffer (route p0005 and the
+    # product's tinyalsa properties), which the Virtio sound driver admits only with its
+    # minimum period lowered from 10 ms.
+    if command_line.count("virtio_snd.pcm_period_ms_min=5") != 1:
+        fail("boot command line does not lower the Virtio sound minimum period to 5 ms once")
 
 
 def newc_entry(name: str, mode: int, payload: bytes, inode: int) -> bytes:
