@@ -901,6 +901,26 @@ uml_add_guest_integration_test(
     CPUS 4
     GPUS 1)
 
+# A Virtio-GPU context names the process that created it: the kernel appends
+# "|pid=<tgid>|comm=<comm>" to the debug name, and the host credits the memory
+# a context holds to that process (docs/graphics.md). Three guest processes
+# hold memory in a Virgl context, a Venus context and a Virgl context whose
+# process name imitates the suffix; the runner checks the holders the launcher
+# prints with --stats.
+uml_add_guest_integration_test(
+    NAME guest-virtgpu-context-owner
+    SCRIPT kernel/run_guest_virtgpu_context_owner.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/virtgpu_context_owner_probe.cpp
+        "--cxxflags=-Wall -Wextra -Werror"
+        --guest-argument=--gpu --guest-argument=--gpu-display=vnc
+        --guest-argument=--gpu-vnc-bind=127.0.0.1 --guest-argument=--gpu-vnc-port=0
+        --guest-argument=--stats=500
+        --ncpus 4 --probe-timeout 300
+    LABELS guest;kernel;gpu
+    TIMEOUT 900
+    CPUS 4
+    GPUS 1)
+
 # The settings the Android CTS and the desktop disagree on: a Linux guest has
 # SysV IPC, the NFS client and SCTP, no RDS and no wakelock interface, and
 # runs the helper a piped core_pattern names; every guest has IPv4 multicast,

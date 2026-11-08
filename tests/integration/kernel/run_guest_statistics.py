@@ -8,7 +8,8 @@ through the public calls the iOS applications make and print one line:
 
     uml-darwin: stats <s> s cpu <n>% of <v> vCPUs frames <p>/s presented
     <o>/s offered [memory <u> MiB in use of <t> MiB] held <h> of <r> MiB
-    [gpu-refusals <n>] [gpu-memory <u>/<b> MiB]
+    [gpu-refusals <n>] [gpu-memory <u>/<b> MiB [attributed <a> MiB
+    [holders <pid>:<name>:<h> MiB:<i> s ...]]]
 
 The launcher's standard error goes to a file instead of the console, so the
 lines neither wait for the harness to drain the console nor land inside a
@@ -86,7 +87,8 @@ STATS_LINE = re.compile(
     r"(?: memory (?P<used>\d+) MiB in use of (?P<total>\d+) MiB)?"
     r"(?: held (?P<held>\d+) of (?P<ram>\d+) MiB)?"
     r"(?: gpu-refusals (?P<refusals>\d+))?"
-    r"(?: gpu-memory (?P<gpuused>\d+)/(?P<gpubudget>\d+) MiB)?$"
+    r"(?: gpu-memory (?P<gpuused>\d+)/(?P<gpubudget>\d+) MiB"
+    r"(?: attributed (?P<gpuheld>\d+) MiB(?P<holders>(?: holders.*)?))?)?$"
 )
 CARRIER = re.compile(r"^uml-vcpu-\d+-carrier$")
 WRAPPER = """\

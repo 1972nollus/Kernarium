@@ -192,6 +192,16 @@ int main()
                 "memory");
             ++refusedAtCreation;
         }
+        if (index == 0 && held.back()->result() == 0) {
+            // The ledger credits a resource with what its storage takes.
+            require(renderer->resourceStorageBytes(1) >=
+                    static_cast<std::uint64_t>(textureSize) * textureSize *
+                        bytesPerPixel,
+                "a texture's host storage was not reported");
+            require(renderer->resourceStorageBytes(nextResourceId + 1000) ==
+                    0,
+                "a resource nobody made reported storage");
+        }
         if (held.back()->stores(static_cast<std::uint8_t>(index + 1)))
             ++stored;
         else
