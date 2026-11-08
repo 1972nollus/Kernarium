@@ -337,6 +337,15 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY TIMEOUT 240)
 
+    # The command storage a destroyed context's batches grew to is released
+    # with it, not kept with the batch states the screen holds for later.
+    uml_add_gpu_unit_test(gpu-host-gl-batch-storage
+        uml_gpu_host_gl_batch_storage_tests
+        host_gl_batch_storage_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries} UML::HostGpuMemory
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY TIMEOUT 120)
+
     # A resource the guest makes inside a command buffer, which the host
     # refuses for want of memory, is told to the guest by the blob that names
     # it: out of memory, once, and not as an id the host never saw.

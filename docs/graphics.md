@@ -416,8 +416,9 @@ results, not only speed; the driver takes the capabilities that differ
 iOS ends the app at its footprint limit, and a 1536 MiB guest already leaves the
 host side little headroom, so guest RAM cannot be raised to make room for a
 workload. The per-device geometry heap starts small and grows within the pool, a
-grown heap is freed once nothing holds it, Zink's buffer cache is bounded and an
-idle Virgl context is trimmed. virglrenderer's shared-memory segments are
+grown heap is freed once nothing holds it, Zink's buffer cache is bounded, a
+destroyed context's command storage is released with it
+(`gpu-host-gl-batch-storage`) and an idle Virgl context is trimmed. virglrenderer's shared-memory segments are
 unlinked container files outside the footprint on iOS and POSIX shared memory
 inside it on macOS. A baked device campaign leaves out the groups its guest
 memory cannot hold ([`testing.md`](testing.md)).
