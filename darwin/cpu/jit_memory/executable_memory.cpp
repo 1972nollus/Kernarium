@@ -12,8 +12,10 @@
 #include <unistd.h>
 
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 
 /* Which route this object takes to JIT memory.
  *
@@ -391,6 +393,18 @@ void on_fault(int, siginfo_t *, void *)
 	return ok;
 }
 
+/* One line on stderr for each step of the preparation that fails: the caller
+ * sees only that the memory is not ready, and a device offers no other way to
+ * tell which step it was. */
+void note(const char *step, bool with_errno = false) noexcept
+{
+	if (with_errno)
+		std::fprintf(stderr, "Kernarium: JIT memory: %s (errno %d)\n",
+			step, errno);
+	else
+		std::fprintf(stderr, "Kernarium: JIT memory: %s\n", step);
+}
+
 class Region final {
 public:
 	[[nodiscard]] bool ready() const noexcept
@@ -419,8 +433,10 @@ public:
 		const auto size = granules * region_granule;
 		std::byte *executable = nullptr;
 		std::byte *writable = nullptr;
-		if (!map(size, executable, writable))
+		if (!map(size, executable, writable)) {
+			note("the region could not be mapped");
 			return RegionStatus::failed;
+		}
 		/* From the first request the debugger is involved: whatever
 		 * happens, this process does not try again. */
 		spent_ = true;
@@ -428,14 +444,27 @@ public:
 			    size)) {
 			/* A debugger that answers late still writes into the
 			 * region, so it stays mapped. */
+			note("the debugger did not prepare the region");
 			return RegionStatus::failed;
 		}
 		/* Detach next: the guest must not run under the debugger. A
 		 * debugger that does not answer this either is left as it is. */
-		if (!ask_debugger(0, 0, 0))
+		if (!ask_debugger(0, 0, 0)) {
+			note("the debugger did not detach");
 			return RegionStatus::failed;
-		if (mlock(writable, size) != 0 || !kill_cleared() ||
-		    !check(executable, writable, size)) {
+		}
+		if (mlock(writable, size) != 0) {
+			note("the region could not be wired", true);
+			give_back(executable, writable, size);
+			return RegionStatus::failed;
+		}
+		if (!kill_cleared()) {
+			note("the process still dies on a bad page");
+			give_back(executable, writable, size);
+			return RegionStatus::failed;
+		}
+		if (!check(executable, writable, size)) {
+			note("the prepared pages did not run code");
 			give_back(executable, writable, size);
 			return RegionStatus::failed;
 		}
