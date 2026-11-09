@@ -453,8 +453,9 @@ M4 Mac) runs that path only on a host with the feature. Check a change to such
 a path by hand on an iOS device that has it: launch Kernarium with the
 `guest-hwcap-sanity` payload and the touched families' corpus cases built into
 one static guest program, and require the results of a gadget-engine run on a
-Mac. The device runs only the gadget engine, so a JIT path needing one of these
-features runs only on an M4 or newer Mac.
+Mac. The device runs the gadget engine, and the JIT only in a development build
+whose debugger serves it, so a JIT path needing one of these features is checked
+on an M4 or newer Mac.
 
 ## Android
 
