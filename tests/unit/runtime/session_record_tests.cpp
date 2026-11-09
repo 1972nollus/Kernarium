@@ -8,6 +8,7 @@
 #include "session_record.hpp"
 #include "require.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -212,9 +213,13 @@ void test_memory_checkpoints()
 	unlink(next.c_str());
 }
 
-uml::runtime::MemoryTerms fixed_terms() noexcept
+std::atomic<unsigned> malloc_readings{0};
+
+uml::runtime::MemoryTerms fixed_terms(bool read_malloc) noexcept
 {
 	constexpr std::uint64_t mib = std::uint64_t{1} << 20;
+	if (read_malloc)
+		malloc_readings.fetch_add(1, std::memory_order_relaxed);
 	return {
 		.guest_held = 4000 * mib,
 		.gpu_budget = 1251 * mib,
@@ -224,12 +229,32 @@ uml::runtime::MemoryTerms fixed_terms() noexcept
 		.media = 5 * mib,
 		.cache = 240 * mib,
 		.heaps = 250 * mib,
-		.malloc_allocated = 900 * mib,
-		.malloc_in_use = 800 * mib,
+		.malloc_allocated = read_malloc ? 900 * mib : 0,
+		.malloc_in_use = read_malloc ? 800 * mib : 0,
 		.internal = 5000 * mib,
 		.compressed = 12 * mib,
 	};
 }
+
+/* When a checkpoint reads malloc's term. */
+namespace due {
+using uml::runtime::memory_malloc_reading_due;
+constexpr std::uint64_t mib = std::uint64_t{1} << 20;
+constexpr std::uint64_t limit = 6144 * mib;
+static_assert(memory_malloc_reading_due(0, -1, 0, 0, 0),
+	"the first checkpoint reads it");
+static_assert(!memory_malloc_reading_due(29999, 0, 1000 * mib, 1000 * mib, 0) &&
+		memory_malloc_reading_due(30000, 0, 1000 * mib, 1000 * mib, 0),
+	"far from a limit, every memory_malloc_interval_ms");
+static_assert(memory_malloc_reading_due(2000, 0, 1064 * mib, 1000 * mib, 0) &&
+		!memory_malloc_reading_due(2000, 0, 1064 * mib - 1, 1000 * mib, 0),
+	"a footprint 64 MiB above the highest reading's");
+static_assert(!memory_malloc_reading_due(9999, 0, 5200 * mib, 5200 * mib,
+		      limit) &&
+		memory_malloc_reading_due(10000, 0, 5200 * mib, 5200 * mib, limit) &&
+		!memory_malloc_reading_due(10000, 0, 5100 * mib, 5100 * mib, limit),
+	"within 1 GiB of the limit, every memory_malloc_near_interval_ms");
+} // namespace due
 
 std::size_t count_of(const std::string &text, const char *part)
 {
@@ -244,13 +269,14 @@ void test_memory_terms()
 {
 	uml::runtime::reset_session_record();
 	uml::runtime::set_memory_terms_reader(&fixed_terms);
+	malloc_readings.store(0);
 	const std::string path = temporary_record();
 	require(uml::runtime::begin_session_record(path, {}));
 	const std::string begun = read_file(path);
 	const std::string first = begun.substr(0, slot_bytes);
 	require(has(first, "\nterms guest 4000 gpu 1240/1251 age 3 graphics 700 "
-			"media 5 cache 240 heaps 250 malloc 900/800 internal 5000 "
-			"compressed 12\n") &&
+			"media 5 cache 240 heaps 250 malloc 900/800 age 0 "
+			"internal 5000 compressed 12\n") &&
 		has(first, "\npeak-terms at ") &&
 		has(first, "\nhistory seconds footprint available guest gpu "
 			"graphics cache heaps malloc\n") &&
@@ -279,6 +305,12 @@ void test_memory_terms()
 	}
 	require(checked.substr(slot_bytes) == begun.substr(slot_bytes),
 		"a checkpoint changed the session's state");
+	/* Seconds of checkpoints at one footprint and no limit read malloc's
+	 * term once, and repeat that reading. */
+	require(malloc_readings.load() == 1 &&
+			has(slot, "\nterms guest 4000 gpu 1240/1251 age 3 graphics "
+				"700 media 5 cache 240 heaps 250 malloc 900/800 age "),
+		"malloc's term was read again or not repeated: " + slot);
 
 	/* What the product reads, and what that costs. */
 	uml::runtime::set_memory_terms_reader(&uml::runtime::memory_terms);
@@ -288,7 +320,13 @@ void test_memory_terms()
 		uml::runtime::checkpoint_session_memory();
 	const auto each = std::chrono::duration<double, std::micro>(
 		std::chrono::steady_clock::now() - start).count() / timed;
-	std::printf("a memory checkpoint with its terms takes %.1f us\n", each);
+	const auto walk_start = std::chrono::steady_clock::now();
+	for (int index = 0; index < timed; ++index)
+		(void)uml::runtime::memory_terms(true);
+	const auto walk = std::chrono::duration<double, std::micro>(
+		std::chrono::steady_clock::now() - walk_start).count() / timed;
+	std::printf("a memory checkpoint with its terms takes %.1f us; reading "
+		"malloc's term as well takes %.1f us\n", each, walk);
 	require(each < 5000.0, "a memory checkpoint is far too slow");
 	require(has(read_file(path).substr(0, slot_bytes), " malloc "),
 		"the product's reader wrote no terms");

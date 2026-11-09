@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cerrno>
 #include <charconv>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -83,6 +84,15 @@ std::size_t older_kept{};
 std::uint64_t peak_footprint{};
 std::int64_t peak_at{};
 MemoryTerms peak_terms{};
+std::int64_t peak_malloc_age_ms{-1};
+/* The last reading of malloc's term (memory_malloc_reading_due): when, on
+ * the steady clock, at the highest footprint of any reading, and the limit
+ * the reader last reported. */
+std::int64_t malloc_read_ms{-1};
+std::uint64_t malloc_read_peak{};
+std::uint64_t malloc_allocated{};
+std::uint64_t malloc_in_use{};
+std::uint64_t known_limit{};
 
 bool kept(int descriptor) noexcept
 {
@@ -188,8 +198,18 @@ Text &mib(Text &text, std::string_view name, std::uint64_t bytes) noexcept
 		.number(static_cast<std::int64_t>(mebibytes(bytes)));
 }
 
-/* "guest G gpu H/B [age S] ... compressed K", in MiB. */
-Text &terms_words(Text &text, const MemoryTerms &terms) noexcept
+std::int64_t steady_ms() noexcept
+{
+	return static_cast<std::int64_t>(
+		std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::steady_clock::now().time_since_epoch())
+			.count());
+}
+
+/* "guest G gpu H/B [age S] ... malloc A/U age S ... compressed K", in MiB and
+ * seconds. */
+Text &terms_words(Text &text, const MemoryTerms &terms,
+	std::int64_t malloc_age_ms) noexcept
 {
 	mib(text, "guest", terms.guest_held);
 	if (terms.gpu_budget != 0) {
@@ -204,6 +224,8 @@ Text &terms_words(Text &text, const MemoryTerms &terms) noexcept
 	mib(text, "heaps", terms.heaps);
 	mib(text, "malloc", terms.malloc_allocated).text("/").number(
 		static_cast<std::int64_t>(mebibytes(terms.malloc_in_use)));
+	if (malloc_age_ms >= 0)
+		text.text(" age ").number(malloc_age_ms / 1000);
 	mib(text, "internal", terms.internal);
 	return mib(text, "compressed", terms.compressed);
 }
@@ -216,6 +238,12 @@ void forget_history() noexcept
 	peak_footprint = 0;
 	peak_at = 0;
 	peak_terms = {};
+	peak_malloc_age_ms = -1;
+	malloc_read_ms = -1;
+	malloc_read_peak = 0;
+	malloc_allocated = 0;
+	malloc_in_use = 0;
+	known_limit = 0;
 	os_unfair_lock_unlock(&history_lock);
 }
 
@@ -251,7 +279,23 @@ void write_memory_slot(int descriptor) noexcept
 	}
 	text.text("\n");
 	if (const auto reader = terms_reader.load(std::memory_order_acquire)) {
-		const MemoryTerms terms = reader();
+		const std::int64_t clock = steady_ms();
+		const std::uint64_t limit =
+			available != 0 ? footprint + available : known_limit;
+		const bool read_malloc = memory_malloc_reading_due(clock,
+			malloc_read_ms, footprint, malloc_read_peak, limit);
+		MemoryTerms terms = reader(read_malloc);
+		known_limit = terms.limit;
+		if (read_malloc) {
+			malloc_read_ms = clock;
+			malloc_read_peak = std::max(malloc_read_peak, footprint);
+			malloc_allocated = terms.malloc_allocated;
+			malloc_in_use = terms.malloc_in_use;
+		} else {
+			terms.malloc_allocated = malloc_allocated;
+			terms.malloc_in_use = malloc_in_use;
+		}
+		const std::int64_t malloc_age = clock - malloc_read_ms;
 		const HistoryEntry entry{
 			.seconds = at - session_started.load(std::memory_order_relaxed),
 			.footprint = mebibytes(footprint),
@@ -277,11 +321,12 @@ void write_memory_slot(int descriptor) noexcept
 			peak_footprint = footprint;
 			peak_at = at;
 			peak_terms = terms;
+			peak_malloc_age_ms = malloc_age;
 		}
-		terms_words(text.text("terms"), terms).text("\n");
+		terms_words(text.text("terms"), terms, malloc_age).text("\n");
 		text.text("peak-terms at ").number(peak_at).text(" footprint ")
 			.number(static_cast<std::int64_t>(mebibytes(peak_footprint)));
-		terms_words(text, peak_terms).text("\n");
+		terms_words(text, peak_terms, peak_malloc_age_ms).text("\n");
 		text.text("history seconds footprint available guest gpu graphics "
 			"cache heaps malloc\n");
 		const std::size_t olders = std::min<std::size_t>(older_kept,

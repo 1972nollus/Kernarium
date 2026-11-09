@@ -98,8 +98,8 @@ struct SessionRecordTests {
         var slot = """
             uml-session 3
             memory at 1794210239 footprint 6441524416 peak 6442458280 available 926528
-            terms guest 4090 gpu 1262/1251 age 0 graphics 905 media 0 cache 238 heaps 260 malloc 812/700 internal 5200 compressed 0
-            peak-terms at 1794210239 footprint 6143 guest 4090 gpu 1262/1251 age 0 graphics 905 media 0 cache 238 heaps 260 malloc 812/700 internal 5200 compressed 0
+            terms guest 4090 gpu 1262/1251 age 0 graphics 905 media 0 cache 238 heaps 260 malloc 812/700 age 4 internal 5200 compressed 0
+            peak-terms at 1794210239 footprint 6143 guest 4090 gpu 1262/1251 age 0 graphics 905 media 0 cache 238 heaps 260 malloc 812/700 age 4 internal 5200 compressed 0
             history seconds footprint available guest gpu graphics cache heaps malloc
             h 484 6100 43 4090 1250 900 238 258 790
             h 486 6143 0 4090 1262 905 238 260 812

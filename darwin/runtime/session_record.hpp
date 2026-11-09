@@ -41,6 +41,10 @@ namespace uml::runtime {
  * large terms (MemoryTerms) now and at the session's highest checkpoint, and
  * their history: every checkpoint of the last memory_history_recent, and one
  * in memory_history_older_stride before those, memory_history_older of them.
+ * Reading malloc's term stalls every thread that allocates meanwhile, so a
+ * checkpoint asks for it only when memory_malloc_reading_due says so and
+ * otherwise repeats the last reading with its age; the rest are read every
+ * time.
  *
  * Everything that runs at an end only formats into static storage and makes
  * system calls: it takes no lock and allocates nothing, so a panic, a signal
@@ -54,8 +58,40 @@ inline constexpr unsigned memory_history_recent = 24;
 inline constexpr unsigned memory_history_older = 24;
 inline constexpr unsigned memory_history_older_stride = 15;
 
-/* What the checkpoint asks for the footprint's terms; any thread. */
-using MemoryTermsReader = MemoryTerms (*)() noexcept;
+/* A checkpoint reads malloc's term when none was read in the last
+ * memory_malloc_interval_ms; when the footprint is within
+ * memory_malloc_near_limit_bytes of the process's limit and none was read in
+ * the last memory_malloc_near_interval_ms; and when the footprint passes the
+ * highest one a reading was taken at by memory_malloc_peak_step_bytes, so a
+ * footprint that climbs to the limit has a reading from near its top. */
+inline constexpr std::int64_t memory_malloc_interval_ms = 30000;
+inline constexpr std::int64_t memory_malloc_near_interval_ms = 10000;
+inline constexpr std::uint64_t memory_malloc_near_limit_bytes =
+	std::uint64_t{1} << 30;
+inline constexpr std::uint64_t memory_malloc_peak_step_bytes =
+	std::uint64_t{64} << 20;
+
+/* The rule above. `last_ms` is when the last reading was taken, negative for
+ * none; `read_peak` the highest footprint a reading was taken at; `limit`
+ * zero for none. */
+[[nodiscard]] constexpr bool memory_malloc_reading_due(std::int64_t now_ms,
+	std::int64_t last_ms, std::uint64_t footprint, std::uint64_t read_peak,
+	std::uint64_t limit) noexcept
+{
+	if (last_ms < 0)
+		return true;
+	const std::int64_t since = now_ms - last_ms;
+	if (since >= memory_malloc_interval_ms)
+		return true;
+	if (footprint >= read_peak + memory_malloc_peak_step_bytes)
+		return true;
+	return limit != 0 && footprint + memory_malloc_near_limit_bytes >= limit &&
+		since >= memory_malloc_near_interval_ms;
+}
+
+/* What the checkpoint asks for the footprint's terms, malloc's included when
+ * `read_malloc`; any thread. */
+using MemoryTermsReader = MemoryTerms (*)(bool read_malloc) noexcept;
 
 /* The reader the memory checkpoints use from now on; null for none, which
  * leaves the slot with the footprint alone. */

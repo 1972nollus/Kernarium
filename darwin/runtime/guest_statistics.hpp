@@ -55,8 +55,8 @@ struct GuestRamUsage final {
  * The parts of the process's footprint the memory budgets count
  * (guest_memory_budget.hpp), in bytes, for the session record's memory
  * checkpoint (session_record.hpp), so that a record of a process the system
- * ended says which part had grown. Every figure is a counter something keeps
- * anyway; nothing is walked but the malloc zones' statistics.
+ * ended says which part had grown. Every figure but malloc's is a counter
+ * something keeps anyway.
  */
 struct MemoryTerms final {
 	/* guest_ram_usage()'s held bytes; 0 without a guest. */
@@ -76,17 +76,24 @@ struct MemoryTerms final {
 	std::uint64_t cache{};
 	/* The engine's domain heaps, committed (memory/domain_heap.hpp). */
 	std::uint64_t heaps{};
-	/* Every malloc zone's bytes, allocated to the zone and in use. */
+	/* Every malloc zone's bytes, allocated to the zone and in use; 0 unless
+	 * asked for. */
 	std::uint64_t malloc_allocated{};
 	std::uint64_t malloc_in_use{};
 	/* The footprint's anonymous memory and its compressed share. */
 	std::uint64_t internal{};
 	std::uint64_t compressed{};
+	/* The process's memory limit (platform/host_environment.hpp); 0 for
+	 * none. */
+	std::uint64_t limit{};
 };
 
-/* The terms now. Any thread that holds no malloc zone's lock; it takes the
- * zones' locks for their statistics and never waits on the guest. */
-[[nodiscard]] MemoryTerms memory_terms() noexcept;
+/* The terms now; any thread, and it never waits on the guest. With
+ * `read_malloc`, also the malloc zones' statistics: a walk of the zones that
+ * holds their locks while it runs, so every thread that allocates or frees
+ * meanwhile waits for it, about 4 ms with 900 MiB of malloc. The caller must
+ * hold no zone's lock. */
+[[nodiscard]] MemoryTerms memory_terms(bool read_malloc) noexcept;
 
 /*
  * Held by whoever retires the guest's RAM commitment (the hand-back of a

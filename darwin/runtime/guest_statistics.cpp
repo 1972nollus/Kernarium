@@ -6,6 +6,7 @@
 #include "memory/domain_heap.hpp"
 #include "memory/guest_ram_commitment.hpp"
 #include "platform/gpu_memory_figures.hpp"
+#include "platform/host_environment.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -95,7 +96,7 @@ GuestRamRetirementScope::~GuestRamRetirementScope()
 	ram_retirement_mutex.unlock();
 }
 
-MemoryTerms memory_terms() noexcept
+MemoryTerms memory_terms(bool read_malloc) noexcept
 {
 	MemoryTerms terms;
 	if (const auto ram = guest_ram_usage())
@@ -112,10 +113,13 @@ MemoryTerms memory_terms() noexcept
 	terms.cache = cache.open.load(std::memory_order_relaxed) +
 		cache.shedding.load(std::memory_order_relaxed);
 	terms.heaps = ::uml::memory::HeapRegion::instance().committed();
-	malloc_statistics_t zones{};
-	malloc_zone_statistics(nullptr, &zones);
-	terms.malloc_allocated = zones.size_allocated;
-	terms.malloc_in_use = zones.size_in_use;
+	if (read_malloc) {
+		malloc_statistics_t zones{};
+		malloc_zone_statistics(nullptr, &zones);
+		terms.malloc_allocated = zones.size_allocated;
+		terms.malloc_in_use = zones.size_in_use;
+	}
+	terms.limit = ::uml::platform::process_memory_limit_bytes();
 	task_vm_info_data_t info{};
 	mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
 	if (task_info(mach_task_self(), TASK_VM_INFO,
