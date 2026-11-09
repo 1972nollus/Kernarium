@@ -240,6 +240,13 @@ memory type gets its own heap sized to it. A mapping near the aperture's size
 can fail at `vkMapMemory` with `VK_ERROR_OUT_OF_DEVICE_MEMORY` until the guest's
 released nodes retire.
 
+The aperture also holds every Venus shared-memory region of the guest: the ring
+and the command and reply pools. A reply larger than 16 MiB, such as the data of
+`vkGetPipelineCacheData` for a large cache, gets a region of its own that is
+unmapped when the reply is consumed; the Android guest's Venus port carries
+that rule, and a guest without it keeps the oversized pool region mapped, so the
+heap the application is shown is larger than the room it has left.
+
 ### Device memory budget
 
 Device memory is charged to the application like guest RAM, so the host gives
