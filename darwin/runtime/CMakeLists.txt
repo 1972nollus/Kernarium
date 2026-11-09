@@ -139,8 +139,6 @@ add_library(UML::RuntimeGuestStatistics ALIAS uml_runtime_guest_statistics)
 uml_declare_architecture_target(uml_runtime_guest_statistics runtime)
 target_link_libraries(uml_runtime_guest_statistics PUBLIC
     UML::MemorySharedBacking)
-target_link_libraries(uml_runtime_guest_statistics PRIVATE
-    UML::HostEnvironment)
 target_include_directories(uml_runtime_guest_statistics PUBLIC
     ${PROJECT_SOURCE_DIR}/darwin
     ${PROJECT_SOURCE_DIR}/darwin/runtime)

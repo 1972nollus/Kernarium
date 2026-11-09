@@ -6,7 +6,6 @@
 #include "memory/domain_heap.hpp"
 #include "memory/guest_ram_commitment.hpp"
 #include "platform/gpu_memory_figures.hpp"
-#include "platform/host_environment.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -119,7 +118,6 @@ MemoryTerms memory_terms(bool read_malloc) noexcept
 		terms.malloc_allocated = zones.size_allocated;
 		terms.malloc_in_use = zones.size_in_use;
 	}
-	terms.limit = ::uml::platform::process_memory_limit_bytes();
 	task_vm_info_data_t info{};
 	mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
 	if (task_info(mach_task_self(), TASK_VM_INFO,

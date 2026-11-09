@@ -561,9 +561,11 @@ was ended from outside without running, as a memory-limit end is. Its first
 process's memory limit still allows, the large terms of the footprint (guest
 RAM, the host GPU's use against its budget, graphics, the gadget cache, the
 domain heaps and malloc) now and at the peak, and a bounded history of them.
-Malloc's term is read less often (`memory_malloc_reading_due`), because reading
-it stalls every thread that allocates. Andarium names the file in its boot
-request and reads it at launch.
+Reading malloc's term stalls every thread that allocates, so it is read only at
+the first checkpoint and when the footprint climbs 64 MiB past the highest
+reading's (`memory_malloc_reading_due`); every checkpoint also writes the
+footprint less the other terms. Andarium names the file in its boot request and
+reads it at launch.
 
 A guest that restarts itself boots again in the same process, because iOS can
 neither re-exec nor respawn an application. The macOS launchers

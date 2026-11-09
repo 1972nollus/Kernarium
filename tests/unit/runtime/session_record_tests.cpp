@@ -240,20 +240,12 @@ uml::runtime::MemoryTerms fixed_terms(bool read_malloc) noexcept
 namespace due {
 using uml::runtime::memory_malloc_reading_due;
 constexpr std::uint64_t mib = std::uint64_t{1} << 20;
-constexpr std::uint64_t limit = 6144 * mib;
-static_assert(memory_malloc_reading_due(0, -1, 0, 0, 0),
+static_assert(memory_malloc_reading_due(false, 0, 0),
 	"the first checkpoint reads it");
-static_assert(!memory_malloc_reading_due(29999, 0, 1000 * mib, 1000 * mib, 0) &&
-		memory_malloc_reading_due(30000, 0, 1000 * mib, 1000 * mib, 0),
-	"far from a limit, every memory_malloc_interval_ms");
-static_assert(memory_malloc_reading_due(2000, 0, 1064 * mib, 1000 * mib, 0) &&
-		!memory_malloc_reading_due(2000, 0, 1064 * mib - 1, 1000 * mib, 0),
-	"a footprint 64 MiB above the highest reading's");
-static_assert(!memory_malloc_reading_due(9999, 0, 5200 * mib, 5200 * mib,
-		      limit) &&
-		memory_malloc_reading_due(10000, 0, 5200 * mib, 5200 * mib, limit) &&
-		!memory_malloc_reading_due(10000, 0, 5100 * mib, 5100 * mib, limit),
-	"within 1 GiB of the limit, every memory_malloc_near_interval_ms");
+static_assert(memory_malloc_reading_due(true, 1064 * mib, 1000 * mib) &&
+		!memory_malloc_reading_due(true, 1064 * mib - 1, 1000 * mib) &&
+		!memory_malloc_reading_due(true, 900 * mib, 1000 * mib),
+	"then only a footprint 64 MiB above the highest reading's");
 } // namespace due
 
 std::size_t count_of(const std::string &text, const char *part)
@@ -275,11 +267,11 @@ void test_memory_terms()
 	const std::string begun = read_file(path);
 	const std::string first = begun.substr(0, slot_bytes);
 	require(has(first, "\nterms guest 4000 gpu 1240/1251 age 3 graphics 700 "
-			"media 5 cache 240 heaps 250 malloc 900/800 age 0 "
+			"media 5 cache 240 heaps 250 malloc 900/800 age 0 other 0 "
 			"internal 5000 compressed 12\n") &&
 		has(first, "\npeak-terms at ") &&
 		has(first, "\nhistory seconds footprint available guest gpu "
-			"graphics cache heaps malloc\n") &&
+			"graphics cache heaps malloc other\n") &&
 		count_of(first, "\nh ") == 1,
 		"the first checkpoint has no terms: " + first);
 	/* Enough checkpoints to fill both histories, which then stay at their
@@ -305,8 +297,8 @@ void test_memory_terms()
 	}
 	require(checked.substr(slot_bytes) == begun.substr(slot_bytes),
 		"a checkpoint changed the session's state");
-	/* Seconds of checkpoints at one footprint and no limit read malloc's
-	 * term once, and repeat that reading. */
+	/* Checkpoints at one footprint read malloc's term once, and repeat that
+	 * reading. */
 	require(malloc_readings.load() == 1 &&
 			has(slot, "\nterms guest 4000 gpu 1240/1251 age 3 graphics "
 				"700 media 5 cache 240 heaps 250 malloc 900/800 age "),

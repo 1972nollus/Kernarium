@@ -83,9 +83,6 @@ struct MemoryTerms final {
 	/* The footprint's anonymous memory and its compressed share. */
 	std::uint64_t internal{};
 	std::uint64_t compressed{};
-	/* The process's memory limit (platform/host_environment.hpp); 0 for
-	 * none. */
-	std::uint64_t limit{};
 };
 
 /* The terms now; any thread, and it never waits on the guest. With

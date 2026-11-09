@@ -46,10 +46,8 @@ uml_add_unit_test(
 add_executable(uml_runtime_session_record_tests
     session_record_tests.cpp)
 target_link_libraries(uml_runtime_session_record_tests PRIVATE
-    UML::HostEnvironment
     UML::RuntimeSessionRecord
-    UML::RuntimeGuestStatistics
-    "-framework Foundation")
+    UML::RuntimeGuestStatistics)
 uml_add_unit_test(
     NAME runtime-session-record
     COMMAND uml_runtime_session_record_tests)
@@ -225,9 +223,7 @@ uml_add_unit_test(
 add_executable(uml_runtime_guest_statistics_tests
     guest_statistics_tests.cpp)
 target_link_libraries(uml_runtime_guest_statistics_tests PRIVATE
-    UML::HostEnvironment
-    UML::RuntimeGuestStatistics
-    "-framework Foundation")
+    UML::RuntimeGuestStatistics)
 target_include_directories(uml_runtime_guest_statistics_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/runtime)
 uml_add_unit_test(
