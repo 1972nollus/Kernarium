@@ -131,6 +131,7 @@ constexpr std::uint16_t descriptorNext = 1U;
 constexpr std::uint16_t descriptorWrite = 2U;
 constexpr std::uint16_t descriptorIndirect = 4U;
 constexpr std::uint16_t availableSuppressInterrupt = 1U;
+constexpr std::uint16_t usedSuppressNotification = 1U;
 // Vhost-user encodes the queue index and "no descriptor" flag in one u64.
 constexpr std::uint64_t vhostVringIndexMask = 0xffU;
 constexpr std::uint64_t vhostVringNoDescriptor = 1U << 8U;

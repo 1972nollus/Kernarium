@@ -115,6 +115,11 @@ public:
     };
     [[nodiscard]] static std::optional<DeviceMemory> deviceMemory() noexcept;
 
+    /* Frees what the host's drivers cache for reuse, the way the pool does
+     * before it refuses, and returns how many cached allocations that freed;
+     * any thread. Nothing while no renderer with a budget exists. */
+    static std::uint64_t reclaimCachedMemory() noexcept;
+
     VirglRenderer(const VirglRenderer&) = delete;
     VirglRenderer& operator=(const VirglRenderer&) = delete;
 

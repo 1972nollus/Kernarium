@@ -100,6 +100,9 @@ WIFI_HAL_INTERFACE_COMBINATIONS := {{{STA}, 1}}
 # Properties the platform's core domains set belong to the system partitions: the
 # Treble split forbids a core domain to set a vendor-owned one.
 SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += device/kernarium/andarium/sepolicy/system_ext/private
+# The type of the file with the host's report of graphics memory pressure is public:
+# the vendor's genfs_contexts labels the file with it.
+SYSTEM_EXT_PUBLIC_SEPOLICY_DIRS += device/kernarium/andarium/sepolicy/system_ext/public
 
 # The Android UML ELF is built and published independently. Android packaging
 # must neither substitute a Cuttlefish kernel nor stage loadable modules.

@@ -2741,6 +2741,7 @@ def check_kernel_policy(
         (platform_policy, vendor_policy, system_ext_policy),
     )
     check_adbd_launch_policy(contexts, (platform_policy, vendor_policy, system_ext_policy))
+    check_lmkd_gpu_policy(contexts, (platform_policy, vendor_policy, system_ext_policy), vendor_policy)
     check_venus_option_policy(contexts, (platform_policy, vendor_policy, system_ext_policy))
     check_audio_ring_policy(contexts, (platform_policy, vendor_policy, system_ext_policy))
 
@@ -3397,6 +3398,104 @@ def check_venus_option_policy(contexts: list[str], policies: tuple[bytes, ...]) 
                 f"{domain} may not read {VENUS_PERF_PROPERTY}, labelled {label}: Venus would "
                 "allocate asynchronously there"
             )
+
+
+# lmkd's GPU-aware reclaim (route p0027): while the virtio-gpu driver reports host graphics memory
+# pressure in this sysfs file, lmkd ends the cached app that holds the most of it. The product turns
+# it on with a property; the binary, the property's label and lmkd's access to the file's type are
+# what make that work, and none of them fails loudly when it is missing.
+LMKD_BINARY = "SYSTEM/bin/lmkd"
+LMKD_GPU_RECLAIM_PROPERTY = "ro.lmk.gpu_reclaim"
+LMKD_GPU_REPORT_PATH = "/sys/class/drm/card0/gpu_memory_report"
+LMKD_GPU_REPORT_GENFS_PATH = "/devices/virtio-uml-cmdline/virtio-uml.0/drm/card0/gpu_memory_report"
+LMKD_GPU_REPORT_TYPE = "sysfs_gpu_memory"
+# The directories on the way to the file carry the virtio-gpu device's own type.
+LMKD_GPU_DEVICE_TYPE = "sysfs_gpu"
+# What only the p0027 topic puts in lmkd.
+LMKD_GPU_MARKERS = (
+    LMKD_GPU_RECLAIM_PROPERTY.encode(),
+    LMKD_GPU_REPORT_PATH.encode(),
+    b"graphics memory pressure",
+)
+CIL_GENFS_RULE = re.compile(
+    rb'^\(genfscon sysfs "([^"]*)" (?:\w+ )?\(\S+ \S+ (\S+) ', re.MULTILINE
+)
+
+
+def check_lmkd_gpu_reclaim(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
+    """lmkd holds the GPU reclaim of route p0027, and the product turns it on."""
+    info = infos.get(LMKD_BINARY)
+    if info is None or info.is_dir():
+        fail(f"{LMKD_BINARY} is missing")
+    payload = read_small(archive, info, 64 << 20)
+    for marker in LMKD_GPU_MARKERS:
+        if marker not in payload:
+            fail(
+                f"{LMKD_BINARY} lacks {marker.decode()!r}: the p0027 topic is missing from the "
+                "build, so lmkd would never end the app that holds the host's graphics memory"
+            )
+    values = [
+        line.partition("=")[2].strip()
+        for line in read_small(archive, infos["PRODUCT/etc/build.prop"])
+        .decode("utf-8", errors="strict")
+        .splitlines()
+        if line.partition("=")[0] == LMKD_GPU_RECLAIM_PROPERTY
+    ]
+    if values != ["true"]:
+        fail(f"unexpected product property {LMKD_GPU_RECLAIM_PROPERTY}: {values}")
+
+
+def cil_allows(
+    policies: tuple[bytes, ...], domain: str, label: str, object_class: str, permissions: set[str]
+) -> bool:
+    """Whether a domain holds every one of the permissions of an object class on a label, summed
+    over the allow rules that reach it directly or through attributes."""
+    subjects = cil_types_and_attributes(policies, domain)
+    objects = cil_types_and_attributes(policies, label)
+    granted: set[str] = set()
+    for policy in policies:
+        for match in CIL_ALLOW_RULE.finditer(policy):
+            if (
+                match.group(3).decode() == object_class
+                and CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(1).decode()) in subjects
+                and CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(2).decode()) in objects
+            ):
+                granted.update(permission.decode() for permission in match.group(4).split())
+    return permissions <= granted
+
+
+def check_lmkd_gpu_policy(
+    contexts: list[str], policies: tuple[bytes, ...], vendor_policy: bytes
+) -> None:
+    """lmkd may read the setting, the report file has its own sysfs type that the vendor's
+    genfs_contexts gives it, and lmkd may walk to the file and read and write it."""
+    label = property_label(LMKD_GPU_RECLAIM_PROPERTY, contexts) or "default_prop"
+    if not cil_allows_file_read(policies, "lmkd", label):
+        fail(
+            f"lmkd may not read {LMKD_GPU_RECLAIM_PROPERTY}, labelled {label}: it would keep the "
+            "GPU reclaim off"
+        )
+    if "sysfs_type" not in cil_types_and_attributes(policies, LMKD_GPU_REPORT_TYPE):
+        fail(
+            f"{LMKD_GPU_REPORT_TYPE} is not a sysfs type of the policy: the report file cannot "
+            "be labelled"
+        )
+    genfs = {
+        match.group(1).decode(): CIL_PLATFORM_VERSION_SUFFIX.sub("", match.group(2).decode())
+        for match in CIL_GENFS_RULE.finditer(vendor_policy)
+    }
+    if genfs.get(LMKD_GPU_REPORT_GENFS_PATH) != LMKD_GPU_REPORT_TYPE:
+        fail(
+            f"the vendor policy does not label {LMKD_GPU_REPORT_GENFS_PATH} {LMKD_GPU_REPORT_TYPE} "
+            f"(it has {genfs.get(LMKD_GPU_REPORT_GENFS_PATH)}): lmkd could not open the report"
+        )
+    if not cil_allows(policies, "lmkd", LMKD_GPU_REPORT_TYPE, "file", {"open", "read", "write"}):
+        fail(f"lmkd may not open, read and write {LMKD_GPU_REPORT_TYPE}: the GPU reclaim stays off")
+    if not cil_allows(policies, "lmkd", LMKD_GPU_DEVICE_TYPE, "dir", {"search"}):
+        fail(
+            f"lmkd may not search {LMKD_GPU_DEVICE_TYPE} directories: it could not reach the "
+            "report file under the virtio-gpu device"
+        )
 
 
 # The virtio-gpu device paces the display with a vblank timer, so the present fences of
@@ -4133,6 +4232,7 @@ def main() -> None:
         check_wifi_hals(archive, infos)
         check_adbd_launch_properties(archive, infos)
         check_adb_root_service(archive, infos)
+        check_lmkd_gpu_reclaim(archive, infos)
         check_services_jar(archive, infos)
         check_audio_policy(archive, infos)
         check_multilib_properties(archive, infos)

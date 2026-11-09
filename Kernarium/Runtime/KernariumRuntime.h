@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 28U
+#define KERNARIUM_RUNTIME_API_VERSION 29U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -388,7 +388,10 @@ typedef struct kernarium_runtime_graphics_memory {
     uint64_t minimum_holder_bytes;
     /* How many entries of `holders` are filled. */
     uint32_t holder_count;
-    uint32_t reserved;
+    /* 1 while the guest's own low-memory killer asks the host for the budget's
+     * holders and ends them itself (runtime API 29); an application that ends
+     * holders on its own stands down meanwhile. 0 otherwise. */
+    uint32_t guest_reclaims;
     /* The device memory budget, and what the process holds against it. The
      * host's drivers keep memory they could reuse, so usage_bytes is not what
      * the guest holds. 0 while no renderer has a budget. */

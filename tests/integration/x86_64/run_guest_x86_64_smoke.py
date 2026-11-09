@@ -45,6 +45,9 @@ def terminate(process: subprocess.Popen[bytes]) -> None:
 def boot(
     emulator: pathlib.Path, rootfs: pathlib.Path, engine: str, timeout: int
 ) -> bytes:
+    # The terminal end stays open until the console is read to its end, so
+    # the emulator's exit is never its last close: Darwin discards a
+    # terminal's unread output then, the success line among it.
     master, slave = pty.openpty()
     os.set_blocking(master, False)
     try:
@@ -67,8 +70,10 @@ def boot(
             stderr=slave,
             close_fds=True,
         )
-    finally:
+    except BaseException:
+        os.close(master)
         os.close(slave)
+        raise
 
     transcript = bytearray()
     deadline = time.monotonic() + timeout
@@ -79,7 +84,10 @@ def boot(
                 raise TimeoutError(
                     f"x86-64 smoke guest did not stop within {timeout} seconds"
                 )
-            readable, _, _ = select.select([master], [], [], remaining)
+            # The held terminal reports no end when the emulator exits.
+            readable, _, _ = select.select(
+                [master], [], [], min(remaining, 0.25)
+            )
             if not readable:
                 continue
             try:
@@ -110,7 +118,10 @@ def boot(
             print(transcript.decode(errors="replace"), file=sys.stderr)
         raise
     finally:
+        # The master first: a terminal end closed last with output unread
+        # while its master is open waits 0.6 s for a reader.
         os.close(master)
+        os.close(slave)
 
 
 def main() -> int:

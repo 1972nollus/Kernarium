@@ -999,15 +999,23 @@ void aDisabledRingKeepsTheBuffersTheDeviceFills()
  * has an event source to raise. */
 class OrderedRequestDevice final : public FixtureDevice {
 public:
-    OrderedRequestDevice(bool keepsRequestsOnDisabledRing, bool signalsReadiness)
+    OrderedRequestDevice(
+        bool keepsRequestsOnDisabledRing,
+        bool signalsReadiness,
+        bool answersKicksBeforeRunning = false)
         : FixtureDevice("ordered request fixture", 1, signalsReadiness)
         , keeps_(keepsRequestsOnDisabledRing)
+        , answersFirst_(answersKicksBeforeRunning)
     {
     }
 
     [[nodiscard]] bool keepsRequestsOnDisabledRing() const noexcept override
     {
         return keeps_;
+    }
+    [[nodiscard]] bool answersKicksBeforeRunning() const noexcept override
+    {
+        return answersFirst_;
     }
     [[nodiscard]] std::vector<std::uint8_t> discardedResponse(
         std::uint32_t index,
@@ -1079,6 +1087,7 @@ public:
 
 private:
     bool keeps_;
+    bool answersFirst_;
     mutable std::mutex mutex_;
     std::condition_variable changed_;
     std::vector<std::uint8_t> calls_;
@@ -1164,6 +1173,129 @@ private:
     pollfd call {.fd = callRead, .events = POLLIN};
     return ::poll(&call, 1, 200) == 0 && requests.ring().usedIndex() == 0 &&
         device.calls().empty();
+}
+
+/* Starts queue 0 of `requests` for in-band kicks, with a call pipe. */
+struct InbandQueue {
+    SocketPair backend;
+    Pipe call;
+};
+
+/* Starts queue 0 of `requests` with in-band kicks and a call pipe. */
+[[nodiscard]] InbandQueue startInbandQueue(
+    int socket,
+    const OrderedRequestRing& requests)
+{
+    InbandQueue started {
+        .backend = openBackendChannel(
+            socket,
+            protocol::protocolFeatureInbandNotifications |
+                protocol::protocolFeatureSlaveRequest |
+                protocol::protocolFeatureReplyAck),
+        .call = makePipe(),
+    };
+    configureMemory(socket, requests.ring().descriptor());
+    configureQueue(socket, requests.ring(), 0);
+    constexpr std::uint64_t queue = 0;
+    const std::array callDescriptors {started.call.writeEnd.get()};
+    sendRequestAndReadAcknowledgement(
+        socket,
+        protocol::VhostRequest::setVringCall,
+        bytesOf(queue),
+        callDescriptors);
+    return started;
+}
+
+[[nodiscard]] bool replyWaiting(int socket, int timeoutMilliseconds)
+{
+    pollfd reply {.fd = socket, .events = POLLIN};
+    return ::poll(&reply, 1, timeoutMilliseconds) == 1;
+}
+
+/* An in-band kick to a device that answers kicks first is answered while the
+ * device still runs the queue. The guest is told not to kick meanwhile, and a
+ * request it queues then runs without a kick, after which kicks are wanted
+ * again. */
+void answeredKickRunsAfterItsReply()
+{
+    auto device = std::make_unique<OrderedRequestDevice>(false, false, true);
+    auto* recorder = device.get();
+    VhostUserServer server {std::move(device)};
+    OrderedRequestRing requests {1};
+
+    withServerConnection(server, [&](int socket) {
+        const auto queue = startInbandQueue(socket, requests);
+        recorder->blockNextRequest();
+        const protocol::VringState kick {.index = 0, .value = 0};
+        sendRequest(socket, protocol::VhostRequest::vringKick, bytesOf(kick));
+        recorder->awaitBlocked();
+        require(replyWaiting(socket, 2000));
+        readAcknowledgement(socket, protocol::VhostRequest::vringKick);
+        require(requests.ring().usedFlags() ==
+            protocol::usedSuppressNotification);
+
+        requests.append(1);
+        recorder->unblock();
+        awaitCondition([&] { return requests.ring().usedIndex() == 2; });
+        requests.requireAnswered(2);
+        require(std::ranges::equal(
+            recorder->calls(), std::array<std::uint8_t, 2> {1, 2}));
+        awaitCondition([&] { return requests.ring().usedFlags() == 0; });
+        (void)getFeatures(socket);
+    });
+}
+
+/* Any other device answers an in-band kick only once the queue has run, and
+ * never tells the guest not to kick. */
+void unansweredKickWaitsForTheQueue()
+{
+    auto device = std::make_unique<OrderedRequestDevice>(false, false);
+    auto* recorder = device.get();
+    VhostUserServer server {std::move(device)};
+    const OrderedRequestRing requests {1};
+
+    withServerConnection(server, [&](int socket) {
+        const auto queue = startInbandQueue(socket, requests);
+        recorder->blockNextRequest();
+        const protocol::VringState kick {.index = 0, .value = 0};
+        sendRequest(socket, protocol::VhostRequest::vringKick, bytesOf(kick));
+        recorder->awaitBlocked();
+        require(!replyWaiting(socket, 200));
+        require(requests.ring().usedFlags() == 0);
+        recorder->unblock();
+        readAcknowledgement(socket, protocol::VhostRequest::vringKick);
+        requests.requireAnswered(1);
+    });
+}
+
+/* An in-band kick that asks for no acknowledgement runs the queue and gets no
+ * reply, so the next reply on the socket is the next request's. */
+void kickWithoutAcknowledgementRunsTheQueue()
+{
+    for (const bool answersFirst : {false, true}) {
+        auto device =
+            std::make_unique<OrderedRequestDevice>(false, false, answersFirst);
+        auto* recorder = device.get();
+        VhostUserServer server {std::move(device)};
+        const OrderedRequestRing requests {1};
+
+        withServerConnection(server, [&](int socket) {
+            const auto queue = startInbandQueue(socket, requests);
+            const protocol::VringState kick {.index = 0, .value = 0};
+            sendRequest(
+                socket,
+                protocol::VhostRequest::vringKick,
+                bytesOf(kick),
+                {},
+                false);
+            awaitCondition([&] { return requests.ring().usedIndex() == 1; });
+            requests.requireAnswered(1);
+            require(std::ranges::equal(
+                recorder->calls(), std::array<std::uint8_t, 1> {1}));
+            require(!replyWaiting(socket, 200));
+            (void)getFeatures(socket);
+        });
+    }
 }
 
 /* A closed gate keeps every request in its ring, and opening it runs them in
@@ -2414,6 +2546,9 @@ void runVhostUserProtocolTests()
     aDiscardingGateAnswersGpuRequestsWithTheirFences();
     aDiscardingGateCompletesCursorCommandsEmpty();
     heldRequestsRunInOrderAfterRelease();
+    answeredKickRunsAfterItsReply();
+    unansweredKickWaitsForTheQueue();
+    kickWithoutAcknowledgementRunsTheQueue();
     heldRequestsSurviveADisabledRing(false);
     heldRequestsSurviveADisabledRing(true);
     holdWaitsForTheRunningRequestAndStopsTheNext();

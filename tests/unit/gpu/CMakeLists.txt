@@ -66,6 +66,14 @@ if(TARGET uml_gpu_context_memory_ledger)
         LIBRARIES UML::GpuContextMemoryLedger Threads::Threads)
 endif()
 
+# When the guest is told its graphics memory is under pressure: the evaluator
+# needs no GPU device either.
+if(TARGET uml_gpu_memory_pressure)
+    uml_add_gpu_unit_test(gpu-memory-pressure
+        uml_gpu_memory_pressure_tests memory_pressure_tests.cpp
+        LIBRARIES UML::GpuMemoryPressure)
+endif()
+
 uml_add_gpu_unit_test(gpu-metal-submit-timing-collector
     uml_gpu_metal_submit_timing_tests metal_submit_timing_tests.cpp
     LIBRARIES Threads::Threads
@@ -442,6 +450,17 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY)
 
+    # A guest that is not offered a compressed format it exposes decodes the
+    # texture and stores four or more times its bytes; each format the host
+    # samples is offered, decodes right, copies by its class and is stored
+    # compressed.
+    uml_add_gpu_unit_test(gpu-compressed-formats
+        uml_gpu_compressed_formats_tests
+        host_gl_compressed_formats_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries} UML::HostGpuMemory
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY TIMEOUT 120)
+
     # A stencil buffer needs no depth plane beside it: Android's hardware
     # renderer asks for a stencil of eight bits and no depth for every window,
     # and the renderer used to give it a depth-stencil image.
@@ -563,6 +582,14 @@ if(TARGET uml_gpu_service)
             ${_uml_gpu_device_directory}
             ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user
             ${CMAKE_CURRENT_SOURCE_DIR}
+        UNIT_DIRECTORY)
+
+    # The private memory report: the device with a renderer that has a budget.
+    uml_add_gpu_unit_test(gpu-device-memory-report
+        uml_gpu_device_memory_report_tests
+        virtio_gpu_device_memory_report_tests.cpp
+        LIBRARIES uml_gpu_protocol_device_test_variant
+        INCLUDES ${_uml_gpu_device_directory} ${CMAKE_CURRENT_SOURCE_DIR}
         UNIT_DIRECTORY)
 
     uml_add_gpu_unit_test(gpu-device-command-atomicity

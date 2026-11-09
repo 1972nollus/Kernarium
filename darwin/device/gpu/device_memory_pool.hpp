@@ -83,10 +83,11 @@ namespace uml::gpu {
 class DeviceMemoryPool final {
 public:
     /* Frees what the host drivers cache for reuse, on whichever thread was
-     * refused, and returns the number of cached allocations freed. It runs
-     * with none of the pool's locks held, so it may release reservations and
-     * read the usage, and at most one runs at a time. The refused thread may
-     * hold locks of the host driver that the hook must not take. */
+     * refused or called reclaim(), and returns the number of cached
+     * allocations freed. It runs with none of the pool's locks held, so it may
+     * release reservations and read the usage, and at most one runs at a
+     * time. The refused thread may hold locks of the host driver that the hook
+     * must not take. */
     using Reclaim = std::function<std::uint64_t()>;
 
     /* The longest the pool waits for `allocated` to follow a release: the
@@ -153,6 +154,11 @@ public:
      * the pool cannot hold them. A reservation that does not fit runs the
      * reclaim hook, if there is one, and is decided once more. */
     [[nodiscard]] bool reserve(std::uint64_t bytes);
+
+    /* Runs the reclaim hook as a refused reservation does, for a caller that
+     * wants the memory the drivers cache freed before any refusal, and returns
+     * what the hook freed; nothing without a hook. */
+    [[nodiscard]] std::uint64_t reclaim();
 
     /* Returns a reservation of `bytes`. */
     void release(std::uint64_t bytes) noexcept;

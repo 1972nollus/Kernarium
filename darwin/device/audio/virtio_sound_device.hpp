@@ -39,6 +39,11 @@ public:
         std::span<const std::uint8_t> request,
         std::size_t responseCapacity) override;
     void reset() noexcept override;
+    // Starting the output takes tens of milliseconds on the host.
+    [[nodiscard]] bool answersKicksBeforeRunning() const noexcept override
+    {
+        return true;
+    }
     [[nodiscard]] int eventDescriptor() const noexcept override;
     void drainEventSource() override;
     [[nodiscard]] bool takeQueueCompletion(

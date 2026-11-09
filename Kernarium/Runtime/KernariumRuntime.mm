@@ -2166,6 +2166,7 @@ int runtimeReadGraphicsMemory(kernarium_runtime_graphics_memory* memory)
         .usageBytes = figures->usageBytes,
         .contextBytes = figures->contextBytes,
         .memoryRefusals = refusals.value_or(0U),
+        .guestReclaims = figures->guestReclaims,
         .holders = std::span {holders.data(), count},
     });
     return 0;

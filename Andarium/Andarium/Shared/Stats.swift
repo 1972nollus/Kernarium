@@ -138,6 +138,26 @@ enum StatsTint {
     }
 }
 
+/// Where the statistics capsule sits over a running session, and the graphics
+/// notice that makes room for it. Distances are in points from the top
+/// safe-area edge.
+enum StatsPlacement {
+    /// The capsule's distance below the top safe-area edge.
+    static let top: CGFloat = 24
+    /// The capsule's height.
+    static let height: CGFloat = 40
+    /// The graphics notice's distance below the capsule.
+    static let noticeGap: CGFloat = 8
+    /// The graphics notice's distance below the top safe-area edge while the
+    /// capsule is hidden.
+    static let noticeTopAlone: CGFloat = 36
+
+    /// The graphics notice's distance below the top safe-area edge.
+    static func noticeTop(statsShowing: Bool) -> CGFloat {
+        statsShowing ? top + height + noticeGap : noticeTopAlone
+    }
+}
+
 /// Live guest CPU, memory, graphics memory and frame rate in one glass
 /// capsule. Memory and graphics memory show the figure in use over a bar
 /// that fills with its share of the guest's memory and of the graphics
@@ -163,7 +183,7 @@ struct StatsPill: View {
         }
         .fixedSize()
         .padding(.horizontal, 14)
-        .frame(height: 40)
+        .frame(height: StatsPlacement.height)
         .glassEffect(.regular, in: .capsule)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(readout.spoken(memoryMiB: memoryMiB, recovery: recovery))

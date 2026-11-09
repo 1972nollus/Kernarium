@@ -685,8 +685,10 @@ def run_guest(
         journal_setting=os.environ.get(guest_process.OWNERSHIP_ENV),
         stdin=slave, stdout=slave, stderr=slave, bufsize=0, close_fds=True,
     ) as process:
-        os.close(slave)
-        slave = None
+        # The terminal end stays open until cleanup, so the emulator's exit
+        # is never its last close: Darwin discards a terminal's unread output
+        # then, and the guest's last lines, its verdict among them, would be
+        # lost to a read that came late.
         console = os.fdopen(master, "r+b", buffering=0)
         os.set_blocking(console.fileno(), False)
         saw_pass = False
@@ -697,6 +699,22 @@ def run_guest(
         if serial is not None:
             print(f"Serial console socket: {serial.path}", file=sys.stderr)
         with console_log.open("wb") as log:
+
+            def record(data: bytes) -> None:
+                nonlocal saw_pass, saw_fail
+                log.write(data)
+                log.flush()
+                sys.stdout.buffer.write(data)
+                sys.stdout.buffer.flush()
+                pending.extend(data)
+                if len(pending) > 8192:
+                    del pending[:-8192]
+                decoded = pending.decode("utf-8", errors="replace")
+                saw_pass = saw_pass or PASS_MARKER in decoded
+                saw_fail = saw_fail or FAIL_MARKER in decoded
+                if serial is not None:
+                    serial.queue_output(data)
+
             while process.poll() is None:
                 artifact_socket.observe()
                 if deadline is not None and time.monotonic() >= deadline:
@@ -743,18 +761,16 @@ def run_guest(
                     raise
                 if not data:
                     break
-                log.write(data)
-                log.flush()
-                sys.stdout.buffer.write(data)
-                sys.stdout.buffer.flush()
-                pending.extend(data)
-                if len(pending) > 8192:
-                    del pending[:-8192]
-                decoded = pending.decode("utf-8", errors="replace")
-                saw_pass = saw_pass or PASS_MARKER in decoded
-                saw_fail = saw_fail or FAIL_MARKER in decoded
-                if serial is not None:
-                    serial.queue_output(data)
+                record(data)
+            # What the emulator wrote before it exited is still queued.
+            while True:
+                try:
+                    data = os.read(console.fileno(), 65536)
+                except OSError:
+                    break
+                if not data:
+                    break
+                record(data)
             return_code = process.wait(timeout=5)
 
 
