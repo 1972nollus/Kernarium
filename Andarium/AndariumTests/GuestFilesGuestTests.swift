@@ -14,6 +14,11 @@ import Testing
 /// (KERNARIUM_ANDROID_DISK_SIZE_GIB), and runs in a guest of its own. The
 /// storage-readiness test runs alone with ANDARIUM_FILES_STORAGE=1 and
 /// ANDARIUM_GUEST_INSTANCE=filex-store (a first boot and a restart in place).
+/// The background test needs a device: it runs alone on an iPad with
+/// ANDARIUM_FILES_BACKGROUND=1 and ANDARIUM_GUEST_INSTANCE=filex-bg, and a
+/// harness that sends the application to the background and back when the
+/// test says so (the lines marked `FILEX-BG:`, also kept in the
+/// application's `Documents/filex-bg.log`).
 ///
 /// Every file the tests make is in a folder of their own in Download, which the
 /// guest cleanup removes, and in the temporary directory of the host.
@@ -23,6 +28,10 @@ struct GuestFilesGuestTests {
     private static let enabled = environment["ANDARIUM_FILES_TESTS"] == "1"
     private static let bigEnabled = enabled && environment["ANDARIUM_FILES_BIG"] == "1"
     private static let storageEnabled = enabled && environment["ANDARIUM_FILES_STORAGE"] == "1"
+    private static let backgroundEnabled = enabled && environment["ANDARIUM_FILES_BACKGROUND"] == "1"
+    /// A rehearsal on a Mac, where nothing sends the application away: the
+    /// test stops the transfers the way the notification does.
+    private static let simulatesBackground = environment["ANDARIUM_FILES_BACKGROUND_SIMULATE"] == "1"
     private static let folder = GuestPath.child("FilexTest", of: GuestPath.child("Download", of: GuestPath.root))
     private static let cleanup = "rm -rf '\(folder)' /storage/emulated/0/Pictures/fx_*; su 0 rm -rf /data/media/0/FilexRefused"
     private let mib = Limits.bytesPerMiB
@@ -31,7 +40,7 @@ struct GuestFilesGuestTests {
 
     @Test(.timeLimit(.minutes(40)))
     func browsingImportingAndExportingOnARealGuest() async throws {
-        guard Self.enabled, !Self.bigEnabled, !Self.storageEnabled else { return }
+        guard Self.enabled, !Self.bigEnabled, !Self.storageEnabled, !Self.backgroundEnabled else { return }
         try #require(Self.environment["ANDARIUM_GUEST_INSTANCE"] == "files")
         try await withAndroidGuest(cleanupCommand: Self.cleanup) { model, operations in
             let browser = try #require(model.fileBrowser)
@@ -444,6 +453,133 @@ struct GuestFilesGuestTests {
                 browser.closeTransfer()
                 browser.sheetClosed()
             }
+        }
+    }
+
+    // MARK: The application in the background
+
+    /// The harness's cue: the test is mid-transfer and waits for the
+    /// application to be sent to the background and brought back. The line is
+    /// on the console and in `Documents/filex-bg.log`.
+    private static func cue(_ text: String) {
+        print("FILEX-BG: \(text)")
+        guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        let url = documents.appendingPathComponent("filex-bg.log")
+        let line = Data("\(Date().timeIntervalSince1970) \(text)\n".utf8)
+        if let handle = try? FileHandle(forWritingTo: url) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: line)
+        } else {
+            try? line.write(to: url)
+        }
+    }
+
+    /// iOS stops a guest's application in the background, and a transfer with
+    /// it. On a device, with the harness sending the application away and back
+    /// in the middle of an import and again of an export: the files say why
+    /// they stopped, no partial file is left in the guest or in the staged
+    /// copies, and Try Again carries each one out whole.
+    @Test(.timeLimit(.minutes(25)))
+    func sendingTheApplicationToTheBackgroundMidTransferStopsItCleanly() async throws {
+        guard Self.backgroundEnabled else { return }
+        try #require(Self.environment["ANDARIUM_GUEST_INSTANCE"] == "filex-bg")
+        try await withAndroidGuest(cleanupCommand: Self.cleanup) { model, operations in
+            let browser = try #require(model.fileBrowser)
+            let bench = try Bench()
+            defer { bench.remove() }
+            let guest = GuestSide(operations)
+            let work = Self.folder
+            _ = try? await guest.run("pm disable-user --user 0 org.lineageos.setupwizard")
+            _ = try await guest.run("settings put global adb_enabled 1")
+            let watcher = Task { await model.watchSettings() }
+            defer { watcher.cancel() }
+            try await waitUntil("the browser is available", seconds: 240) { model.filesAvailable }
+            _ = try await guest.run("rm -rf '\(work)'; mkdir -p '\(work)'")
+            browser.route = [FolderRoute(path: GuestPath.root), FolderRoute(path: work)]
+            await browser.load(work)
+            var shared: [URL] = []
+            var finishShare: (@MainActor (Bool) -> Void)?
+            browser.presentShare = { files, finished in
+                shared = files
+                finishShare = finished
+                return true
+            }
+            Self.cue("ready")
+
+            // MARK: A small import and export, in the foreground
+            let small = [
+                try bench.pick("small one.txt", bytes: 3_000, seed: 3, modified: Date(timeIntervalSince1970: 1_600_000_000)),
+                try bench.pick("small two.bin", bytes: 2 * Int(mib) + 5, seed: 4, modified: Date(timeIntervalSince1970: 1_600_100_000)),
+            ]
+            browser.received(small)
+            var transfer = try #require(browser.transfer)
+            try await settle(transfer, seconds: 300)
+            #expect(transfer.stage == .finished, "\(transfer.title) \(transfer.detail)")
+            for pick in small {
+                #expect(try await guest.sha256(GuestPath.child(pick.name, of: work)) == bench.sha256(pick), "\(pick.name) arrived whole")
+            }
+            browser.closeTransfer()
+            await browser.load(work)
+            let back = try #require(browser.entries(in: work).first { $0.name == "small two.bin" })
+            browser.export([back])
+            transfer = try #require(browser.transfer)
+            try await waitUntil("the small export is ready", seconds: 300) { transfer.stage != .running }
+            #expect(transfer.stage == .ready, "\(transfer.title) \(transfer.detail)")
+            #expect(try Bench.sha256(of: try #require(shared.first)) == bench.sha256(small[1]), "the export arrived whole")
+            finishShare?(true)
+            Self.cue("small import and export done")
+
+            // MARK: Sent away mid-import
+            let big = try bench.pick("background.bin", bytes: 768 * Int(mib), seed: 61, modified: Date(timeIntervalSince1970: 1_650_000_000))
+            browser.received([big])
+            transfer = try #require(browser.transfer)
+            try await waitUntil("the import has moved 16 MiB", seconds: 300) { transfer.items[0].moved >= 16 * mib || !transfer.running }
+            #expect(transfer.running, "the import is still running when the application is sent away")
+            Self.cue("background now (import, moved \(transfer.items[0].moved))")
+            if Self.simulatesBackground { browser.leftForeground() }
+            try await waitUntil("the import stops", seconds: 600) { !transfer.running }
+            let bigPath = GuestPath.child(big.name, of: work)
+            #expect(transfer.stage == .failed, "\(transfer.title) \(transfer.detail)")
+            #expect(transfer.items[0].state == .failed(FileBrowserModel.leftForegroundReason), "\(transfer.items[0].state)")
+            Self.cue("import stopped: \(transfer.items[0].state)")
+            await guest.expectNoPartials(work, "after the application was sent to the background")
+            #expect(!(try await guest.names(work)).contains(big.name), "the stopped import left no file of that name")
+            browser.retryFailed()
+            try await settle(transfer, seconds: 900)
+            #expect(transfer.stage == .finished, "\(transfer.title) \(transfer.detail)")
+            #expect(try await guest.sha256(bigPath) == bench.sha256(big), "Try Again brought the file whole")
+            browser.closeTransfer()
+            Self.cue("import retried and whole")
+
+            // MARK: Sent away mid-export
+            await browser.load(work)
+            let pull = try #require(browser.entries(in: work).first { $0.name == big.name })
+            browser.export([pull])
+            transfer = try #require(browser.transfer)
+            try await waitUntil("the export has moved 16 MiB", seconds: 300) { transfer.items[0].moved >= 16 * mib || !transfer.running }
+            #expect(transfer.running, "the export is still running when the application is sent away")
+            Self.cue("background now (export, moved \(transfer.items[0].moved))")
+            if Self.simulatesBackground { browser.leftForeground() }
+            try await waitUntil("the export stops", seconds: 600) { !transfer.running }
+            #expect(transfer.stage == .failed, "\(transfer.title) \(transfer.detail)")
+            #expect(transfer.items[0].state == .failed(FileBrowserModel.leftForegroundReason), "\(transfer.items[0].state)")
+            Self.cue("export stopped: \(transfer.items[0].state)")
+            if let staging = transfer.directory {
+                let left = (try? FileManager.default.contentsOfDirectory(atPath: staging.path)) ?? []
+                #expect(left.isEmpty, "the stopped export left a partial copy: \(left)")
+            }
+            browser.retryFailed()
+            try await waitUntil("the export is ready again", seconds: 900) { transfer.stage != .running }
+            #expect(transfer.stage == .ready, "\(transfer.title) \(transfer.detail)")
+            #expect(try Bench.sha256(of: try #require(transfer.staged.first)) == bench.sha256(big), "Try Again brought the copy whole")
+            finishShare?(true)
+            browser.sheetClosed()
+            Self.cue("export retried and whole")
+        }
+        // The guest is off. A device keeps nothing of the test's guest.
+        if let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first {
+            try? FileManager.default.removeItem(at: library.appendingPathComponent("TestGuests/filex-bg", isDirectory: true))
         }
     }
 
