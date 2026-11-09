@@ -45,4 +45,5 @@
     <feature name="android.software.device_admin" />
     <feature name="android.software.managed_users" notLowRam="true" />
     <feature name="android.software.controls" />
+    <feature name="android.software.midi" />
 </permissions>

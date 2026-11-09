@@ -169,7 +169,9 @@ SoftAP, Wi-Fi Direct, Aware or RTT, and `wificond` is not shipped.
 The vendor audio policy exposes one built-in microphone, the Virtio sound
 capture stream. The product declares `android.hardware.microphone` permanently,
 and the host decides whether the stream carries silence (the default) or its
-microphone. The primary output has a 5 ms HAL buffer, so AudioFlinger gives it a
+microphone. It also declares `android.software.midi`, which starts MidiService
+for applications' virtual MIDI devices; there is no USB or Bluetooth MIDI
+transport. The primary output has a 5 ms HAL buffer, so AudioFlinger gives it a
 fast mixer, and its writer runs at `SCHED_FIFO` priority 3 and writes straight
 into an ALSA ring of four such periods (route `p0005` and the
 `ro.hardware.audio.tinyalsa.*` vendor properties); the boot command line lowers

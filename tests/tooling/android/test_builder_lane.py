@@ -755,6 +755,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_multitouch_feature: str | None = None,
                           missing_microphone_feature: bool = False,
                           missing_companion_feature: bool = False,
+                          missing_midi_feature: bool = False,
                           missing_mic_policy: bool = False,
                           extra_input_device: bool = False,
                           wrong_kernel_config: bool = False,
@@ -2163,6 +2164,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     advertised_features.append("android.hardware.microphone")
                 if not missing_companion_feature:
                     advertised_features.append("android.software.companion_device_setup")
+                if not missing_midi_feature:
+                    advertised_features.append("android.software.midi")
                 if unsupported_feature:
                     advertised_features.append("android.hardware.camera")
                 # The virtual Wi-Fi's feature declaration, a file of the platform's own.
@@ -2814,6 +2817,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
               )),
             ("missing-microphone-feature", {"missing_microphone_feature": True}),
             ("missing-companion-feature", {"missing_companion_feature": True}),
+            ("missing-midi-feature", {"missing_midi_feature": True}),
             ("missing-mic-policy", {"missing_mic_policy": True}),
             ("extra-input-device", {"extra_input_device": True}),
             ("kernel-config", {"wrong_kernel_config": True}),
@@ -4110,6 +4114,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
              "feature is not declared: android.hardware.microphone"),
             ("missing-companion-feature-cause", {"missing_companion_feature": True},
              "feature is not declared: android.software.companion_device_setup"),
+            ("missing-midi-feature-cause", {"missing_midi_feature": True},
+             "feature is not declared: android.software.midi"),
             ("camera-feature-cause", {"unsupported_feature": True},
              "absent hardware feature is advertised.*android.hardware.camera"),
             ("missing-mic-policy-cause", {"missing_mic_policy": True},
