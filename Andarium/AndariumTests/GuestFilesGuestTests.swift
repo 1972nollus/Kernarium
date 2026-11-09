@@ -345,6 +345,14 @@ struct GuestFilesGuestTests {
             let guest = GuestSide(operations)
             // The wizard would take the Files app's place; nothing else needs it.
             _ = try? await guest.run("pm disable-user --user 0 org.lineageos.setupwizard")
+            // The check's two ways to be ready, on the guest's own shell: a guest
+            // whose standard folders a person deleted is ready by its uptime, and
+            // one that has neither is not.
+            let noFolders = InternalStorage.command.replacingOccurrences(of: "$r/", with: "$r/none-")
+            let byUptime = try await guest.run(noFolders.replacingOccurrences(of: "-gt 300", with: "-gt 0"))
+            let neither = try await guest.run(noFolders.replacingOccurrences(of: "-gt 300", with: "-gt 999999"))
+            #expect(InternalStorage.parse(byUptime) == true, "\(byUptime.text)")
+            #expect(InternalStorage.parse(neither) == false, "\(neither.text)")
             // Settings is open: what it does while it is, every few seconds.
             let watcher = Task { await model.watchSettings() }
             defer { watcher.cancel() }
@@ -396,12 +404,12 @@ struct GuestFilesGuestTests {
                         """, seconds: 20).text
                     if probe != nil { turnOnUsbDebugging = false }
                     let wrote = probe?.contains("write=yes") == true
-                    let folders = probe?.contains("folders=yyy") == true
+                    let folders = probe.map { !$0.contains("folders=nnn") } ?? false
                     if wrote, firstWrite == nil { firstWrite = at }
                     if reported == true {
                         if firstReady == nil { firstReady = at }
                         wasUp = true
-                        // The guarantee: ready means a write works and the folders are there.
+                        // The guarantee: ready means a write works and the media provider has made folders.
                         if !(wrote && folders) { early += 1 }
                     } else if reported == false, wasUp {
                         flippedBack = true
@@ -420,7 +428,7 @@ struct GuestFilesGuestTests {
                 }
                 note("\(boot): first write ok at \(String(describing: firstWrite)), reported ready at \(String(describing: firstReady)), "
                     + "model available at \(String(describing: firstAvailable))")
-                #expect(early == 0, "\(boot): the check said ready while a write failed or a folder was missing")
+                #expect(early == 0, "\(boot): the check said ready while a write failed or no standard folder was there")
                 #expect(!flippedBack, "\(boot): once ready, always ready")
                 #expect(unavailableTransfers == 0, "\(boot): a transfer started while the storage was not up")
                 #expect(firstReady != nil && firstAvailable != nil, "\(boot): the storage never read as ready")

@@ -20,10 +20,12 @@ struct InternalStorageTests {
         #expect(InternalStorage.parse(ShellResult(stdout: Data(), exitCode: nil)) == nil)
     }
 
-    @Test func theCommandIsOneLineThatNamesTheMountAndTheFolders() {
+    @Test func theCommandIsOneLineThatNamesTheMountAndAFolderOrTheUptime() {
         #expect(!InternalStorage.command.contains("\n"))
-        for part in ["/proc/mounts", "/storage/emulated fuse", "-w /storage/emulated/0", "Download", "DCIM", "Pictures"] {
+        for part in ["/proc/mounts", "/storage/emulated fuse", "-w $r", "Download", "DCIM", "Pictures", "/proc/uptime"] {
             #expect(InternalStorage.command.contains(part), "\(part)")
         }
+        // Not every standard folder: a person may have deleted one.
+        #expect(InternalStorage.command.contains("||"))
     }
 }
