@@ -6,10 +6,9 @@ import Foundation
 ///
 /// A release ID reads `YYYYMMDD-<family tag>-r<N>` ("20261109-los24-r20"):
 /// the date the release was built, the family it belongs to and its revision.
-/// The screens show the revision ("r20") and, on the Info sheet, the date and
-/// the LineageOS version. The ID itself stays what bug reports, session
-/// records, logs and the instance's files carry; an ID that does not read this
-/// way is shown as it is.
+/// The screens show the revision ("r20") and, on the Info sheet, the date too.
+/// The ID itself stays what bug reports, session records, logs and the
+/// instance's files carry; an ID that does not read this way is shown as it is.
 public struct ReleaseLabel: Equatable, Sendable {
     public let revision: Int
     public let year: Int
@@ -58,13 +57,11 @@ public struct ReleaseLabel: Equatable, Sendable {
         ReleaseLabel(releaseID: releaseID)?.revisionText ?? releaseID
     }
 
-    /// The Build row of the Info sheet: "r20 (2026-11-09), based on LineageOS
-    /// 24", or the ID itself where it is not in the scheme. A release whose
-    /// LineageOS version is not known says only the revision and the date.
-    public static func build(of releaseID: String, lineageMajor: Int?) -> String {
+    /// The Build row of the Info sheet ("r20 (2026-11-09)"), or the ID itself
+    /// where it is not in the scheme.
+    public static func build(of releaseID: String) -> String {
         guard let label = ReleaseLabel(releaseID: releaseID) else { return releaseID }
-        let text = "\(label.revisionText) (\(label.dateText))"
-        return lineageMajor.map { "\(text), based on LineageOS \($0)" } ?? text
+        return "\(label.revisionText) (\(label.dateText))"
     }
 
     private static func isDigit(_ byte: UInt8) -> Bool { byte >= 0x30 && byte <= 0x39 }
@@ -78,5 +75,5 @@ extension SystemInfo {
     public var releaseRevision: String { ReleaseLabel.revision(of: release) }
 
     /// The Info sheet's Build row.
-    public var buildLabel: String { ReleaseLabel.build(of: release, lineageMajor: lineageMajor) }
+    public var buildLabel: String { ReleaseLabel.build(of: release) }
 }

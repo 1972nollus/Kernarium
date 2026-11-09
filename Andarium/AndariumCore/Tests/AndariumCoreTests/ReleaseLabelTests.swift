@@ -11,7 +11,7 @@ struct ReleaseLabelTests {
         #expect(label.revisionText == "r20")
         #expect(label.dateText == "2026-11-09")
         #expect(ReleaseLabel.revision(of: "20261109-los24-r20") == "r20")
-        #expect(ReleaseLabel.build(of: "20261109-los24-r20", lineageMajor: 24) == "r20 (2026-11-09), based on LineageOS 24")
+        #expect(ReleaseLabel.build(of: "20261109-los24-r20") == "r20 (2026-11-09)")
     }
 
     @Test func anUpdateNamesBothRevisions() {
@@ -24,13 +24,7 @@ struct ReleaseLabelTests {
     @Test func aTwoDigitRevisionIsNotCutShort() {
         #expect(ReleaseLabel.revision(of: "20270105-los24-r103") == "r103")
         #expect(ReleaseLabel.revision(of: "20261031-los24-r4") == "r4")
-        #expect(ReleaseLabel.build(of: "20270105-los24-r103", lineageMajor: 25) == "r103 (2027-01-05), based on LineageOS 25")
-    }
-
-    @Test func theLineageVersionIsTheCallersNotTheTags() {
-        // The tag is only matched; the version comes from the release's product family.
-        #expect(ReleaseLabel.build(of: "20261109-los24-r20", lineageMajor: 25) == "r20 (2026-11-09), based on LineageOS 25")
-        #expect(ReleaseLabel.build(of: "20261109-los24-r20", lineageMajor: nil) == "r20 (2026-11-09)")
+        #expect(ReleaseLabel.build(of: "20270105-los24-r103") == "r103 (2027-01-05)")
     }
 
     @Test(arguments: [
@@ -45,16 +39,16 @@ struct ReleaseLabelTests {
     func anIDOutsideTheSchemeIsShownAsItIs(_ id: String) {
         #expect(ReleaseLabel(releaseID: id) == nil)
         #expect(ReleaseLabel.revision(of: id) == id)
-        #expect(ReleaseLabel.build(of: id, lineageMajor: 24) == id)
+        #expect(ReleaseLabel.build(of: id) == id)
     }
 
-    @Test func theSystemSaysItWithItsOwnLineageVersion() throws {
+    @Test func theSystemNamesItsOwnRelease() throws {
         let system = SystemInfo(
-            version: "17", release: "20261109-los24-r20", lineageMajor: 24,
+            version: "17", release: "20261109-los24-r20",
             kernel: "Linux 6.18", architecture: "arm64", appVersion: "1"
         )
         #expect(system.releaseRevision == "r20")
-        #expect(system.buildLabel == "r20 (2026-11-09), based on LineageOS 24")
+        #expect(system.buildLabel == "r20 (2026-11-09)")
         // The ID itself is untouched.
         #expect(system.release == "20261109-los24-r20")
 

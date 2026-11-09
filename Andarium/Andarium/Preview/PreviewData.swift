@@ -13,7 +13,7 @@ enum PreviewData {
     static let previousSystemRelease = "20261108-los24-r18"
 
     static let system = SystemInfo(
-        version: "17", release: systemRelease, lineageMajor: 24,
+        version: "17", release: systemRelease,
         securityPatch: "5 October 2026", kernel: "Linux 6.18.54",
         architecture: "arm64, 4 KiB pages", abis: ["arm64-v8a", "armeabi-v7a", "armeabi"],
         appVersion: "1.0 (1)"
