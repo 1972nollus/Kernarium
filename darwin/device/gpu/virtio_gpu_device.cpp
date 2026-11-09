@@ -629,12 +629,29 @@ bool VirtioGpuDevice::offersMemoryReport() const noexcept
     return UML_GPU_DEVICE_MEMORY.has_value();
 }
 
-void VirtioGpuDevice::setMemoryWake(std::function<void()> wake)
+void VirtioGpuDevice::setMemoryWake(std::function<void(MemoryWake)> wake)
 {
     memoryWake_ = std::move(wake);
     /* A subscription that outlives the call keeps the wake it was made with. */
     if (memoryPressure_.subscribed())
-        UML_GPU_LEDGER.setObserver(memoryWake_);
+        UML_GPU_LEDGER.setObserver(memoryObserver());
+}
+
+std::function<void()> VirtioGpuDevice::memoryObserver()
+{
+    if (!memoryWake_)
+        return {};
+    /* A refusal reaches the ledger's observer as a change does. The ledger
+     * calls its observer one call at a time. */
+    wokenRefusals_.store(
+        UML_GPU_DISPLAY.memoryRefusals(), std::memory_order_relaxed);
+    return [this, wake = memoryWake_] {
+        const std::uint64_t refusals = UML_GPU_DISPLAY.memoryRefusals();
+        const bool refused =
+            wokenRefusals_.exchange(refusals, std::memory_order_relaxed) !=
+            refusals;
+        wake(refused ? MemoryWake::immediate : MemoryWake::coalesced);
+    };
 }
 
 MemoryPressure::Reading VirtioGpuDevice::memoryReading() const noexcept
@@ -698,7 +715,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::memoryReport(
         (query.flags & VIRTIO_GPU_UML_MEMORY_SUBSCRIBE) != 0;
     if (subscribe && !memoryPressure_.subscribed()) {
         memoryPressure_.subscribe(reading);
-        UML_GPU_LEDGER.setObserver(memoryWake_);
+        UML_GPU_LEDGER.setObserver(memoryObserver());
     } else if (!subscribe && memoryPressure_.subscribed()) {
         memoryPressure_.unsubscribe();
         UML_GPU_LEDGER.setObserver({});

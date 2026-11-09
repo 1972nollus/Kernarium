@@ -31,12 +31,13 @@ namespace {
  * fence timer's is deferred_fences.hpp's. */
 constexpr std::uintptr_t idleTrimTimerIdentifier = 2;
 /* The timers of the memory report: a change of graphics memory arms the first
- * for a short coalescing delay on whichever thread made it, and the second
- * is armed on this thread for the moment a sustained pressure, a calm or a
- * held-back refusal event is due. */
+ * for a short coalescing delay on whichever thread made it, and a refused
+ * allocation for a millisecond; the second is armed on this thread for the
+ * moment a sustained pressure, a calm or a held-back refusal event is due. */
 constexpr std::uintptr_t memoryTickTimerIdentifier = 3;
 constexpr std::uintptr_t memoryDeadlineTimerIdentifier = 4;
 constexpr std::int64_t memoryTickMicroseconds = 250'000;
+constexpr std::int64_t memoryRefusalTickMicroseconds = 1'000;
 
 template<typename Value>
 Value loadUnaligned(const void* address)
@@ -97,7 +98,9 @@ public:
                     "registering GPU display-resize event failed");
             }
         }
-        gpu_.setMemoryWake([this] { armMemoryTick(); });
+        gpu_.setMemoryWake([this](VirtioGpuDevice::MemoryWake wake) {
+            armMemoryTick(wake == VirtioGpuDevice::MemoryWake::immediate);
+        });
     }
 
     /* The ledger's observer reaches this device's queue from other threads,
@@ -500,9 +503,17 @@ private:
     /* Arms the evaluation of the memory report, unless it is armed already.
      * Any thread: the ledger's observer calls it when graphics memory changes
      * while the guest is subscribed. A burst of changes costs one evaluation,
-     * a quarter of a second after the first. */
-    void armMemoryTick() noexcept
+     * a quarter of a second after the first. A refusal (`immediate`) moves
+     * the evaluation to now, armed or not. */
+    void armMemoryTick(bool immediate) noexcept
     {
+        if (immediate) {
+            memoryTickArmed_.store(true, std::memory_order_release);
+            if (!armOneShot(
+                    memoryTickTimerIdentifier, memoryRefusalTickMicroseconds))
+                memoryTickArmed_.store(false, std::memory_order_release);
+            return;
+        }
         if (memoryTickArmed_.exchange(true, std::memory_order_acq_rel))
             return;
         if (!armOneShot(memoryTickTimerIdentifier, memoryTickMicroseconds))
