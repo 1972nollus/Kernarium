@@ -86,7 +86,8 @@ struct AppEntry {
         if resetTips { try? Tips.resetDatastore() }
         if screen == "session-tip" {
             Tips.showAllTipsForTesting()
-        } else if screen.hasPrefix("session") || screen.hasPrefix("settings") || screen.hasPrefix("recovery") || screen.hasPrefix("boot")
+        } else if screen.hasPrefix("session") || screen.hasPrefix("settings") || screen.hasPrefix("files")
+            || screen.hasPrefix("recovery") || screen.hasPrefix("boot")
             || screen.hasPrefix("space-pause") || Self.operationScreens.contains(screen) {
             Tips.hideAllTipsForTesting()
         }
@@ -104,6 +105,11 @@ struct AppEntry {
             guest: guest, host: host, system: PreviewData.system, capabilities: .preview,
             createRequirementBytes: PreviewData.createRequirementBytes
         )
+        let files = MockGuestFiles()
+        let browser = FileBrowserModel(backend: files)
+        files.setUsbDebugging = { [weak model] in model?.session.usbDebugging = $0 }
+        MockFolderProbe.browser = browser
+        model.fileBrowser = browser
         let freeze = !play
 
         func boot(_ kind: BootKind, stage: Int, seconds: Int) {
@@ -230,6 +236,8 @@ struct AppEntry {
             case "space-pause-running": SpacePause(freeBytes: 820 * Limits.bytesPerMiB, stage: .notPaused)
             default: SpacePause(freeBytes: 820 * Limits.bytesPerMiB)
             }
+        case let name where name.hasPrefix("files"):
+            MockGuestFiles.present(name, browser: browser, files: files, model: model)
         case "recovery", "recovery-open":
             model.session.sideKeysOpen = screen == "recovery-open"
             model.phase = .running(.recovery)
@@ -332,6 +340,12 @@ struct AppEntry {
             model.sheet = .info
         case "start-low-space":
             model.start(.normal)
+        case "files-review":
+            try? await Task.sleep(for: .milliseconds(1100))
+            model.fileBrowser?.reviewingSelection = true
+        case "files-share":
+            try? await Task.sleep(for: .milliseconds(1100))
+            if let browser = model.fileBrowser, let transfer = browser.transfer { browser.share(transfer) }
         case "alert-error":
             model.alert = AppAlert(
                 title: "Settings not saved",

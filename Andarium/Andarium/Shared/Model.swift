@@ -90,6 +90,8 @@ final class AppModel {
         }
     }
     var host: HostDevice
+    /// The guest's files, when the runtime behind the screens can reach them.
+    var fileBrowser: FileBrowserModel?
     /// The system this build of Andarium carries.
     var system: SystemInfo
     /// What the runtime behind the screens can do; a screen shows only the

@@ -15,6 +15,8 @@ struct SessionSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var importing = false
     @State private var copied = false
+    @State private var confirmingStop = false
+    @State private var filesBarInset: CGFloat = 0
     @State private var detent: PresentationDetent
 
     init(large: Bool) {
@@ -23,10 +25,11 @@ struct SessionSettingsSheet: View {
 
     var body: some View {
         let session = model.session
-        NavigationStack {
+        NavigationStack(path: fileRoute) {
             ScrollViewReader { proxy in
                 List {
                     if model.capabilities.statistics { stats(session) }
+                    if normalSession, model.fileBrowser != nil { files }
                     if normalSession, model.capabilities.apkInstall { apps }
                     if normalSession, model.capabilities.adbOverNetwork { developer(session) }
                     if normalSession, model.capabilities.bugReport { diagnostics }
@@ -42,9 +45,36 @@ struct SessionSettingsSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done", systemImage: "checkmark") { dismiss() }
+                    Button("Done", systemImage: "checkmark", action: close)
                 }
             }
+            .navigationDestination(for: FolderRoute.self) { route in
+                if let browser = model.fileBrowser {
+                    FolderPage(browser: browser, route: route, close: close)
+                }
+            }
+        }
+        // The bar is outside the pages, so folders slide under it.
+        .safeAreaBar(edge: .bottom) {
+            if let browser = model.fileBrowser, model.adbOverNetworkAvailable, browser.browsing || browser.transfer != nil {
+                FilesBar(browser: browser, bottomInset: filesBarInset)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.bottom } action: { filesBarInset = $0 }
+        .animation(.snappy, value: model.fileBrowser?.browsing)
+        .interactiveDismissDisabled(model.fileBrowser?.running == true)
+        .confirmationDialog("Stop the transfer?", isPresented: $confirmingStop, titleVisibility: .visible) {
+            Button("Stop and Close", role: .destructive) {
+                model.fileBrowser?.closeTransfer()
+                dismiss()
+            }
+            Button("Keep Going", role: .cancel) {}
+        }
+        // A browser wants the room. It stays half height while USB debugging
+        // is off, so the guest's own Settings can be reached behind it.
+        .onChange(of: model.fileBrowser?.browsing) { _, browsing in
+            if browsing == true, model.adbOverNetworkAvailable { detent = .large }
         }
         .task { await model.watchSettings() }
         .presentationDetents([.medium, .large], selection: $detent)
@@ -59,10 +89,37 @@ struct SessionSettingsSheet: View {
         }
     }
 
+    private var fileRoute: Binding<[FolderRoute]> {
+        Binding(get: { model.fileBrowser?.route ?? [] }, set: { model.fileBrowser?.route = $0 })
+    }
+
+    /// Done, here or on a folder. A running transfer would end with the
+    /// sheet, so that is asked first.
+    private func close() {
+        if model.fileBrowser?.running == true {
+            confirmingStop = true
+        } else {
+            dismiss()
+        }
+    }
+
     /// Recovery runs no adb: its operations are for a normal session.
     private var normalSession: Bool {
         if case .running(.normal) = model.phase { return true }
         return false
+    }
+
+    // MARK: Files
+
+    private var files: some View {
+        Section("Files") {
+            NavigationLink(value: FolderRoute(path: GuestPath.root)) {
+                HStack(spacing: 12) {
+                    IconTile(symbol: "folder.fill")
+                    Text("Internal storage")
+                }
+            }
+        }
     }
 
     // MARK: Diagnostics
