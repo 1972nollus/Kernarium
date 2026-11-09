@@ -1,6 +1,8 @@
 # Project build products
 /.build/
 /.build
+# Swift package build and index directories, such as AndariumCore's
+.build/
 
 # Local root filesystem image
 *.erofs
