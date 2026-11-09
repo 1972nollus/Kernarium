@@ -492,18 +492,21 @@ struct GuestFilesGuestTests {
     func sendingTheApplicationToTheBackgroundMidTransferStopsItCleanly() async throws {
         guard Self.backgroundEnabled else { return }
         try #require(Self.environment["ANDARIUM_GUEST_INSTANCE"] == "filex-bg")
-        try await withAndroidGuest(cleanupCommand: Self.cleanup) { model, operations in
+        // A folder of its own for each run: a run that was cut off leaves its files behind.
+        let work = GuestPath.child("FilexBg-\(Int(Date().timeIntervalSince1970))", of: GuestPath.child("Download", of: GuestPath.root))
+        try await withAndroidGuest(cleanupCommand: "\(Self.cleanup); rm -rf '\(work)'") { model, operations in
             let browser = try #require(model.fileBrowser)
             let bench = try Bench()
             defer { bench.remove() }
             let guest = GuestSide(operations)
-            let work = Self.folder
             _ = try? await guest.run("pm disable-user --user 0 org.lineageos.setupwizard")
             _ = try await guest.run("settings put global adb_enabled 1")
             let watcher = Task { await model.watchSettings() }
             defer { watcher.cancel() }
             try await waitUntil("the browser is available", seconds: 240) { model.filesAvailable }
             _ = try await guest.run("rm -rf '\(work)'; mkdir -p '\(work)'")
+            let leftovers = try await guest.names(work)
+            #expect(leftovers.isEmpty, "a new folder is empty: \(leftovers)")
             browser.route = [FolderRoute(path: GuestPath.root), FolderRoute(path: work)]
             await browser.load(work)
             var shared: [URL] = []
@@ -512,6 +515,10 @@ struct GuestFilesGuestTests {
                 shared = files
                 finishShare = finished
                 return true
+            }
+            // The file keeps the cues of this run only.
+            if let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+                try? FileManager.default.removeItem(at: documents.appendingPathComponent("filex-bg.log"))
             }
             Self.cue("ready")
 
@@ -561,8 +568,15 @@ struct GuestFilesGuestTests {
             Self.cue("import retried and whole")
 
             // MARK: Sent away mid-export
+            // The guest reads a file out faster than a harness can send the
+            // application away, so the export is of 3 GiB the guest makes of the
+            // import's own bytes (four copies, each of which differs by block).
+            let pullPath = GuestPath.child("pull.bin", of: work)
+            _ = try await guest.run("cat '\(bigPath)' '\(bigPath)' '\(bigPath)' '\(bigPath)' > '\(pullPath)'", seconds: 600)
+            let pullBytes = 4 * UInt64(big.size)
             await browser.load(work)
-            let pull = try #require(browser.entries(in: work).first { $0.name == big.name })
+            let pull = try #require(browser.entries(in: work).first { $0.name == "pull.bin" })
+            #expect(pull.size == pullBytes)
             browser.export([pull])
             transfer = try #require(browser.transfer)
             try await waitUntil("the export has moved 16 MiB", seconds: 300) { transfer.items[0].moved >= 16 * mib || !transfer.running }
@@ -580,7 +594,13 @@ struct GuestFilesGuestTests {
             browser.retryFailed()
             try await waitUntil("the export is ready again", seconds: 900) { transfer.stage != .running }
             #expect(transfer.stage == .ready, "\(transfer.title) \(transfer.detail)")
-            #expect(try Bench.sha256(of: try #require(transfer.staged.first)) == bench.sha256(big), "Try Again brought the copy whole")
+            let copy = try #require(transfer.staged.first)
+            let copySize = (try FileManager.default.attributesOfItem(atPath: copy.path)[.size] as? NSNumber)?.uint64Value
+            #expect(copySize == pullBytes, "Try Again brought every byte: \(String(describing: copySize))")
+            for block in [0, 767, 768, 2_000, 3_071] {
+                let remote = try await guest.run("dd if='\(pullPath)' bs=1048576 skip=\(block) count=1 2>/dev/null | sha256sum", seconds: 120).text
+                #expect(remote.hasPrefix(try Bench.sha256(of: copy, blockOffset: block)), "block \(block) of the retried export")
+            }
             finishShare?(true)
             browser.sheetClosed()
             Self.cue("export retried and whole")
