@@ -29,6 +29,11 @@ is android/lineage-24/README.md (the p0007 and p0011 adb topics):
 
 Every wait has a deadline; the guest's launcher is stopped through its own
 process on any exit.
+
+The guest is reached through the shared adb server, always named with `-s`,
+and the runner ends with `adb disconnect`. The key rule is the one exception:
+a second host key needs a server that does not share the host's key, so that
+step starts one private server (PrivateServer) and stops it on every exit path.
 """
 
 from __future__ import annotations
@@ -49,7 +54,13 @@ from typing import Callable
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 LAUNCHER = REPOSITORY / "tools" / "boot_android.py"
+sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
+import slot_ports  # noqa: E402
+
+DEFAULT_ADB_PORT = 5575
 SETTLE_SECONDS = 30
+SHARED_SERVER_PORT = 5037
+KILL_SERVER_SECONDS = 15
 # `adb root` on a build that cannot run adbd as root answers in well under a second. A guest
 # that announces "restarting adbd as root" makes the client wait about 45 s for a restart
 # that never comes, so any answer slower than this is the defect.
@@ -68,6 +79,79 @@ PROMPT_ACTIVITY = "UsbDebuggingActivity"
 
 class Failure(RuntimeError):
     pass
+
+
+class PrivateServer:
+    """The one private adb server of this runner, stopped on every exit path.
+
+    Only the key rule needs it: the guest must see a host key it does not know, and a
+    server owns its key. It never serves USB devices or mDNS (ADB_USB=0, ADB_MDNS=0), its
+    port is never the shared server's (kill-server on that would end everyone's
+    connections), and with GUEST_SLOT_PORT_BASE set the port lies inside the slot's range,
+    where the slot wrapper stops a server that outlives this runner.
+    """
+
+    running: list["PrivateServer"] = []
+
+    def __init__(self, adb: str, port: int, key: pathlib.Path) -> None:
+        if port == SHARED_SERVER_PORT:
+            raise ValueError("the private adb server must not use the shared server's port")
+        self.adb = adb
+        self.port = port
+        self.environment = {name: value for name, value in os.environ.items()
+                            if name not in ("ADB_SERVER_SOCKET", "ANDROID_ADB_SERVER_ADDRESS")}
+        self.environment.update({"ANDROID_ADB_SERVER_PORT": str(port), "ADB_VENDOR_KEYS": str(key),
+                                 "ADB_USB": "0", "ADB_MDNS": "0"})
+        # Registered before the server can start, so that no path leaves it running.
+        PrivateServer.running.append(self)
+
+    def run(self, *arguments: str, timeout: int = 30) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [self.adb, *arguments], env=self.environment, text=True,
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, timeout=timeout, check=False)
+
+    def stop(self) -> None:
+        if self in PrivateServer.running:
+            PrivateServer.running.remove(self)
+        try:
+            self.run("kill-server", timeout=KILL_SERVER_SECONDS)
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+
+def stop_private_servers() -> None:
+    for server in list(PrivateServer.running):
+        server.stop()
+
+
+def private_server_port() -> int:
+    """A free loopback port: in the slot's range when the runner holds a guest slot."""
+    base = slot_ports.slot_base()
+    if base is None:
+        return free_loopback_port()
+    # The slot's wrapper stops an adb server listening in the slot's range. The top of the
+    # range is clear of the guest's own forward at the bottom.
+    first, last = slot_ports.PRIVATE_SERVER_FLOOR, slot_ports.SLOT_PORTS - 1
+    for port in range(base + last, base + first - 1, -1):
+        if port_is_free(port):
+            return port
+    raise Failure(f"no free port in {base}+{first}..{last} for the private adb server")
+
+
+TERMINATION_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def ignore_termination() -> None:
+    """Cleanup runs to its own deadlines; a second signal must not cut it short."""
+    for name in TERMINATION_SIGNALS:
+        signal.signal(name, signal.SIG_IGN)
+
+
+def terminate_on_signal(signum: int, _frame: object) -> None:
+    """End the run through its finally clauses, which stop the private server."""
+    ignore_termination()
+    raise SystemExit(128 + signum)
 
 
 def usb_debugging_recorded(value: str) -> bool:
@@ -124,11 +208,15 @@ class Device:
             pass
 
     def devices_line(self) -> str:
-        listing = self.run("devices", timeout=15).stdout
-        for line in listing.splitlines():
-            if line.startswith(self.serial):
-                return line.split()[-1]
-        return "absent"
+        return listed_state(self.run("devices", timeout=15).stdout, self.serial)
+
+
+def listed_state(listing: str, serial: str) -> str:
+    """The state `adb devices` shows for the serial, or `absent`."""
+    for line in listing.splitlines():
+        if line.startswith(serial):
+            return line.split()[-1]
+    return "absent"
 
 
 def wait_for(description: str, probe: Callable[[], bool], seconds: int,
@@ -170,6 +258,15 @@ def free_loopback_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
         return probe.getsockname()[1]
+
+
+def port_is_free(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+        return True
 
 
 def check_fresh(device: Device) -> None:
@@ -266,19 +363,17 @@ def check_reboot(device: Device, seconds: int, guest: subprocess.Popen | None) -
 def check_key_rule(device: Device, scratch: pathlib.Path) -> None:
     """A second key: refused with no prompt while debugging is off, prompted while on."""
     key = scratch / "throwaway_adbkey"
-    other_environment = dict(device.environment)
-    other_environment["ADB_VENDOR_KEYS"] = str(key)
-    other_environment["ANDROID_ADB_SERVER_PORT"] = str(free_loopback_port())
-    stranger = Device(device.adb, device.serial, other_environment)
-    created = stranger.run("keygen", str(key), timeout=30)
-    if created.returncode != 0 or not key.is_file():
-        raise Failure(f"adb keygen failed: {created.stdout.strip()}")
+    stranger = PrivateServer(device.adb, private_server_port(), key)
+    serial = device.serial
 
     def stranger_state() -> str:
-        stranger.run("connect", stranger.serial, timeout=15)
-        return stranger.devices_line()
+        stranger.run("connect", serial, timeout=15)
+        return listed_state(stranger.run("devices", timeout=15).stdout, serial)
 
     try:
+        created = stranger.run("keygen", str(key), timeout=30)
+        if created.returncode != 0 or not key.is_file():
+            raise Failure(f"adb keygen failed: {created.stdout.strip()}")
         device.shell("logcat -c")
         wait_for("the second key to reach adbd", lambda: stranger_state() == "unauthorized", SETTLE_SECONDS)
         time.sleep(10)
@@ -293,14 +388,14 @@ def check_key_rule(device: Device, scratch: pathlib.Path) -> None:
         device.shell("settings put global adb_enabled 1")
         wait_for("persist.sys.usb.config to record the setting",
                  lambda: device.getprop("persist.sys.usb.config") == "adb", SETTLE_SECONDS)
-        stranger.run("disconnect", stranger.serial, timeout=15)
+        stranger.run("disconnect", serial, timeout=15)
         wait_for("the second key to be offered the prompt",
                  lambda: stranger_state() == "unauthorized"
                  and PROMPT_ACTIVITY in device.shell("dumpsys activity activities"),
                  SETTLE_SECONDS)
         print("key rule, debugging on: unauthorized until accepted, prompt raised")
     finally:
-        stranger.run("kill-server", timeout=15)
+        stranger.stop()
         device.turn_debugging_off()
 
 
@@ -314,30 +409,35 @@ def stop_launcher(guest: subprocess.Popen) -> None:
             guest.wait(timeout=30)
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--release", type=pathlib.Path, help="release directory (default: the accepted release)")
     parser.add_argument("--serial", help="a running guest on a fresh data partition (host:port) that "
                         "accepts this adb's key; no guest is launched")
     parser.add_argument("--adb", default="adb")
     parser.add_argument("--emulator", type=pathlib.Path, help="the Android macOS executable (the launcher's default)")
-    parser.add_argument("--adb-port", type=int, default=5575, help="loopback port the launcher forwards adbd to")
+    parser.add_argument("--adb-port", type=int, default=slot_ports.slot_port(slot_ports.ADB_OFFSET, DEFAULT_ADB_PORT),
+                        help="loopback port the launcher forwards adbd to (default: the guest slot's first port "
+                        f"when GUEST_SLOT_PORT_BASE is set, else {DEFAULT_ADB_PORT})")
     parser.add_argument("--cpus", type=int, default=4)
     parser.add_argument("--boot-timeout", type=int, default=900)
-    options = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    options = build_parser().parse_args()
 
     adb = shutil.which(options.adb) or options.adb
     guest: subprocess.Popen | None = None
+    for name in TERMINATION_SIGNALS:
+        signal.signal(name, terminate_on_signal)
     with tempfile.TemporaryDirectory(prefix="android-adb-debugging-") as scratch_name:
         scratch = pathlib.Path(scratch_name)
         environment = dict(os.environ)
-        environment["ANDROID_ADB_SERVER_PORT"] = str(free_loopback_port())
+        serial = options.serial or f"127.0.0.1:{options.adb_port}"
         log_path = scratch / "launcher.log"
         try:
-            if options.serial:
-                serial = options.serial
-            else:
-                serial = f"127.0.0.1:{options.adb_port}"
+            if not options.serial:
                 command = [sys.executable, str(LAUNCHER), "--instance", str(scratch / "instance"),
                            "--adb", adb, "--adb-port", str(options.adb_port), "--display", "offscreen",
                            "--cpus", str(options.cpus), "--boot-timeout", str(options.boot_timeout)]
@@ -369,10 +469,14 @@ def main() -> int:
                       file=sys.stderr)
             return 1
         finally:
+            ignore_termination()
+            stop_private_servers()
             if guest is not None:
                 stop_launcher(guest)
-            subprocess.run([adb, "kill-server"], env=environment, stdin=subprocess.DEVNULL,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=False)
+                # The shared server stays up; only the guest this run launched is dropped.
+                # A guest named by --serial is someone else's and stays connected.
+                subprocess.run([adb, "disconnect", serial], env=environment, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=False)
 
 
 if __name__ == "__main__":

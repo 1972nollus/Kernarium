@@ -22,6 +22,7 @@ import pathlib
 import re
 
 import ios_device
+import slot_ports
 
 
 BUNDLE_ID = "com.imxieyi.andarium"
@@ -48,7 +49,7 @@ MEMORY_MIB_RANGE = (1024, 4096)
 MEMORY_MIB_STEP = 64
 START_MODES = ("normal", "recovery")
 SETTING_NAME = re.compile(r"(?:KERNARIUM|ANDARIUM)_[A-Z0-9_]+")
-SLOT_PORT_VARIABLE = "GUEST_SLOT_PORT_BASE"
+SLOT_PORT_VARIABLE = slot_ports.SLOT_PORT_VARIABLE
 
 # A launch clears every inherited setting of either family, because one would
 # select a different guest.

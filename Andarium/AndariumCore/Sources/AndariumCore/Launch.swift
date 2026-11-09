@@ -18,7 +18,7 @@ public struct LaunchOverrides: Equatable, Sendable {
         /// "1" erases the guest's data before the start.
         case erase
         /// "1" opens the session with its statistics on screen and prints
-        /// each reading.
+        /// each reading; "0" keeps them off.
         case stats
         /// A separate guest for a harness run, leaving the ordinary guest alone.
         case instance
@@ -32,8 +32,9 @@ public struct LaunchOverrides: Equatable, Sendable {
     public var start: StartMode?
     /// Erase the guest's data before the start.
     public var erase = false
-    /// Show the statistics from the start of the run, and print them.
-    public var statistics = false
+    /// Show the statistics from the start of the run, and print them, or keep
+    /// them off. Where the launch states neither, `StatsPreference` decides.
+    public var statistics: Bool?
     public var instance: String?
 
     public init() {}
@@ -66,7 +67,7 @@ public struct LaunchOverrides: Equatable, Sendable {
             if value(.bootMode) == "recovery" { start = .recovery }
         }
         erase = value(.erase) == "1"
-        statistics = value(.stats) == "1"
+        statistics = flag(.stats)
         if let name = value(.instance), (1...64).contains(name.utf8.count),
            name.utf8.allSatisfy({
                (65...90).contains($0) || (97...122).contains($0) ||
@@ -114,6 +115,9 @@ public struct LaunchOverrides: Equatable, Sendable {
 /// application use more than `retinaDefaultAboveBytes`, off where it does
 /// not. A choice made on Home is kept as made and the default never replaces it.
 public struct DisplayOptions: Codable, Equatable, Sendable {
+    /// The stored form's key in the defaults database.
+    public static let storageKey = "andarium.display"
+
     /// What the person chose for Retina mode; nil until they choose.
     public var chosenRetina: Bool?
 

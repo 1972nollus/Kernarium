@@ -107,11 +107,17 @@ struct AppEntry {
         let options = DisplayOptionsStore.load()
         model.retina = launch.retina ?? options.retina(memoryLimitBytes: MemoryLimit.bytes())
         model.retinaChosen = options.chosenRetina != nil
+        // A value a launch states is that run's, and what the person chose
+        // stays stored.
+        model.retinaStatedByLaunch = launch.retina != nil
+        // The statistics show from the start where the person left them,
+        // unless the launch is a harness's, which decides for its run alone
+        // (`StatsPreference.launch`). An App Store build carries no setting.
+        let stats = StatsPreference().launch(for: launch)
+        model.session.showStats = stats.showOnScreen
+        model.statsDecidedByLaunch = !stats.keepsChanges
         #if !APP_STORE
-        // A harness launch shows the statistics from the start of the run and
-        // prints each reading.
-        model.session.showStats = launch.statistics
-        model.printsStatistics = launch.statistics
+        model.printsStatistics = launch.statistics == true
         #endif
 
         #if APP_STORE
@@ -330,17 +336,17 @@ enum MemoryLimit {
 
 /// The display option, kept across launches.
 enum DisplayOptionsStore {
-    private static let key = "andarium.display"
+    private static let key = DisplayOptions.storageKey
 
-    static func load() -> DisplayOptions {
-        guard let data = UserDefaults.standard.data(forKey: key),
+    static func load(from defaults: UserDefaults = .standard) -> DisplayOptions {
+        guard let data = defaults.data(forKey: key),
               let options = try? JSONDecoder().decode(DisplayOptions.self, from: data)
         else { return DisplayOptions() }
         return options
     }
 
-    static func save(_ options: DisplayOptions) {
-        UserDefaults.standard.set(try? JSONEncoder().encode(options), forKey: key)
+    static func save(_ options: DisplayOptions, to defaults: UserDefaults = .standard) {
+        defaults.set(try? JSONEncoder().encode(options), forKey: key)
     }
 }
 

@@ -96,6 +96,8 @@ final class LiveRuntime: RuntimeDriver {
     /// guest is asked nothing, until the person answers it.
     private var spaceAlertOpen = false
     private var observers: [NSObjectProtocol] = []
+    /// Writes what the person sets, for the next launch.
+    private let preferences: PreferenceKeeper
 
     private var pending: PendingRun?
     private var launching = false
@@ -113,6 +115,7 @@ final class LiveRuntime: RuntimeDriver {
         freeSpace: @escaping @Sendable () -> UInt64 = { AppEntry.freeStorageBytes() }
     ) {
         self.model = model
+        self.preferences = PreferenceKeeper(model: model)
         self.storage = storage
         self.keyStore = keyStore
         self.sessionRecord = sessionRecord
@@ -128,7 +131,8 @@ final class LiveRuntime: RuntimeDriver {
         model.motionSensorsAvailable = motion.available
         motion.problem = { [weak model] in model?.motionSensorsProblem = $0 }
         observeLifecycle()
-        observeDisplayOptions()
+        observeRotationPolicy()
+        preferences.start()
     }
 
     // MARK: Storage
@@ -867,16 +871,15 @@ final class LiveRuntime: RuntimeDriver {
         model.microphone?.refresh()
     }
 
-    private func observeDisplayOptions() {
+    private func observeRotationPolicy() {
         guard let model else { return }
         withObservationTracking {
-            _ = (model.retina, model.retinaChosen, model.hostDrivesGuestRotation)
+            _ = model.hostDrivesGuestRotation
         } onChange: {
             Task { @MainActor in
-                guard let model = self.model else { return }
-                DisplayOptionsStore.save(model.displayOptions)
+                guard self.model != nil else { return }
                 self.updateGuestRotation()
-                self.observeDisplayOptions()
+                self.observeRotationPolicy()
             }
         }
     }

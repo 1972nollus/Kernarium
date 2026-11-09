@@ -131,12 +131,24 @@ final class AppModel {
     var displayOptions: DisplayOptions {
         DisplayOptions(chosenRetina: retinaChosen ? retina : nil)
     }
+    /// The launch stated Retina mode (automation): the value belongs to that
+    /// run and is not kept.
+    var retinaStatedByLaunch = false
+    /// The display options to keep; nil where the launch stated Retina mode,
+    /// so what the person chose stays stored.
+    var displayOptionsToKeep: DisplayOptions? { retinaStatedByLaunch ? nil : displayOptions }
     /// The host window owns display rotation until iPadOS grants the
     /// full-screen session's orientation lock. Never a saved guest setting.
     var hostDrivesGuestRotation = false
 
     var sessionPreset = SessionPreset()
     var session = SessionState()
+    /// The launch decided whether the statistics show (automation, see
+    /// `StatsPreference.launch`): the value belongs to that run and is not kept.
+    var statsDecidedByLaunch = false
+    /// What is kept of Settings' "Show on screen" across launches
+    /// (`StatsPreference`); nil where the launch decided it.
+    var showStatsToKeep: Bool? { statsDecidedByLaunch ? nil : session.showStats }
     /// How the last run ended, for the screen that says so.
     var runEnd = RunEnd(result: 0)
     var runUptimeSeconds: Int?

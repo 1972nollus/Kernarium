@@ -153,6 +153,9 @@ class Scratch:
                 contextlib.redirect_stderr(err):
             if not port:
                 os.environ.pop("GUEST_SLOT_PORT_BASE", None)
+            # Whatever the runner's adb sees of the server selection is the
+            # runner's own doing, not the developer's shell.
+            os.environ.pop("ANDROID_ADB_SERVER_PORT", None)
             status = runner.main(argv)
         return Outcome(status, out.getvalue(), err.getvalue(), self,
                        artifacts, host_port)
@@ -224,11 +227,17 @@ class AndroidRunnerTests(unittest.TestCase):
         self.assertEqual(proxy["args"], ["-u", DEVICE, f"{port}:{port}"])
         adb_calls = outcome.tool("adb")
         self.assertTrue(adb_calls)
+        # The shared adb server: the runner selects no server, never stops
+        # one, names the guest with -s, and ends by dropping its own transport.
+        serial = f"127.0.0.1:{port}"
         for call in adb_calls:
-            self.assertEqual(call["server"], str(port + 10))
-        self.assertTrue(any(
-            call["args"][:2] == ["-s", f"127.0.0.1:{port}"]
-            for call in adb_calls))
+            self.assertIsNone(call["server"])
+            self.assertNotIn("-P", call["args"])
+            self.assertNotIn("kill-server", call["args"])
+            if call["args"][0] not in ("connect", "disconnect"):
+                self.assertEqual(call["args"][:2], ["-s", serial])
+        self.assertEqual(adb_calls[0]["args"], ["connect", serial])
+        self.assertEqual(adb_calls[-1]["args"], ["disconnect", serial])
         self.assert_adb_follows_launch_and_tunnel(outcome)
         self.assertEqual(outcome.devicectl("device", "copy"), [])
         self.assertEqual(len(outcome.devicectl("device", "install", "app")), 1)
@@ -457,9 +466,11 @@ class AndroidRunnerTests(unittest.TestCase):
             "--launch-timeout", "1", environment={"FAKE_AUTH": "missing"})
         self.assertEqual(outcome.status, 1)
         self.assertIn("did not report ADB authorization off", outcome.err)
-        # Only the private server is stopped; the guest is never addressed.
+        # No guest is addressed and no server is stopped: the run only drops
+        # its own transport from the shared server.
         self.assertEqual(
-            [c["args"] for c in outcome.tool("adb")], [["kill-server"]])
+            [c["args"] for c in outcome.tool("adb")],
+            [["disconnect", f"127.0.0.1:{outcome.host_port}"]])
 
     def test_a_locked_device_is_not_touched(self) -> None:
         outcome = self.run_android(
