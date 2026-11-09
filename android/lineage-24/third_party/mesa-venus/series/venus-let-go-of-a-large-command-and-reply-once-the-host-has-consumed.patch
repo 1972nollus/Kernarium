@@ -23,19 +23,19 @@ host, and checks that no large shmem outlives its call.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
- src/virtio/vulkan/meson.build                 |  11 +
+ src/virtio/vulkan/meson.build                 |  14 +
  .../vulkan/tests/vn_ring_release_test.c       | 280 ++++++++++++++++++
  src/virtio/vulkan/vn_cs.c                     |  17 ++
  src/virtio/vulkan/vn_cs.h                     |   7 +
  src/virtio/vulkan/vn_ring.c                   |  30 ++
- 5 files changed, 345 insertions(+)
+ 5 files changed, 348 insertions(+)
  create mode 100644 src/virtio/vulkan/tests/vn_ring_release_test.c
 
 diff --git a/src/virtio/vulkan/meson.build b/src/virtio/vulkan/meson.build
-index 903a20edee5ab1c7846a9a01991b8ca96eb076cc..ae769ce39b17dfa061f0289f7d5109af0faf2d1b 100644
+index 903a20edee5ab1c7846a9a01991b8ca96eb076cc..f43617f56da7fe489b803996aeb52f8cf46da989 100644
 --- a/src/virtio/vulkan/meson.build
 +++ b/src/virtio/vulkan/meson.build
-@@ -210,4 +210,15 @@ if with_tests
+@@ -210,4 +210,18 @@ if with_tests
                 include_directories : inc_include),
      suite : ['venus'],
    )
@@ -46,7 +46,10 @@ index 903a20edee5ab1c7846a9a01991b8ca96eb076cc..ae769ce39b17dfa061f0289f7d5109af
 +                'vn_renderer_internal.c', 'vn_renderer_util.c'],
 +               include_directories : vn_incs,
 +               dependencies : [dep_thread, idep_mesautil, idep_vulkan_util,
-+                               idep_vulkan_runtime_headers],
++                               idep_vulkan_runtime_headers,
++                               declare_dependency(
++                                 sources : [vn_entrypoints[0], vn_drirc[1],
++                                            sha1_h])],
 +               c_args : vn_c_args),
 +    suite : ['venus'],
 +  )
