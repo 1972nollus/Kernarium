@@ -9,7 +9,10 @@
  * were derived on their own, in integer bytes, from the measured ceilings (see
  * the table comment) and by the searches in
  * theConservativeDefaultIsTheLargestStepThatLeavesTheFloor and
- * onADeviceThatOffers4GiBTheDefaultKeepsAGibibyteForTheGpu.
+ * onADeviceThatOffers4GiBTheDefaultKeepsAGibibyteForTheGpu. The range has no
+ * top of 4 GiB: aLargerCeilingChangesNoDefaultAndNoSizeUnder4GiB holds every
+ * default, and every size below 4 GiB, to the rules of the range that ended
+ * there, copied below.
  */
 #include "named_tests.hpp"
 #include "require.hpp"
@@ -201,7 +204,7 @@ void theMaximumIsTheLargestSizeThatLeavesTheFloor()
 				ipad_limit, executors, set);
 			require(maximum % 64U == 0);
 			require(fits(maximum));
-			if (maximum < 4096)
+			if (maximum < budget::device_window_guest_memory_maximum_mib)
 				require(!fits(maximum + 64U),
 					"the next size up is short of the floor");
 		}
@@ -218,12 +221,18 @@ void aMoreVCPUsNeverRaiseTheMaximum()
 						limit * mib, executors, set));
 }
 
+/* Without a limit nothing is short, so the offer is the host's ceiling: the
+ * iOS device's window unless the caller states another. */
 void noLimitOffersTheWholeRange()
 {
 	for (const auto &set : all_sets)
-		for (unsigned executors : {0U, 1U, 4U, 8U, 64U})
+		for (unsigned executors : {0U, 1U, 4U, 8U, 64U}) {
 			require(budget::maximum_guest_memory_mib(0, executors,
-					set) == 4096);
+					set) == 9152);
+			for (const std::uint32_t ceiling : {512U, 4096U, 65536U})
+				require(budget::maximum_guest_memory_mib(0,
+						executors, set, ceiling) == ceiling);
+		}
 }
 
 /* A limit that leaves even the smallest guest less than the floor still
@@ -328,8 +337,10 @@ void theDefaultFollowsTheLimitInHalfGiBSteps()
 
 /* The conservative line is the largest multiple of 512 MiB for which the
  * launch set leaves the host GPU its floor, searched here from the sums in
- * bytes rather than from G_max, then held within 1536 to 4096 and under the
- * maximum, which is searched the same way with the set that counts none. */
+ * bytes rather than from G_max, then held to at least 1536 and under the
+ * maximum, which is searched the same way with the set that counts none. Both
+ * searches run to the ceiling: the iOS device's here, and 4096 MiB, the range
+ * that ended there, where the line is also held to 4096. */
 void theConservativeDefaultIsTheLargestStepThatLeavesTheFloor()
 {
 	const auto fits = [](std::uint64_t limit, unsigned executors,
@@ -346,31 +357,38 @@ void theConservativeDefaultIsTheLargestStepThatLeavesTheFloor()
 			.headroom = set.headroom,
 		}).short_of_floor;
 	};
-	for (std::uint64_t limit_mib = 1024; limit_mib <= 8192; limit_mib += 128)
-		for (unsigned executors = 1; executors <= 8; ++executors) {
-			const std::uint64_t limit = limit_mib * mib;
-			std::uint32_t stepped = 512;
-			for (std::uint32_t guest = 512; guest <= 4096; guest += 512)
-				if (fits(limit, executors, guest, conservative))
-					stepped = guest;
-			std::uint32_t most = 512;
-			for (std::uint32_t guest = 512; guest <= 4096; guest += 64)
-				if (fits(limit, executors, guest, no_terms))
-					most = guest;
-			const auto expected = std::min(
-				std::clamp(stepped, 1536U, 4096U), most);
-			const auto actual =
-				budget::conservative_guest_memory_mib(limit, executors);
-			require(actual == expected, std::to_string(limit_mib).c_str());
-			require(actual <= budget::maximum_guest_memory_mib(limit, executors));
-			require(actual % 64U == 0, "on the settings' steps");
-			if (actual < most)
-				require(actual % 512U == 0,
-					"whole half gibibytes wherever the maximum did not bind");
-			if (stepped >= 1536)
-				require(fits(limit, executors, actual, conservative),
-					"the launch set leaves the GPU its floor at the default");
-		}
+	for (const std::uint32_t ceiling : {4096U, 9152U})
+		for (std::uint64_t limit_mib = 1024; limit_mib <= 16384;
+		     limit_mib += 128)
+			for (unsigned executors = 1; executors <= 8; ++executors) {
+				const std::uint64_t limit = limit_mib * mib;
+				std::uint32_t stepped = 512;
+				for (std::uint32_t guest = 512; guest <= ceiling;
+				     guest += 512)
+					if (fits(limit, executors, guest, conservative))
+						stepped = guest;
+				std::uint32_t most = 512;
+				for (std::uint32_t guest = 512; guest <= ceiling;
+				     guest += 64)
+					if (fits(limit, executors, guest, no_terms))
+						most = guest;
+				const auto expected = std::min(
+					std::max(stepped, 1536U), most);
+				const auto actual = budget::conservative_guest_memory_mib(
+					limit, executors, budget::launch_memory_set, ceiling);
+				require(actual == expected,
+					std::to_string(limit_mib).c_str());
+				require(actual <= budget::maximum_guest_memory_mib(
+						limit, executors, budget::maximum_memory_set,
+						ceiling));
+				require(actual % 64U == 0, "on the settings' steps");
+				if (actual < most)
+					require(actual % 512U == 0,
+						"whole half gibibytes wherever the maximum did not bind");
+				if (stepped >= 1536)
+					require(fits(limit, executors, actual, conservative),
+						"the launch set leaves the GPU its floor at the line");
+			}
 }
 
 /* More vCPUs hold more of the process, so the conservative line never rises
@@ -439,10 +457,13 @@ void theDefaultKeepsAGibibyteForTheGpuAtTheTopOfTheRange()
 		DefaultRow{3584, 3584, 3072, 3072, 3072, 3072, 3072, 3072});
 	require(defaultRow(4700 * mib) ==
 		DefaultRow{2560, 2560, 2560, 2560, 2560, 2560, 2560, 2560});
-	/* 6144 MiB leaves a 4096 MiB guest 1211 to 1383 MiB already. */
-	require(defaultRow(6144 * mib) == conservativeRow(6144 * mib));
+	/* 6144 MiB leaves a 4096 MiB guest 1211 to 1383 MiB already. The
+	 * default stops at 4096; the line the process is likely to be ended
+	 * above does not. */
 	require(defaultRow(6144 * mib) ==
 		DefaultRow{4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096});
+	require(conservativeRow(6144 * mib) ==
+		DefaultRow{4608, 4608, 4608, 4608, 4608, 4608, 4608, 4608});
 	require(budgetAtDefaultRow(6144 * mib) ==
 		DefaultRow{1383, 1347, 1311, 1275, 1255, 1251, 1215, 1211});
 	/* No limit: the whole range, as before, and B is half of it. */
@@ -467,9 +488,10 @@ void onADeviceThatOffers4GiBTheDefaultKeepsAGibibyteForTheGpu()
 			const std::uint64_t limit = limit_mib * mib;
 			const auto actual =
 				budget::default_guest_memory_mib(limit, executors);
-			const auto conservative =
-				budget::conservative_guest_memory_mib(limit, executors);
-			if (budget::maximum_guest_memory_mib(limit, 1) < 4096) {
+			const auto conservative = budget::conservative_guest_memory_mib(
+				limit, executors, budget::launch_memory_set, 4096);
+			if (budget::maximum_guest_memory_mib(limit, 1,
+					budget::maximum_memory_set, 4096) < 4096) {
 				require(actual == conservative);
 				continue;
 			}
@@ -518,10 +540,11 @@ void aSetThatLeavesNoGibibyteLeavesTheConservativeDefault()
 {
 	constexpr auto crowded = budget::launch_memory_mib(4000, 0, 0);
 	const auto limit = 6144 * mib;
-	require(budget::maximum_guest_memory_mib(limit, 4) == 4096);
+	require(budget::maximum_guest_memory_mib(limit, 4,
+			budget::maximum_memory_set, 4096) == 4096);
 	require(budget::graphics_guest_memory_mib(limit, 4, crowded) == 0);
 	require(budget::default_guest_memory_mib(limit, 4, crowded) ==
-		budget::conservative_guest_memory_mib(limit, 4, crowded));
+		budget::conservative_guest_memory_mib(limit, 4, crowded, 4096));
 	require(budget::graphics_guest_memory_mib(512 * mib, 4) == 0);
 }
 
@@ -565,6 +588,211 @@ void aGuestAboveTheDefaultIsWhatTheApplicationsWarnAbout()
 		require(maximum > warn_from, "there are sizes to warn about");
 		require(2048 > warn_from && 2048 <= maximum);
 	}
+}
+
+/* The rules of the range that ended at 4096 MiB, as they were before the
+ * range lost its top, copied so the sweep below holds the lifted rules to them
+ * rather than to themselves. */
+namespace before_the_range_lost_its_top {
+
+constexpr std::uint32_t top = 4096;
+
+std::uint32_t maximum(std::uint64_t limit, unsigned executors,
+	const budget::LaunchMemorySet &set)
+{
+	if (limit == 0)
+		return top;
+	for (auto size = top; size > 512; size -= 64)
+		if (!budget::gpu_budget(limit, size, executors, set).short_of_floor)
+			return size;
+	return 512;
+}
+
+std::uint32_t conservative(std::uint64_t limit, unsigned executors,
+	const budget::LaunchMemorySet &set)
+{
+	const auto safe = maximum(limit, executors, set);
+	const auto stepped = safe / 512U * 512U;
+	const auto held = std::clamp(stepped, 1536U, top);
+	return std::min(held, maximum(limit, executors, budget::maximum_memory_set));
+}
+
+std::uint32_t graphics(std::uint64_t limit, unsigned executors,
+	const budget::LaunchMemorySet &set)
+{
+	for (auto size = top; size >= 1024U * 2U; size -= 512)
+		if (budget::gpu_budget(limit, size, executors, set).bytes >=
+			1024 * mib)
+			return size;
+	return 0;
+}
+
+std::uint32_t defaults(std::uint64_t limit, unsigned executors,
+	const budget::LaunchMemorySet &set)
+{
+	const auto line = conservative(limit, executors, set);
+	if (limit == 0 ||
+	    maximum(limit, 1, budget::maximum_memory_set) != top)
+		return line;
+	const auto graphic = graphics(limit, executors, set);
+	return graphic == 0 ? line : std::min(line, graphic);
+}
+
+} // namespace before_the_range_lost_its_top
+
+/* The default does not change on any device, and neither does any size the
+ * range offered: for every limit from none through 20 GiB, every vCPU count
+ * and the sets, the default, the graphics bound and the 4096-capped maximum
+ * and line equal the old rules' for every ceiling, so a larger ceiling only
+ * adds sizes above them. */
+void aLargerCeilingChangesNoDefaultAndNoSizeUnder4GiB()
+{
+	namespace old = before_the_range_lost_its_top;
+	constexpr std::array<std::uint32_t, 5> ceilings{
+		4096, 4160, 9152, 65536, budget::guest_memory_range_maximum_mib};
+	for (std::uint64_t limit_mib = 0; limit_mib <= 20480; ++limit_mib) {
+		const std::uint64_t limit = limit_mib * mib;
+		/* Every set at a coarse step, the two the product uses at every
+		 * limit. */
+		const bool every_set = limit_mib % 17 == 0;
+		for (unsigned executors = 1; executors <= 8; ++executors) {
+			for (std::size_t index = 0; index < all_sets.size(); ++index) {
+				/* all_sets starts with none and the launch set. */
+				if (!every_set && index > 1)
+					continue;
+				const auto &set = all_sets[index];
+				require(budget::default_guest_memory_mib(limit, executors,
+						set) == old::defaults(limit, executors, set),
+					std::to_string(limit_mib).c_str());
+				require(budget::graphics_guest_memory_mib(limit, executors,
+						set) == old::graphics(limit, executors, set),
+					std::to_string(limit_mib).c_str());
+				for (const auto ceiling : ceilings) {
+					const auto offered = budget::maximum_guest_memory_mib(
+						limit, executors, set, ceiling);
+					const auto line = budget::conservative_guest_memory_mib(
+						limit, executors, set, ceiling);
+					require(std::min(offered, 4096U) ==
+							old::maximum(limit, executors, set),
+						"the offer, below 4 GiB, is the old maximum");
+					require(std::min(line, 4096U) ==
+							old::conservative(limit, executors, set),
+						"the line, below 4 GiB, is the old line");
+					require(offered <= ceiling);
+					require(line <= budget::maximum_guest_memory_mib(limit,
+							executors, budget::maximum_memory_set,
+							ceiling),
+						"the line is within the most a person may choose");
+					require(offered % 64U == 0 && offered >= 512U);
+					require(budget::default_guest_memory_mib(limit,
+							executors, set) <= std::max(offered, 1536U),
+						"a new guest is one of the sizes on offer");
+				}
+			}
+			const auto exact = budget::conservative_guest_memory_mib(limit,
+				executors, budget::launch_memory_set, 4096);
+			require(exact == old::conservative(limit, executors,
+					budget::launch_memory_set));
+			require(budget::maximum_guest_memory_mib(limit, executors,
+					budget::maximum_memory_set, 4096) ==
+				old::maximum(limit, executors, budget::maximum_memory_set));
+		}
+	}
+}
+
+/* Above 4096 the offer is what the budget gives, searched here from the sums,
+ * and stops at the ceiling; no limit offers the ceiling and nothing to warn
+ * about. A Mac with 64 GiB of RAM and 63 GiB of limit, an iPad Pro with a
+ * 12 GiB limit and the iPad mini 6 are the cases. */
+void aLimitOffersWhatTheBudgetGivesUpToTheCeiling()
+{
+	const auto fits = [](std::uint64_t limit, unsigned executors,
+				  std::uint32_t guest_mib,
+				  const budget::LaunchMemorySet &set) {
+		return !budget::gpu_budget(limit, guest_mib, executors, set)
+				.short_of_floor;
+	};
+	for (const std::uint32_t ceiling :
+	     {9152U, 65536U, budget::guest_memory_range_maximum_mib})
+		for (const std::uint64_t limit_mib :
+		     {2867ULL, 6144ULL, 12288ULL, 16384ULL, 65536ULL - 1024ULL,
+		      1ULL << 20}) {
+			const std::uint64_t limit = limit_mib * mib;
+			for (unsigned executors = 1; executors <= 8; ++executors) {
+				std::uint32_t most = 512;
+				const auto searched = std::min<std::uint64_t>(
+					ceiling, limit_mib);
+				for (std::uint64_t guest = 512; guest <= searched;
+				     guest += 64)
+					if (fits(limit, executors,
+						    static_cast<std::uint32_t>(guest),
+						    no_terms))
+						most = static_cast<std::uint32_t>(guest);
+				require(budget::maximum_guest_memory_mib(limit, executors,
+						no_terms, ceiling) == most,
+					std::to_string(limit_mib).c_str());
+				if (most < ceiling)
+					require(!fits(limit, executors, most + 64U, no_terms),
+						"the next size up is short of the floor");
+			}
+		}
+	/* The cases by name. */
+	require(budget::maximum_guest_memory_mib(12288 * mib, 6) ==
+		9152, "an iPad Pro's limit is more than a device window admits");
+	require(budget::maximum_guest_memory_mib(12288 * mib, 6,
+			budget::maximum_memory_set, 65536) < 12288 &&
+		budget::maximum_guest_memory_mib(12288 * mib, 6,
+			budget::maximum_memory_set, 65536) > 11264,
+		"a Mac stating the same limit is held by the budget alone");
+	require(budget::maximum_guest_memory_mib(63 * 1024 * mib, 8,
+			budget::maximum_memory_set, 65536) < 63 * 1024);
+	require(budget::maximum_guest_memory_mib(0, 8,
+			budget::maximum_memory_set, 65536) == 65536);
+	/* The line follows the ceiling too, and without a limit it is the
+	 * whole offer. */
+	require(budget::conservative_guest_memory_mib(0, 8, budget::launch_memory_set,
+			9152) == 9152);
+	require(budget::conservative_guest_memory_mib(12288 * mib, 6,
+			budget::launch_memory_set, 65536) > 4096);
+	require(budget::conservative_guest_memory_mib(12288 * mib, 6,
+			budget::launch_memory_set, 65536) <
+		budget::maximum_guest_memory_mib(12288 * mib, 6,
+			budget::maximum_memory_set, 65536));
+}
+
+/* The ceiling is the window's bound and the host's RAM, whichever is less,
+ * never under the range the default is held to, on the 64 MiB steps. */
+void theCeilingIsTheWindowAndTheHostsRAMWhicheverIsLess()
+{
+	constexpr auto device = budget::device_window_guest_memory_maximum_mib;
+	constexpr auto range = budget::guest_memory_range_maximum_mib;
+	static_assert(device == 9152);
+	static_assert(budget::guest_memory_ceiling_mib(device, 0) == device,
+		"unknown RAM leaves the window's bound");
+	static_assert(budget::guest_memory_ceiling_mib(device, 16384 * mib) ==
+		device);
+	static_assert(budget::guest_memory_ceiling_mib(device, 8192 * mib) ==
+		8192);
+	static_assert(budget::guest_memory_ceiling_mib(range, 64 * 1024 * mib) ==
+		65536, "a Mac with 64 GiB");
+	static_assert(budget::guest_memory_ceiling_mib(range, 0) == range);
+	static_assert(budget::guest_memory_ceiling_mib(range, 1ULL << 50) == range,
+		"a terabyte is the most any range holds");
+	static_assert(budget::guest_memory_ceiling_mib(range, 3072 * mib) == 4096,
+		"never under the range the default is held to");
+	static_assert(budget::guest_memory_ceiling_mib(range, 0x7FFFFFFFFULL) ==
+		budget::guest_memory_minimum_mib + (0x7FFFFFFFFULL / mib -
+			budget::guest_memory_minimum_mib) / 64U * 64U,
+		"onto the steps");
+	for (std::uint64_t window : {4096ULL, device * 1ULL, range * 1ULL})
+		for (std::uint64_t physical = 0; physical <= 300; ++physical) {
+			const auto ceiling = budget::guest_memory_ceiling_mib(
+				window, physical * 977 * mib);
+			require(ceiling >= 4096 && ceiling <= range);
+			require((ceiling - budget::guest_memory_minimum_mib) %
+					budget::guest_memory_step_mib == 0);
+			require(ceiling <= std::max<std::uint64_t>(window, 4096));
+		}
 }
 
 /* The applications default to and offer every physical core, at most the
@@ -638,6 +866,12 @@ int main()
 		{"no-limit-offers-the-whole-range", noLimitOffersTheWholeRange},
 		{"a-tight-limit-offers-the-smallest-guest",
 			aTightLimitOffersTheSmallestGuest},
+		{"a-larger-ceiling-changes-no-default-and-no-size-under-4-gib",
+			aLargerCeilingChangesNoDefaultAndNoSizeUnder4GiB},
+		{"a-limit-offers-what-the-budget-gives-up-to-the-ceiling",
+			aLimitOffersWhatTheBudgetGivesUpToTheCeiling},
+		{"the-ceiling-is-the-window-and-the-hosts-ram-whichever-is-less",
+			theCeilingIsTheWindowAndTheHostsRAMWhicheverIsLess},
 		{"the-application-limit-is-the-physical-cores-at-most-the-measured-count",
 			theApplicationLimitIsThePhysicalCoresAtMostTheMeasuredCount},
 	};

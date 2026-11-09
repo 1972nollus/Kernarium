@@ -199,14 +199,49 @@ struct MemoryPolicyTests {
     }
 
     @Test func theBoundsComeOntoTheRuntimesStepsAndRange() {
-        let policy = MemoryPolicy(maximumsMiB: [100, 5000, 1700])
+        let policy = MemoryPolicy(maximumsMiB: [100, 5000, 1700, 9152, 2_000_000])
         #expect(policy.maximumMiB(vCPUs: 1) == 512)
-        #expect(policy.maximumMiB(vCPUs: 2) == 4096)
+        // No top of 4 GiB: a bound above it is kept, on the steps.
+        #expect(policy.maximumMiB(vCPUs: 2) == 4992)
         #expect(policy.maximumMiB(vCPUs: 3) == 1664)
+        #expect(policy.maximumMiB(vCPUs: 4) == 9152)
+        // The top of any range is 1 TiB.
+        #expect(policy.maximumMiB(vCPUs: 5) == 1_048_576)
         // A count above the host's takes the last bound; zero counts as one.
-        #expect(policy.maximumMiB(vCPUs: 9) == 1664)
+        #expect(policy.maximumMiB(vCPUs: 9) == 1_048_576)
         #expect(policy.maximumMiB(vCPUs: 0) == 512)
         #expect(MemoryPolicy(maximumsMiB: []).maximumMiB(vCPUs: 1) == 4096)
+    }
+
+    /// The ruler extends by itself: the picker, the warnings and the graphics
+    /// estimate follow a bound above 4 GiB, and the default stays where the
+    /// runtime's rule holds it.
+    @Test func aBoundAbove4GiBExtendsThePickerAndNothingElse() {
+        let policy = MemoryPolicy(
+            processorCount: 2,
+            bound: { _ in 9152 }, defaultMemory: { _ in 4096 }, safeMemory: { _ in 8704 },
+            graphicsMemory: { memory, count in memory / 2 - count }
+        )
+        #expect(policy.maximumMiB(vCPUs: 1) == 9152)
+        #expect(policy.stops(vCPUs: 2).last == 9152)
+        #expect(policy.stops(vCPUs: 2).count == (9152 - 1536) / 64 + 1)
+        #expect(policy.stops(vCPUs: 2).allSatisfy(MemoryPolicy.runtimeAccepts))
+        #expect(policy.defaultMemoryMiB(vCPUs: 1) == 4096)
+        #expect(policy.clamped(20_000, vCPUs: 1) == 9152)
+        #expect(policy.clamped(6000, vCPUs: 1) == 6016)
+        // The existing words: the graphics note above the default, the
+        // closing one above the safe size.
+        #expect(policy.risk(4096, vCPUs: 1) == .none)
+        #expect(policy.risk(4160, vCPUs: 1) == .graphics)
+        #expect(policy.risk(8704, vCPUs: 1) == .graphics)
+        #expect(policy.risk(8768, vCPUs: 1) == .closing)
+        // The estimate covers every size on the picker, and the edge beyond.
+        #expect(policy.graphicsMemoryMiB(forMemory: 9152, vCPUs: 1) == 9152 / 2 - 1)
+        #expect(policy.graphicsMemoryMiB(forMemory: 6016, vCPUs: 2) == 6016 / 2 - 2)
+        #expect(policy.graphicsMemoryMiB(forMemory: 500_000, vCPUs: 1) == 9152 / 2 - 1)
+        // A new guest takes the default, not the bound.
+        let device = host(policy, processors: 2)
+        #expect(Guest.fresh(on: device).memoryMiB == 4096)
     }
 
     @Test func theLoaderBoundIsReadOncePerVCPUCount() {
@@ -225,10 +260,11 @@ struct MemoryPolicyTests {
     /// memory limit. The bound counts none of the launch allowances; the default
     /// counts the conservative set (64 MiB for the application, 320 for the rest
     /// of the engine, 149 of headroom), takes the result down to 0.5 GiB, holds
-    /// it within 1.5 to 4 GiB and never above the bound (the safe size); where
-    /// the bound is 4096 the default is also the most that leaves the host GPU
-    /// a gibibyte. `AndariumTests` asks the loader for the same rows, so these
-    /// stay the rule's.
+    /// it to at least 1.5 GiB and never above the bound (the safe size); the
+    /// default is that size held to 4 GiB, and where the bound reaches 4096 it
+    /// is also the most that leaves the host GPU a gibibyte. `AndariumTests`
+    /// asks the loader for the same rows, so these stay the rule's. The bounds
+    /// end at 9152, the ceiling of an iOS device's window.
     static let defaultFixtures: [(limitMiB: Int, bounds: [Int], defaults: [Int], safe: [Int])] = [
         // Below 1.5 GiB the bound wins: the default is never above what the picker offers.
         (1536, [960, 960, 896, 896, 896, 896, 896, 896], [960, 960, 896, 896, 896, 896, 896, 896],
@@ -247,14 +283,23 @@ struct MemoryPolicyTests {
             Array(repeating: 2560, count: 8)),
         // A limit that offers 4096 at one to three vCPUs only: the default keeps the GPU a gibibyte at every count,
         // 2560 where the safe size is 3584 at one and two and 3072 after.
-        (4700, [4096, 4096, 4096, 4032, 4032, 4032, 3968, 3968], Array(repeating: 2560, count: 8),
+        (4700, [4160, 4096, 4096, 4032, 4032, 4032, 3968, 3968], Array(repeating: 2560, count: 8),
             [3584, 3584, 3072, 3072, 3072, 3072, 3072, 3072]),
-        // A limit that offers 4096 everywhere: 3584 MiB would leave the GPU 699 to 871 MiB, so a new guest gets
-        // 3072 and the safe size stays at 3584.
-        (5120, Array(repeating: 4096, count: 8), Array(repeating: 3072, count: 8), Array(repeating: 3584, count: 8)),
-        // The upper clamp: a limit that leaves the whole range, and a Mac with none.
-        (6144, Array(repeating: 4096, count: 8), Array(repeating: 4096, count: 8), Array(repeating: 4096, count: 8)),
-        (0, Array(repeating: 4096, count: 8), Array(repeating: 4096, count: 8), Array(repeating: 4096, count: 8)),
+        // A limit that offers more than 4096 everywhere: 3584 MiB would leave the GPU 699 to 871 MiB, so a new guest
+        // gets 3072 and the safe size stays at 3584.
+        (5120, [4544, 4544, 4480, 4480, 4416, 4416, 4416, 4416], Array(repeating: 3072, count: 8),
+            Array(repeating: 3584, count: 8)),
+        // The default's upper clamp, 4096: the safe size and the bound go on above it.
+        (6144, [5568, 5568, 5504, 5504, 5440, 5440, 5440, 5440], Array(repeating: 4096, count: 8),
+            Array(repeating: 4608, count: 8)),
+        (8192, [7616, 7616, 7552, 7552, 7488, 7488, 7488, 7488], Array(repeating: 4096, count: 8),
+            Array(repeating: 6656, count: 8)),
+        // A limit that leaves more than the device's window admits: the bound is the window's, 9152.
+        (12288, Array(repeating: 9152, count: 8), Array(repeating: 4096, count: 8),
+            Array(repeating: 8704, count: 8)),
+        // No limit (the Simulator): the whole range, and nothing to warn about above the default's 4096 but the
+        // graphics memory.
+        (0, Array(repeating: 9152, count: 8), Array(repeating: 4096, count: 8), Array(repeating: 9152, count: 8)),
     ]
 
     @Test(arguments: [1, 4, 6, 8])
@@ -562,6 +607,11 @@ struct MemoryPolicyTests {
         #expect(MemoryPolicy.runtimeAccepts(4096))
         #expect(!MemoryPolicy.runtimeAccepts(1500))
         #expect(!MemoryPolicy.runtimeAccepts(448))
-        #expect(!MemoryPolicy.runtimeAccepts(4160))
+        // No top of 4 GiB: every step through 1 TiB.
+        #expect(MemoryPolicy.runtimeAccepts(4160))
+        #expect(MemoryPolicy.runtimeAccepts(9152))
+        #expect(MemoryPolicy.runtimeAccepts(1_048_576))
+        #expect(!MemoryPolicy.runtimeAccepts(1_048_576 + 64))
+        #expect(!MemoryPolicy.runtimeAccepts(9200))
     }
 }

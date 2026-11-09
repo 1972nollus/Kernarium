@@ -181,7 +181,7 @@ control out.
   [vCPU limit](../docs/architecture.md#memory-and-executable-code) and the RAM
   the runtime loader answers for that count
   (`kernarium_runtime_loader_maximum_guest_memory_mib`); a new guest gets the
-  loader's default for it
+  loader's default for it, which stops at 4 GiB however much is offered
   (`kernarium_runtime_loader_default_guest_memory_mib`). Android is usable
   from 1.5 GiB, so a guest has at least that (`Limits.minimumMemoryMiB`,
   Andarium's own: the runtime still accepts less for Kernarium's guests); a

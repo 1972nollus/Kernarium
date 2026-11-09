@@ -116,30 +116,39 @@ c(v, G) = min(derive_budget(G, L), cap(v))      where L is set; derive_budget(G,
 ```
 
 `cap(v)` is a table of the gadget cache's ceiling per vCPU count. The largest
-guest RAM a limit leaves, `G_max(v)`, is the largest G (in 64 MiB steps, within
-the bounds in the header) that keeps B at its floor or above. The settings of
-Kernarium and Andarium offer no more than `G_max(v)` under a set that counts
-none of A, E_rest and S (`maximum_memory_set`). The conservative size is
-`G_max(v)` under the conservative launch set, in 0.5 GiB steps within 1.5 to 4
-GiB and never above that maximum (`conservative_guest_memory_mib`); a guest with
-more is likely to be ended by the system, and Andarium says so on Home and
-beside its memory picker ([Andarium](../Andarium/README.md)). A new guest's RAM
-is the conservative size (`default_guest_memory_mib`), and on a device whose
-maximum at one vCPU is the top of the range, 4 GiB, at every vCPU count also no
-more than the largest 0.5 GiB step that leaves B at 1 GiB or more, since a 4 GiB
-guest otherwise runs the host GPU short long before it runs the process short;
-that step is never under 2 GiB, because B is at most half of G and every limit
-that offers 4 GiB at one vCPU leaves a 2 GiB guest more than 1 GiB at every
-count. A guest with more than the default but no more than the conservative size
-is likely to run out of graphics memory, and Andarium's System sheet says so
-beside its estimate of B for the chosen RAM and vCPUs (`gpu_budget`). The macOS
-launchers take the same default for a launch that states a memory limit. The
-applications' vCPU limit is the rule `application_vcpu_limit` in the same
-header: the host's physical cores, at most 8. It is the default and the maximum
-of Kernarium, Andarium and the macOS launchers (`emulator/src/options.hpp`); an
-explicit `ncpus=` on a launcher keeps the runtime's own range. Every iOS memory
-control has a macOS counterpart, so a Mac run stays an accurate ground for
-measuring the device.
+guest RAM a limit leaves, `G_max(v)`, is the largest G (in 64 MiB steps, from
+512 MiB) that keeps B at its floor or above, up to the host's ceiling, C
+(`guest_memory_ceiling_mib`): the RAM the product's native kernel window holds
+and no more than the host's own RAM. Nothing else bounds it, so the offered
+maximum is what the budget gives the device at the vCPU count. C is 9152 MiB
+on an iOS device and in the Simulator, where the window is packed into the
+signed 14 GiB envelope (`device_window_guest_memory_maximum_mib`, pinned by the
+layout tests against `runtime/native_kernel_layout.hpp`), and the host's RAM
+(at most 1 TiB, the largest limit a launch states) in a macOS window, which a
+Mac and an iOS application on a Mac use; where the host sets no limit `G_max`
+is C. The settings of Kernarium and Andarium offer no more than `G_max(v)`
+under a set that counts none of A, E_rest and S (`maximum_memory_set`). The
+conservative size is `G_max(v)` under the conservative launch set, in 0.5 GiB
+steps from 1.5 GiB and never above that maximum
+(`conservative_guest_memory_mib`); a guest with more is likely to be ended by
+the system, and Andarium says so on Home and beside its memory picker
+([Andarium](../Andarium/README.md)). A new guest's RAM is the conservative
+size held to 4 GiB (`default_guest_memory_mib`), however much the host offers,
+and on a device whose maximum at one vCPU reaches 4 GiB at every vCPU count
+also no more than the largest 0.5 GiB step that leaves B at 1 GiB or more,
+since a 4 GiB guest otherwise runs the host GPU short long before it runs the
+process short; that step is never under 2 GiB, because B is at most half of G
+and every limit that offers 4 GiB at one vCPU leaves a 2 GiB guest more than 1
+GiB at every count. A guest with more than the default but no more than the
+conservative size is likely to run out of graphics memory, and Andarium's
+System sheet says so beside its estimate of B for the chosen RAM and vCPUs
+(`gpu_budget`). The macOS launchers take the same default for a launch that
+states a memory limit. The applications' vCPU limit is the rule
+`application_vcpu_limit` in the same header: the host's physical cores, at most
+8. It is the default and the maximum of Kernarium, Andarium and the macOS
+launchers (`emulator/src/options.hpp`); an explicit `ncpus=` on a launcher
+keeps the runtime's own range. Every iOS memory control has a macOS
+counterpart, so a Mac run stays an accurate ground for measuring the device.
 
 A kernel-range flush completes or the kernel stops: `flush_cache_vmap()` and
 `flush_cache_vunmap()` are both `flush_tlb_kernel_range()`, its result is never

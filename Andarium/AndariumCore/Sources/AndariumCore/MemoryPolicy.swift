@@ -7,14 +7,15 @@ import Foundation
 /// reads through the loader the way Kernarium does, and none is computed here:
 ///
 /// - the bound is the most a person may choose: the largest multiple of 64 MiB
-///   in 512...4096 that leaves the host GPU its floor under the memory limit
-///   the system sets this process;
+///   from 512 MiB up to the host's ceiling (the window the kernel gets and the
+///   host's RAM) that leaves the host GPU its floor under the memory limit the
+///   system sets this process;
 /// - the safe size is the line above which iOS is likely to end the
 ///   application: the same measure with the launch's conservative allowances
 ///   for the application, the rest of the engine and headroom, in 0.5 GiB
-///   steps and within 1.5 to 4 GiB, and never above the bound;
-/// - the default is what a new guest gets: the safe size, and on a device
-///   whose bound is the top of the range also the most that leaves the host
+///   steps and at least 1.5 GiB, and never above the bound;
+/// - the default is what a new guest gets: the safe size held to 4 GiB, and on
+///   a device whose bound reaches 4 GiB also the most that leaves the host
 ///   GPU a gibibyte, so it is never above the safe size;
 /// - the graphics memory is the host GPU's budget, B, a guest of a size and
 ///   vCPU count would launch with.
@@ -49,7 +50,7 @@ public struct MemoryPolicy: Equatable, Sendable {
         maximumsMiB: [Int], defaultsMiB: [Int], safeMiB: [Int] = [],
         graphicsMiB: ((_ memoryMiB: Int, _ vCPUs: Int) -> Int)? = nil
     ) {
-        let values = maximumsMiB.isEmpty ? [Limits.runtimeMemoryRangeMiB.upperBound] : maximumsMiB
+        let values = maximumsMiB.isEmpty ? [Limits.defaultMemoryRangeMiB.upperBound] : maximumsMiB
         let bounds = values.map { Self.steppedDown($0) }
         maximums = bounds
         let steppedDefaults = bounds.indices.map { index in
@@ -61,8 +62,11 @@ public struct MemoryPolicy: Equatable, Sendable {
             return min(max(Self.steppedDown(safeMiB[index]), steppedDefaults[index]), bounds[index])
         }
         if let graphicsMiB {
+            // Every size a person may choose at any count, from the bottom of
+            // the runtime's range.
+            let steps = Self.runtimeSteps(through: bounds.max() ?? Limits.runtimeMemoryRangeMiB.lowerBound)
             graphics = bounds.indices.map { index in
-                Self.runtimeSteps.map { graphicsMiB($0, index + 1) }
+                steps.map { graphicsMiB($0, index + 1) }
             }
         } else {
             graphics = []
@@ -163,7 +167,7 @@ public struct MemoryPolicy: Equatable, Sendable {
         let row = graphics[min(max(vCPUs, 1), graphics.count) - 1]
         let range = Limits.runtimeMemoryRangeMiB
         let offset = min(max(mib, range.lowerBound), range.upperBound) - range.lowerBound
-        return row[offset / Limits.runtimeMemoryStepMiB]
+        return row[min(offset / Limits.runtimeMemoryStepMiB, row.count - 1)]
     }
 
     /// A stored or requested size at `vCPUs` vCPUs: on the nearest step, at
@@ -178,10 +182,11 @@ public struct MemoryPolicy: Equatable, Sendable {
             && (mib - Limits.runtimeMemoryRangeMiB.lowerBound) % Limits.runtimeMemoryStepMiB == 0
     }
 
-    /// The sizes the runtime accepts, from the bottom of its range.
-    private static var runtimeSteps: [Int] {
+    /// The sizes the runtime accepts, from the bottom of its range through
+    /// `top`.
+    private static func runtimeSteps(through top: Int) -> [Int] {
         Array(stride(
-            from: Limits.runtimeMemoryRangeMiB.lowerBound, through: Limits.runtimeMemoryRangeMiB.upperBound,
+            from: Limits.runtimeMemoryRangeMiB.lowerBound, through: top,
             by: Limits.runtimeMemoryStepMiB
         ))
     }

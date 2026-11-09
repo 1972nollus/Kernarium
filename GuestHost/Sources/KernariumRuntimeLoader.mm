@@ -454,6 +454,28 @@ uml::runtime::guest_memory::LaunchMemorySet launchMemorySet(
         parameters.headroom_mib);
 }
 
+/* C of runtime/guest_memory_budget.hpp for this process: the window the
+ * runtime puts the kernel in (a macOS process, and an iOS application on a Mac,
+ * get the macOS window; a device and the Simulator get the signed iOS
+ * envelope, as native_kernel_placement chooses) and the RAM of the host. */
+uint32_t guestMemoryCeilingMiB()
+{
+    namespace budget = uml::runtime::guest_memory;
+    static const uint32_t ceiling = [] {
+        NSProcessInfo* info = NSProcessInfo.processInfo;
+#if TARGET_OS_OSX
+        const bool macosWindow = true;
+#else
+        const bool macosWindow = info.isiOSAppOnMac;
+#endif
+        return budget::guest_memory_ceiling_mib(
+            macosWindow ? budget::guest_memory_range_maximum_mib
+                        : budget::device_window_guest_memory_maximum_mib,
+            info.physicalMemory);
+    }();
+    return ceiling;
+}
+
 } // namespace
 
 extern "C" kernarium_launch_memory_set
@@ -488,7 +510,15 @@ extern "C" uint32_t kernarium_runtime_loader_maximum_guest_memory_mib_for_limit(
     kernarium_launch_memory_set parameters)
 {
     return uml::runtime::guest_memory::maximum_guest_memory_mib(
-        limitBytes, guestProcessorCount, launchMemorySet(parameters));
+        limitBytes,
+        guestProcessorCount,
+        launchMemorySet(parameters),
+        guestMemoryCeilingMiB());
+}
+
+extern "C" uint32_t kernarium_runtime_loader_guest_memory_ceiling_mib(void)
+{
+    return guestMemoryCeilingMiB();
 }
 
 extern "C" uint32_t kernarium_runtime_loader_maximum_guest_memory_mib(
@@ -527,7 +557,10 @@ kernarium_runtime_loader_conservative_guest_memory_mib_for_limit(
     kernarium_launch_memory_set parameters)
 {
     return uml::runtime::guest_memory::conservative_guest_memory_mib(
-        limitBytes, guestProcessorCount, launchMemorySet(parameters));
+        limitBytes,
+        guestProcessorCount,
+        launchMemorySet(parameters),
+        guestMemoryCeilingMiB());
 }
 
 extern "C" uint32_t kernarium_runtime_loader_conservative_guest_memory_mib(
