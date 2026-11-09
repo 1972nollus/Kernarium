@@ -645,6 +645,7 @@ MemoryPressure::Reading VirtioGpuDevice::memoryReading() const noexcept
     if (const auto figures = UML_GPU_DEVICE_MEMORY) {
         reading.budgetBytes = figures->budgetBytes;
         reading.usageBytes = figures->usageBytes;
+        reading.ceilingBytes = figures->ceilingBytes;
     }
     return reading;
 }

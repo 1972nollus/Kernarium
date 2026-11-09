@@ -83,8 +83,12 @@ public:
 
     /* Bounds the device memory a Venus guest may allocate to `bytes`,
      * counted against everything the host GPU holds for this process, or
-     * zero for no bound. Takes effect for the next renderer constructed. */
+     * zero for no bound. Takes effect for the next renderer constructed. The
+     * pool admits reservations only up to `bytes` less
+     * deviceMemoryReserveBytes, the room the memory it never refuses grows
+     * into. */
     static void setDeviceMemoryLimit(std::uint64_t bytes) noexcept;
+    static constexpr std::uint64_t deviceMemoryReserveBytes = 16ULL << 20;
 
     /* Called, from the render server's threads, for each allocation of a
      * Venus guest that failed for want of device memory, after the pool had
@@ -105,13 +109,14 @@ public:
 
     /* The device memory budget and what the process holds against it, while
      * a renderer with a budget exists; any thread. Nothing without one. The
-     * usage is the pool's own, which is what the budget refuses by: the
-     * larger of Metal's allocation less the host memory the drivers only
-     * import and the graphics footprint, plus the reservations in flight. It
-     * includes memory the host's drivers hold for reuse. */
+     * usage is the pool's own, which is what the budget refuses by
+     * (accountedGpuBytes(), plus the reservations in flight). It includes
+     * memory the host's drivers hold for reuse. The ceiling is the usage the
+     * pool refuses above: the budget less deviceMemoryReserveBytes. */
     struct DeviceMemory {
         std::uint64_t budgetBytes {};
         std::uint64_t usageBytes {};
+        std::uint64_t ceilingBytes {};
     };
     [[nodiscard]] static std::optional<DeviceMemory> deviceMemory() noexcept;
 

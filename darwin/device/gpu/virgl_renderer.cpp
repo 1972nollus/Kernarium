@@ -366,9 +366,11 @@ VirglRenderer::VirglRenderer()
                         virgl_renderer_get_imported_host_memory();
                     return madeGpuBytes(
                         uml::platform::hostGpuAllocatedBytes(), imported);
-                });
+                },
+                deviceMemoryReserveBytes);
+            /* A Venus guest is shown, and budgets, what the pool admits. */
             const virgl_renderer_device_memory_pool pool {
-                .limit = limit,
+                .limit = deviceMemoryPool->ceiling(),
                 .data = deviceMemoryPool.get(),
                 .usage = &deviceMemoryPoolUsage,
                 .reserve = &reserveDeviceMemory,
@@ -465,6 +467,7 @@ std::optional<VirglRenderer::DeviceMemory> VirglRenderer::deviceMemory() noexcep
     return DeviceMemory {
         .budgetBytes = deviceMemoryPool->limit(),
         .usageBytes = deviceMemoryPool->usage(),
+        .ceilingBytes = deviceMemoryPool->ceiling(),
     };
 }
 
