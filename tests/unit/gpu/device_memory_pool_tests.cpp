@@ -65,6 +65,60 @@ void admitsWhatFits()
         "a reservation past the limit is refused without overflowing");
 }
 
+/* The pool keeps its reserve for what it never refuses: a reservation is
+ * admitted up to the ceiling, the limit less the reserve, and one that would
+ * cross the ceiling is refused although the limit could hold it. The memory
+ * nobody reserves may still fill the reserve. */
+void refusesAtTheCeiling()
+{
+    constexpr std::uint64_t mebibyte = 1ULL << 20;
+    constexpr std::uint64_t limit = 534 * mebibyte;
+    constexpr std::uint64_t reserve = 16 * mebibyte;
+    constexpr std::uint64_t ceiling = limit - reserve;
+    Counter counter;
+    unsigned calls = 0;
+    DeviceMemoryPool pool(limit, [&] { return counter.bytes.load(); }, page,
+        {}, reserve);
+    pool.setReclaim([&]() -> std::uint64_t {
+        ++calls;
+        return 0;
+    });
+    require(pool.limit() == limit, "the limit is still B");
+    require(pool.ceiling() == ceiling, "the ceiling is B less the reserve");
+
+    counter.bytes = ceiling - 4 * mebibyte;
+    require(pool.reserve(4 * mebibyte),
+        "a reservation that ends at the ceiling is admitted");
+    require(pool.usage() == ceiling, "the pool is at its ceiling");
+    require(calls == 0, "a reservation that fits needs no reclaim");
+    pool.release(4 * mebibyte);
+
+    require(pool.reserve(4 * mebibyte - page),
+        "a reservation just below the ceiling is admitted");
+    pool.release(4 * mebibyte - page);
+    require(!pool.reserve(4 * mebibyte + page),
+        "a reservation that crosses the ceiling is refused");
+    require(calls == 1, "the refusal ran the reclaim first");
+    require(pool.refusals() == 1, "the refusal is counted");
+    require(pool.usage() == ceiling - 4 * mebibyte,
+        "the refusal charged nothing");
+
+    /* What nobody reserves grows into the reserve, and the pool admits
+     * nothing more until it is gone. */
+    counter.bytes = limit - mebibyte;
+    require(!pool.reserve(page), "a pool past its ceiling admits nothing");
+    counter.bytes = ceiling - page;
+    require(pool.reserve(page), "the room below the ceiling is admitted again");
+    pool.release(page);
+
+    /* A reserve that would leave nothing is not kept. */
+    DeviceMemoryPool small(8 * page, [] { return std::uint64_t {0}; }, page,
+        {}, 8 * page);
+    require(small.ceiling() == 8 * page,
+        "a reserve as large as the limit is not kept");
+    require(small.reserve(8 * page), "such a pool admits up to its limit");
+}
+
 void growthLeavesTheRestToTheGuest()
 {
     // A heap growth reserves and is made; a guest allocation of what the
@@ -628,6 +682,7 @@ int main()
     accountedBytesCountOnlyWhatTheSystemCounts();
     importsDoNotFillThePool();
     admitsWhatFits();
+    refusesAtTheCeiling();
     growthLeavesTheRestToTheGuest();
     concurrentAllocationsNeverCrossTheLimit();
     manyThreadsNeverCrossTheLimit();

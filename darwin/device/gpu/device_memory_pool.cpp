@@ -14,8 +14,10 @@ namespace uml::gpu {
 DeviceMemoryPool::DeviceMemoryPool(std::uint64_t limit,
     std::function<std::uint64_t()> allocated,
     std::uint64_t granule,
-    std::function<std::uint64_t()> prompt)
+    std::function<std::uint64_t()> prompt,
+    std::uint64_t reserve)
     : limit_(limit)
+    , ceiling_(reserve < limit ? limit - reserve : limit)
     , allocated_(std::move(allocated))
     , prompt_(std::move(prompt))
     , granule_(std::max<std::uint64_t>(granule, 1))
@@ -79,7 +81,7 @@ bool DeviceMemoryPool::tryReserve(std::uint64_t charged, std::uint64_t& used)
     std::uint64_t allocated = 0;
     std::uint64_t prompt = 0;
     used = sampleLocked(allocated, prompt);
-    if (charged > limit_ || used > limit_ - charged)
+    if (charged > ceiling_ || used > ceiling_ - charged)
         return false;
     reserved_ += charged;
     return true;
@@ -102,9 +104,9 @@ bool DeviceMemoryPool::settleAndReserve(
             std::uint64_t allocated = 0;
             std::uint64_t prompt = 0;
             used = sampleLocked(allocated, prompt);
-            if (charged > limit_ || reserved_ > limit_ - charged)
+            if (charged > ceiling_ || reserved_ > ceiling_ - charged)
                 break;
-            if (used <= limit_ - charged) {
+            if (used <= ceiling_ - charged) {
                 reserved_ += charged;
                 admitted = true;
                 break;
@@ -113,7 +115,7 @@ bool DeviceMemoryPool::settleAndReserve(
              * and never less than the prompt reading. */
             const std::uint64_t owed = std::min(
                 owed_, allocated > prompt ? allocated - prompt : 0);
-            if (allocated - owed > limit_ - charged - reserved_)
+            if (allocated - owed > ceiling_ - charged - reserved_)
                 break;
             if (Clock::now() >= deadline) {
                 owed_ = 0;
@@ -163,7 +165,7 @@ bool DeviceMemoryPool::reserve(std::uint64_t bytes)
      * reservations to it, and the memory the drivers free lowers the usage
      * that the decision below reads again. */
     std::uint64_t released = 0;
-    if (charged <= limit_) {
+    if (charged <= ceiling_) {
         std::lock_guard lock(reclaimMutex_);
         if (reclaim_) {
             released = reclaim_();
@@ -177,7 +179,7 @@ bool DeviceMemoryPool::reserve(std::uint64_t bytes)
 
     /* What was freed has left Metal's counter at once and the ledger a
      * moment later: wait for it, with no lock of the pool or the hook held. */
-    if (prompt_ && charged <= limit_ && settleAndReserve(charged, used)) {
+    if (prompt_ && charged <= ceiling_ && settleAndReserve(charged, used)) {
         if (released != 0)
             reclaimed_.fetch_add(1, std::memory_order_relaxed);
         return true;
@@ -189,9 +191,12 @@ bool DeviceMemoryPool::reserve(std::uint64_t bytes)
     if (first)
         std::fprintf(stderr,
             "uml: the GPU budget is full: it refused %llu bytes with "
-            "%llu of %llu bytes in use%s\n",
+            "%llu of %llu bytes in use, %llu of the %llu-byte budget kept in "
+            "reserve%s\n",
             static_cast<unsigned long long>(charged),
             static_cast<unsigned long long>(used),
+            static_cast<unsigned long long>(ceiling_),
+            static_cast<unsigned long long>(limit_ - ceiling_),
             static_cast<unsigned long long>(limit_),
             released != 0 ? " after releasing cached memory" : "");
     return false;

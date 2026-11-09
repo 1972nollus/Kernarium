@@ -25,9 +25,11 @@ void MemoryPressure::unsubscribe() noexcept
 bool MemoryPressure::step(
     Clock::time_point now, const Reading& reading) noexcept
 {
-    /* Compared as "usage >= B - margin" so that no sum can overflow. */
-    const std::uint64_t threshold = reading.budgetBytes -
-        std::min(reading.budgetBytes, margin);
+    /* Compared as "usage >= C - margin" so that no sum can overflow. */
+    const std::uint64_t ceiling = reading.ceilingBytes != 0
+        ? std::min(reading.ceilingBytes, reading.budgetBytes)
+        : reading.budgetBytes;
+    const std::uint64_t threshold = ceiling - std::min(ceiling, margin);
     high_ = reading.budgetBytes != 0 && reading.usageBytes >= threshold;
 
     bool changed = false;
