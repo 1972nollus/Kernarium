@@ -303,8 +303,10 @@ it. The bridge fields used below are defined by the comments in
   holder lines `<pid> <bytes> <idle_ms> <contexts> <comm>`, the host's last
   report. A read formats that report and never waits for the host. A write of
   `arm <min_bytes> <min_idle_ms>`, `refresh` or `disarm` queues one query and
-  returns, and a stored report calls `sysfs_notify()`. Without the feature
-  there is no file, and no ioctl or other interface changes
+  returns, and a stored report calls `sysfs_notify()`. The file goes with the
+  minor's directory when the DRM device is unplugged, at shutdown as at
+  removal, and a power-off prints nothing about it. Without the feature there
+  is no file, and no ioctl or other interface changes
   (`guest-virtgpu-memory-report`).
 - A file's handles opened before its Virtio-GPU context exists are attached when
   the context is created. The primary plane accepts ARGB8888 as well as
