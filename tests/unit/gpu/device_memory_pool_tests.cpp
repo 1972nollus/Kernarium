@@ -279,27 +279,49 @@ void accountedBytesCountOnlyWhatTheSystemCounts()
 
     /* Metal counts a no-copy import at its full size; the memory the GPU
      * holds for the process is what remains, unless the kernel's graphics
-     * ledger says more. */
-    require(accountedGpuBytes(100 * page, 0, 0) == 100 * page,
+     * ledger says more. Here the ledger holds only heaps. */
+    require(accountedGpuBytes(100 * page, 0, 0, 0) == 100 * page,
         "with nothing imported the counter stands");
-    require(accountedGpuBytes(100 * page, 30 * page, 0) == 70 * page,
+    require(accountedGpuBytes(100 * page, 30 * page, 0, 0) == 70 * page,
         "an import is left out of the counter");
-    require(accountedGpuBytes(100 * page, 30 * page, 60 * page) == 70 * page,
+    require(accountedGpuBytes(100 * page, 30 * page, 60 * page, 60 * page) ==
+            70 * page,
         "the larger of the counter less imports and the ledger");
-    require(accountedGpuBytes(100 * page, 30 * page, 80 * page) == 80 * page,
+    require(accountedGpuBytes(100 * page, 30 * page, 80 * page, 80 * page) ==
+            80 * page,
         "the ledger is a floor the imports cannot lower");
-    require(accountedGpuBytes(100 * page, 100 * page, 5 * page) == 5 * page,
+    require(accountedGpuBytes(100 * page, 100 * page, 5 * page, 5 * page) ==
+            5 * page,
         "a counter that is all imports leaves the ledger");
 
-    /* The two are read at different instants: an import larger than the
-     * counter reads as nothing made, not as a wrapped number. */
-    require(accountedGpuBytes(10 * page, 30 * page, 0) == 0,
+    /* What the ledger holds beyond the resident heaps, the driver's command
+     * storage, is memory the counter does not hold, and the counter's
+     * IOSurfaces are memory the ledger does not: both count. */
+    require(accountedGpuBytes(100 * page, 0, 80 * page, 60 * page) ==
+            120 * page,
+        "the IOSurfaces and the command storage both count");
+    require(accountedGpuBytes(100 * page, 30 * page, 60 * page, 50 * page) ==
+            80 * page,
+        "the command storage adds to the counter less imports");
+    require(accountedGpuBytes(100 * page, 0, 40 * page, 60 * page) ==
+            100 * page,
+        "heaps the ledger does not hold yet subtract nothing");
+    require(accountedGpuBytes(10 * page, 0, 50 * page, 40 * page) ==
+            50 * page,
+        "never less than the ledger");
+
+    /* The readings are taken at different instants: an import larger than
+     * the counter reads as nothing made, not as a wrapped number. */
+    require(accountedGpuBytes(10 * page, 30 * page, 0, 0) == 0,
         "an import past the counter does not wrap");
-    require(accountedGpuBytes(10 * page, 30 * page, 4 * page) == 4 * page,
+    require(accountedGpuBytes(10 * page, 30 * page, 4 * page, 4 * page) ==
+            4 * page,
         "and leaves the ledger");
     constexpr std::uint64_t most = std::numeric_limits<std::uint64_t>::max();
-    require(accountedGpuBytes(most, 0, 0) == most, "the largest counter");
-    require(accountedGpuBytes(0, most, 0) == 0, "the largest import");
+    require(accountedGpuBytes(most, 0, 0, 0) == most, "the largest counter");
+    require(accountedGpuBytes(0, most, 0, 0) == 0, "the largest import");
+    require(accountedGpuBytes(most, 0, most, 0) == most,
+        "a sum past the largest number saturates");
 }
 
 /* Metal's counter falls the moment memory is freed, and the graphics ledger
@@ -310,8 +332,10 @@ struct Accounts {
     Counter ledger;
     [[nodiscard]] std::uint64_t allocated() const
     {
+        // Every byte of the ledger here is a heap the counter holds too.
+        const std::uint64_t footprint = ledger.bytes.load();
         return uml::gpu::accountedGpuBytes(
-            metal.bytes.load(), 0, ledger.bytes.load());
+            metal.bytes.load(), 0, footprint, footprint);
     }
     [[nodiscard]] std::uint64_t prompt() const
     {
@@ -568,8 +592,9 @@ void importsDoNotFillThePool()
     Counter ledger;
     auto accounted = [&] {
         const std::uint64_t lent = imported.bytes.load();
+        const std::uint64_t footprint = ledger.bytes.load();
         return uml::gpu::accountedGpuBytes(
-            metal.bytes.load(), lent, ledger.bytes.load());
+            metal.bytes.load(), lent, footprint, footprint);
     };
     DeviceMemoryPool pool(100 * page, accounted, page);
     metal.bytes = 90 * page;

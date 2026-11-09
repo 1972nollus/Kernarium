@@ -69,8 +69,8 @@ constexpr std::uint32_t firstConsumerResource = 1;
     return result == ENOMEM || result == -ENOMEM;
 }
 
-// What the pool counts: the larger of Metal's allocation and the graphics
-// footprint, since nothing here is imported.
+// What the process holds by the larger of Metal's allocation and the graphics
+// footprint, since nothing here is imported; the pool counts at least this.
 [[nodiscard]] std::uint64_t used() noexcept
 {
     return std::max(uml::platform::hostGpuAllocatedBytes(),

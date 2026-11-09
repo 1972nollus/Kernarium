@@ -247,23 +247,32 @@ the GPU a fixed budget, B, computed once at launch from the process's memory
 limit and the guest's memory (the formula is in [memory
 architecture](architecture.md#memory-and-executable-code)). The budget is one
 pool (`device/gpu/device_memory_pool.*`) for everything the host GPU holds for
-the process: the larger of Metal's allocation counter less the host memory the
-drivers only import, and the graphics ledger the system counts the process by.
-The renderer shrinks every advertised heap to B and bounds every heap budget it
-reports by the pool's headroom, so a guest sizes its allocations from B less
-what the host already holds.
+the process: Metal's allocation counter less the host memory the drivers only
+import, plus what the graphics ledger the system counts the process by holds
+beyond the heaps KosmicKrisp made resident, which both hold. The counter holds
+the IOSurfaces of presentation and decoding, which the ledger does not, and the
+ledger the driver's command storage, which the counter does not, so both count
+(`gpu-host-gl-surface-and-command-storage`); the host's own Metal textures and
+buffers, which both hold too, count twice. The renderer shrinks every
+advertised heap to B and bounds every heap budget it reports by the pool's
+headroom, so a guest sizes its allocations from B less what the host already
+holds.
 
 KosmicKrisp is the one place every allocation passes: every device the process
 creates, Venus guests' and host GL's alike, reserves a heap from the pool before
 Metal makes it, so allocations that each fit alone never together take the
-process past B. A reservation that does not fit first frees what the host GL
-driver caches and is decided again. Memory the host frees leaves Metal's counter
-at once but the ledger only later, within milliseconds or at its next sweep. The
-pool sees the release in Metal's counter, and when the request would fit once
-the ledger had caught up with it, waits for the ledger (re-reading it every
-millisecond, for 300 ms at most) rather than refuse. A request that follows no
-release, or would not fit even then, is refused at once, and a wait that
-reached its bound is not repeated until Metal's counter falls again.
+process past B. The ledger counts a heap only once its pages are resident, so
+the driver makes each heap resident before its reservation ends, and a burst of
+creations with no work between them is refused at B
+(`gpu-host-gl-allocation-burst`). A reservation that does not fit first frees
+the buffers the host GL driver caches, and the command storage it has left
+unused for a while, and is decided again. Memory the host frees leaves Metal's
+counter at once but the ledger only later, within milliseconds or at its next
+sweep. The pool sees the release in Metal's counter, and when the request would
+fit once the ledger had caught up with it, waits for the ledger (re-reading it
+every millisecond, for 300 ms at most) rather than refuse. A request that
+follows no release, or would not fit even then, is refused at once, and a wait
+that reached its bound is not repeated until Metal's counter falls again.
 
 - `vkAllocateMemory` of any type is refused with
   `VK_ERROR_OUT_OF_DEVICE_MEMORY` when the pool cannot hold it. That covers
@@ -271,19 +280,22 @@ reached its bound is not repeated until Metal's counter falls again.
   makes for the guest is reserved before its pages are made. Imported memory is
   neither charged nor counted: Metal counts it in full, so KosmicKrisp reports
   the bytes it imports and the pool leaves them out. Command, descriptor and
-  query pools, presentation, the VNC surface and decoder surfaces are counted
-  once Metal does and never refused.
-- OpenGL: a refused texture or buffer makes the renderer give back what it
-  holds for finished work and create the resource once more: it finishes and
-  trims every context, frees the deferred shared-memory segments and what the
+  query pools, pipelines, the driver's command storage, presentation, the VNC
+  surface and decoder surfaces are counted and never refused, and they, with
+  the geometry heap floor below, are the only way usage passes B.
+- OpenGL: a refused texture or buffer makes the renderer give back what it holds
+  for finished work and create the resource once more: it finishes and trims
+  every context, frees the deferred shared-memory segments and the buffers the
   host drivers cache, and waits for the freed memory to count in the pool, for
-  300 ms at most (`gpu-host-gl-reclaim-retry`). A reclaim that did not help
-  rules out another until a resource has been destroyed or a quarter of a
-  second has passed. A resource that still does not fit fails the creation with
-  `ENOMEM`, which the device answers as out of memory when the guest created the
-  resource with its own command: the guest kernel fails the creation ioctl and
-  the guest's GL driver reports `GL_OUT_OF_MEMORY`. The context, the renderer
-  and every resource made within the budget stay as they were
+  300 ms at most (`gpu-host-gl-reclaim-retry`). Taking any of that again goes
+  through the pool. The drivers' command storage does not, so it goes only once
+  it has been unused for about a second. A reclaim that did not help rules out
+  another until a resource has been destroyed or a quarter of a second has
+  passed. A resource that still does not fit fails the creation with `ENOMEM`,
+  which the device answers as out of memory when the guest created the resource
+  with its own command: the guest kernel fails the creation ioctl and the
+  guest's GL driver reports `GL_OUT_OF_MEMORY`. The context, the renderer and
+  every resource made within the budget stay as they were
   (`gpu-host-gl-device-memory-budget`). A resource created inside a command
   buffer, such as a gralloc blob's storage, loses the answer there: the
   renderer drops the rest of that buffer and remembers the refused blob id, so
