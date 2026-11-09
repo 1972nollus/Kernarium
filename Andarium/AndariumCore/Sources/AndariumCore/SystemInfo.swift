@@ -8,8 +8,13 @@ import Foundation
 public struct SystemInfo: Equatable, Sendable {
     /// The system's version number as the screens say it ("17").
     public var version: String
-    /// The release identifier, which names this build everywhere.
+    /// The release identifier, which names this build everywhere. A screen
+    /// shows its `ReleaseLabel` instead; the ID itself is what reports,
+    /// records and logs carry.
     public var release: String
+    /// The LineageOS major version the release is based on (24), as the
+    /// release's product family names it; nil where the release records none.
+    public var lineageMajor: Int?
     /// The system's own build identifier.
     public var buildID: String?
     /// The security patch level as the Info screen words it ("1 October
@@ -24,12 +29,13 @@ public struct SystemInfo: Equatable, Sendable {
     public var appVersion: String
 
     public init(
-        version: String, release: String, buildID: String? = nil,
+        version: String, release: String, lineageMajor: Int? = nil, buildID: String? = nil,
         securityPatch: String? = nil, kernel: String, architecture: String,
         abis: [String] = [], appVersion: String
     ) {
         self.version = version
         self.release = release
+        self.lineageMajor = lineageMajor
         self.buildID = buildID
         self.securityPatch = securityPatch
         self.kernel = kernel
@@ -75,14 +81,14 @@ public struct SystemInfo: Equatable, Sendable {
 
         // The family "lineage-24-mainline-6.18-4k" is the one release line the app carries.
         let parts = family.split(separator: "-")
-        guard parts.count >= 2, parts[0] == "lineage", Int(parts[1]) != nil else {
+        guard parts.count >= 2, parts[0] == "lineage", let lineageMajor = Int(parts[1]) else {
             throw ManifestError.missing("product_family")
         }
         // "6.18.54-g4bcc3653b86a" is Linux 6.18.54.
         let version = kernelRelease.split(separator: "-", maxSplits: 1).first.map(String.init) ?? kernelRelease
 
         self.init(
-            version: String(major), release: release,
+            version: String(major), release: release, lineageMajor: lineageMajor,
             buildID: android?["build_id"] as? String,
             securityPatch: (android?["security_patch"] as? String).flatMap(Self.patchLevel),
             kernel: "Linux \(version)", architecture: "arm64, \(pageSize / 1024) KiB pages",
