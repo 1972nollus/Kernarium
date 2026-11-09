@@ -357,8 +357,8 @@ if(TARGET uml_gpu_service)
 
     # A creation the budget refuses only because a quiet guest context still
     # holds its deleted textures is not refused: the renderer finishes and
-    # trims every context, then creates the resource again. A real overcommit
-    # still fails with ENOMEM, in bounded time.
+    # trims the quiet contexts, then creates the resource again. A real
+    # overcommit still fails with ENOMEM, in bounded time.
     uml_add_gpu_unit_test(gpu-host-gl-reclaim-retry
         uml_gpu_host_gl_reclaim_retry_tests
         host_gl_reclaim_retry_tests.cpp

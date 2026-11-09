@@ -283,17 +283,19 @@ again.
   query pools, pipelines, the driver's command storage, presentation, the VNC
   surface and decoder surfaces are counted and never refused, and they, with
   the geometry heap floor below, are the only way usage passes B.
-- OpenGL: a refused texture or buffer makes the renderer give back what it
-  holds for finished work and create the resource once more: it finishes and
-  trims every context, frees the deferred shared-memory segments and what the
-  host drivers cache, and waits for the freed memory to count in the pool, for
-  300 ms at most (`gpu-host-gl-reclaim-retry`). A reclaim that did not help
-  rules out another until a resource has been destroyed or a quarter of a
-  second has passed. A resource that still does not fit fails the creation with
-  `ENOMEM`, which the device answers as out of memory when the guest created the
-  resource with its own command: the guest kernel fails the creation ioctl and
-  the guest's GL driver reports `GL_OUT_OF_MEMORY`. The context, the renderer
-  and every resource made within the budget stay as they were
+- OpenGL: a refused texture or buffer makes the renderer give back what it holds
+  for finished work and create the resource once more: it finishes and trims
+  only the contexts that have been quiet for a second, frees the deferred
+  shared-memory segments whose work has finished and what the host drivers have
+  cached unused for about a second, and waits for the freed memory to count in
+  the pool, for 300 ms at most (`gpu-host-gl-reclaim-retry`), so a refusal stays
+  final for a workload that is still drawing. A reclaim that did not help rules
+  out another until a resource has been destroyed or a quarter of a second has
+  passed. A resource that still does not fit fails the creation with `ENOMEM`,
+  which the device answers as out of memory when the guest created the resource
+  with its own command: the guest kernel fails the creation ioctl and the
+  guest's GL driver reports `GL_OUT_OF_MEMORY`. The context, the renderer and
+  every resource made within the budget stay as they were
   (`gpu-host-gl-device-memory-budget`). A resource created inside a command
   buffer, such as a gralloc blob's storage, loses the answer there: the
   renderer drops the rest of that buffer and remembers the refused blob id, so
