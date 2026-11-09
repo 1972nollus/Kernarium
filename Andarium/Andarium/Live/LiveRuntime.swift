@@ -129,6 +129,7 @@ final class LiveRuntime: RuntimeDriver {
         motion.problem = { [weak model] in model?.motionSensorsProblem = $0 }
         observeLifecycle()
         observeDisplayOptions()
+        observeStatsPreference()
     }
 
     // MARK: Storage
@@ -877,6 +878,19 @@ final class LiveRuntime: RuntimeDriver {
                 DisplayOptionsStore.save(model.displayOptions)
                 self.updateGuestRotation()
                 self.observeDisplayOptions()
+            }
+        }
+    }
+
+    private func observeStatsPreference() {
+        guard let model else { return }
+        withObservationTracking {
+            _ = model.showStatsToKeep
+        } onChange: {
+            Task { @MainActor in
+                guard let model = self.model else { return }
+                if let on = model.showStatsToKeep { StatsPreference().keep(on) }
+                self.observeStatsPreference()
             }
         }
     }

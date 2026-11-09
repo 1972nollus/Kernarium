@@ -107,11 +107,15 @@ struct AppEntry {
         let options = DisplayOptionsStore.load()
         model.retina = launch.retina ?? options.retina(memoryLimitBytes: MemoryLimit.bytes())
         model.retinaChosen = options.chosenRetina != nil
+        // The statistics show from the start where the person left them. A
+        // harness launch may state them instead, for its run only: it prints
+        // each reading when it shows them, and leaves the person's value
+        // kept. An App Store build states none.
+        let stats = StatsPreference().launch(stated: launch.statistics)
+        model.session.showStats = stats.showOnScreen
+        model.statsStatedByLaunch = !stats.keepsChanges
         #if !APP_STORE
-        // A harness launch shows the statistics from the start of the run and
-        // prints each reading.
-        model.session.showStats = launch.statistics
-        model.printsStatistics = launch.statistics
+        model.printsStatistics = launch.statistics == true
         #endif
 
         #if APP_STORE
@@ -330,7 +334,7 @@ enum MemoryLimit {
 
 /// The display option, kept across launches.
 enum DisplayOptionsStore {
-    private static let key = "andarium.display"
+    private static let key = DisplayOptions.storageKey
 
     static func load() -> DisplayOptions {
         guard let data = UserDefaults.standard.data(forKey: key),

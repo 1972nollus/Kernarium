@@ -137,6 +137,12 @@ final class AppModel {
 
     var sessionPreset = SessionPreset()
     var session = SessionState()
+    /// The launch stated whether the statistics show (automation): the value
+    /// belongs to that run and is not kept.
+    var statsStatedByLaunch = false
+    /// What is kept of Settings' "Show on screen" across launches
+    /// (`StatsPreference`); nil where the launch stated it.
+    var showStatsToKeep: Bool? { statsStatedByLaunch ? nil : session.showStats }
     /// How the last run ended, for the screen that says so.
     var runEnd = RunEnd(result: 0)
     var runUptimeSeconds: Int?
