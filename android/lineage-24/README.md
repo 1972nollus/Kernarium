@@ -173,8 +173,11 @@ microphone. The primary output has a 5 ms HAL buffer, so AudioFlinger gives it a
 fast mixer, and its writer runs at `SCHED_FIFO` priority 3 and writes straight
 into an ALSA ring of four such periods (route `p0005` and the
 `ro.hardware.audio.tinyalsa.*` vendor properties); the boot command line lowers
-the Virtio sound driver's minimum period to 5 ms for it. A Virtio battery
-device reports the Apple host's percentage and charging state.
+the Virtio sound driver's minimum period to 5 ms for it. A low-latency AAudio
+stream with a data callback that leaves its capacity unspecified starts with a
+two-burst buffer and grows it by one burst per underrun until the app sets a
+size (route `p0028`). A Virtio battery device reports the Apple host's
+percentage and charging state.
 The swipe lock screen can be turned on: `ro.lockscreen.disable.default` turns it
 off for user 0 of a fresh `/data` only.
 
