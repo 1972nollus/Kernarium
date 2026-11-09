@@ -378,8 +378,9 @@ when a refusal was counted; the guest then asks again.
   guest allocation that arrives faster than the margin fills in that second is
   still refused first, which the refusal edge reports.
 - Nothing is periodic and nothing wakes an idle device: the ledger's change
-  observer arms a coalescing 250 ms timer on the transport thread, and the
-  evaluator arms one deadline for its own next change.
+  observer arms a coalescing 250 ms timer on the transport thread, a refusal
+  moves that timer to the next millisecond, and the evaluator arms one
+  deadline for its own next change.
 - A query that sets `GUEST_RECLAIMS` records that a reclaimer in the guest is
   armed. The flag belongs to the connection, is cleared by a query without it
   and by a new connection, and reaches the applications as `guest_reclaims` of

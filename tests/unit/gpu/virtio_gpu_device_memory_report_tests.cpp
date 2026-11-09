@@ -611,12 +611,40 @@ void aRefusalRaisesTheEventAndTheNextReplyReportsIt()
         "a refusal was reported twice");
 }
 
+void aRefusalWakesTheTransportAtOnce()
+{
+    Guest guest;
+    guest.context(1, "t|pid=100|comm=p", 100 * mebibyte, 20s);
+    std::vector<VirtioGpuDevice::MemoryWake> wakes;
+    guest.device.setMemoryWake(
+        [&](VirtioGpuDevice::MemoryWake wake) { wakes.push_back(wake); });
+
+    /* A refusal made before the subscription is not news to it. */
+    guest.renderer.recordMemoryRefusal();
+    (void)ask(guest.device, query(VIRTIO_GPU_UML_MEMORY_SUBSCRIBE));
+    guest.ledger.venusMemory(1, mebibyte);
+    guest.renderer.recordMemoryRefusal();
+    guest.ledger.venusMemory(1, mebibyte);
+    guest.renderer.recordMemoryRefusal();
+    using enum VirtioGpuDevice::MemoryWake;
+    require(wakes == std::vector {coalesced, immediate, coalesced, immediate},
+        "a change was not coalesced or a refusal not woken at once");
+
+    /* A wake set again while subscribed knows the refusals so far. */
+    guest.device.setMemoryWake(
+        [&](VirtioGpuDevice::MemoryWake wake) { wakes.push_back(wake); });
+    wakes.clear();
+    guest.ledger.venusMemory(1, mebibyte);
+    require(wakes == std::vector {coalesced},
+        "a new wake took an old refusal for a new one");
+}
+
 void theGuestsSettingsEndWithTheConnection()
 {
     Guest guest;
     guest.context(1, "t|pid=100|comm=p", 100 * mebibyte, 20s);
     int wakes = 0;
-    guest.device.setMemoryWake([&] { ++wakes; });
+    guest.device.setMemoryWake([&](VirtioGpuDevice::MemoryWake) { ++wakes; });
 
     /* Nothing is woken until a guest subscribes. */
     guest.ledger.venusMemory(1, mebibyte);
@@ -675,6 +703,7 @@ int main()
     memoryTheHostCannotFreeIsPressureBeforeAnyRefusal();
     thePressureIsTheMarginAheadOfTheCeiling();
     aRefusalRaisesTheEventAndTheNextReplyReportsIt();
+    aRefusalWakesTheTransportAtOnce();
     theGuestsSettingsEndWithTheConnection();
     std::puts("Virtio-GPU memory report tests passed");
     return 0;
