@@ -1,0 +1,571 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+import AndariumCore
+import CryptoKit
+import Foundation
+import Testing
+@testable import Andarium
+
+/// The file browser on a real guest, through the production model, backend and
+/// adb channel (`GuestFilesTests` in AndariumCore has the protocol against a
+/// fake adbd). Runs alone with ANDARIUM_FILES_TESTS=1 and
+/// ANDARIUM_GUEST_INSTANCE=files, on a Mac (Designed for iPad: the Simulator
+/// has no Android guest). The large-file test also needs
+/// ANDARIUM_FILES_BIG=1 and a guest disk of 12 GiB or more
+/// (KERNARIUM_ANDROID_DISK_SIZE_GIB), and runs in a guest of its own.
+///
+/// Every file the tests make is in a folder of their own in Download, which the
+/// guest cleanup removes, and in the temporary directory of the host.
+@MainActor
+struct GuestFilesGuestTests {
+    private static let environment = ProcessInfo.processInfo.environment
+    private static let enabled = environment["ANDARIUM_FILES_TESTS"] == "1"
+    private static let bigEnabled = enabled && environment["ANDARIUM_FILES_BIG"] == "1"
+    private static let folder = GuestPath.child("FilexTest", of: GuestPath.child("Download", of: GuestPath.root))
+    private static let cleanup = "rm -rf '\(folder)' /storage/emulated/0/Pictures/fx_*; su 0 rm -rf /data/media/0/FilexRefused"
+    private let mib = Limits.bytesPerMiB
+
+    // MARK: Small flows
+
+    @Test(.timeLimit(.minutes(40)))
+    func browsingImportingAndExportingOnARealGuest() async throws {
+        guard Self.enabled, !Self.bigEnabled else { return }
+        try #require(Self.environment["ANDARIUM_GUEST_INSTANCE"] == "files")
+        try await withAndroidGuest(cleanupCommand: Self.cleanup) { model, operations in
+            let browser = try #require(model.fileBrowser)
+            let bench = try Bench()
+            defer { bench.remove() }
+            let guest = GuestSide(operations)
+            let work = Self.folder
+            #expect(await guest.waitForStorage(), "internal storage did not come up")
+            _ = try await guest.run("rm -rf '\(work)'; mkdir -p '\(work)'")
+            browser.route = [FolderRoute(path: GuestPath.root), FolderRoute(path: work)]
+
+            // MARK: Browsing
+            await browser.load(GuestPath.root)
+            guard case let .loaded(top)? = browser.listing(GuestPath.root) else {
+                Issue.record("internal storage did not list: \(String(describing: browser.listing(GuestPath.root)))")
+                return
+            }
+            let names = Set(top.map(\.name))
+            note("internal storage: \(names.sorted())")
+            #expect(names.isSuperset(of: ["Download", "DCIM", "Pictures", "Music"]))
+            #expect(top.allSatisfy { !$0.name.hasPrefix(".") }, "hidden entries are not listed")
+            #expect(top.filter { ["Download", "DCIM"].contains($0.name) }.allSatisfy { $0.isFolder })
+            #expect((browser.freeBytes ?? 0) > 0)
+
+            // An empty folder is empty, a missing one says so, and a folder
+            // Android refuses is told from an empty one.
+            _ = try await guest.run("mkdir -p '\(work)/Empty'")
+            await browser.load(work + "/Empty")
+            #expect(browser.listing(work + "/Empty") == .loaded([]))
+            await browser.load(work + "/Nothing here")
+            if case .failed? = browser.listing(work + "/Nothing here") {} else {
+                Issue.record("a missing folder: \(String(describing: browser.listing(work + "/Nothing here")))")
+            }
+            // adbd lists a folder the shell cannot open as an empty one, which is
+            // why a listing with nothing in it is asked of the shell's ls.
+            let denied = try await guest.run("ls -A /data/data; echo rc=$?")
+            note("ls /data/data as the shell: \(denied.text) \(String(decoding: denied.stderr, as: UTF8.self))")
+            let raw = try await AdbOperationRunner.run(
+                identity: operations.identity, clock: operations.clock, connector: operations.connector
+            ) { session in
+                try session.run { connection in
+                    session.watchdog.arm(idle: .seconds(30), overall: .seconds(60))
+                    let sync = try AdbSync(connection: connection)
+                    defer { sync.quit() }
+                    return try sync.list("/data/data").map(\.name)
+                }
+            }
+            note("adbd lists /data/data as \(raw)")
+            #expect(raw.filter { $0 != "." && $0 != ".." }.isEmpty, "adbd answers a refused folder with no entries")
+            #expect(denied.text.contains("rc=1") || denied.text.contains("rc=2") || !denied.stderr.isEmpty, "the shell refuses it")
+            // Inside internal storage: a folder made unreadable, if the storage
+            // emulation lets a mode be set at all.
+            let attempt = try await guest.run(
+                "mkdir '\(work)/Locked'; chmod 000 '\(work)/Locked'; echo chmod=$?; ls -A '\(work)/Locked'; echo ls=$?")
+            note("a folder made unreadable in internal storage: \(attempt.text) \(String(decoding: attempt.stderr, as: UTF8.self))")
+            await browser.load(work + "/Locked")
+            note("it lists as: \(String(describing: browser.listing(work + "/Locked")))")
+            if attempt.text.contains("ls=0") {
+                #expect(browser.listing(work + "/Locked") == .loaded([]))
+            } else {
+                #expect(browser.listing(work + "/Locked") == .refused)
+            }
+            _ = try await guest.run("chmod 700 '\(work)/Locked'; rmdir '\(work)/Locked'")
+
+            // MARK: Import
+            let day: TimeInterval = 86_400
+            let picks = [
+                try bench.pick("It's a note (1).txt", bytes: 4_096, seed: 1, modified: Date(timeIntervalSince1970: 1_577_966_400)),
+                try bench.jpeg("fx_photo.jpg", modified: Date(timeIntervalSince1970: 1_609_545_600)),
+                try bench.pick("blob.bin", bytes: 3 * Int(mib) + 17, seed: 2, modified: Date(timeIntervalSince1970: 1_640_000_000 + day)),
+            ]
+            await browser.load(work)
+            browser.received(picks)
+            var transfer = try #require(browser.transfer)
+            #expect(browser.busy)
+            // The guest's other operations wait for it.
+            let busyBefore = model.busy
+            model.createBugReport()
+            #expect(model.busy == busyBefore, "a bug report does not start during a transfer")
+            try await settle(transfer)
+            #expect(transfer.stage == .finished, "\(transfer.title) \(transfer.detail)")
+            #expect(transfer.items.allSatisfy { $0.state == .done && $0.moved == $0.size })
+            for pick in picks {
+                let path = GuestPath.child(pick.name, of: work)
+                #expect(try await guest.sha256(path) == bench.sha256(pick), "\(pick.name) arrived whole")
+                #expect(try await guest.size(path) == pick.size)
+                let modified = try await guest.modified(path)
+                #expect(modified == Int(pick.modified.timeIntervalSince1970), "\(pick.name) keeps its date: \(modified)")
+            }
+            let afterImport = try await guest.names(work)
+            #expect(!afterImport.contains(where: GuestFiles.isPartial), "\(afterImport)")
+            #expect(Set(afterImport) == ["It's a note (1).txt", "fx_photo.jpg", "blob.bin", "Empty"], "\(afterImport)")
+            await browser.load(work)
+            #expect(Set(browser.entries(in: work).map(\.name)) == Set(afterImport))
+            // The gallery's index knows the photo, and the Files app lists it.
+            let indexed = await guest.waitFor(
+                "content query --uri content://media/external/images/media --projection _display_name:_size --where \"_display_name='fx_photo.jpg'\"",
+                contains: "_display_name=fx_photo.jpg", seconds: 30)
+            #expect(indexed, "the media index has no row for the imported photo")
+            let shown = await guest.filesAppShows(folder: "Download/FilexTest", names: ["fx_photo.jpg", "blob.bin"])
+            note("the Files app lists the imports: \(shown)")
+            #expect(shown, "the guest's Files app does not list the imported files")
+
+            // MARK: Keep Both
+            let again = [
+                try bench.pick("It's a note (1).txt", bytes: 5_000, seed: 11, modified: .now),
+                try bench.pick("fx_new.txt", bytes: 100, seed: 12, modified: .now),
+            ]
+            browser.received(again)
+            let conflict = try #require(browser.conflict, "a name that is taken asks")
+            #expect(conflict.clashing.map(\.name) == ["It's a note (1).txt"])
+            browser.resolveConflict(.keepBoth)
+            transfer = try #require(browser.transfer)
+            try await settle(transfer)
+            #expect(transfer.stage == .finished)
+            let copy = GuestFileNames.freeName(for: "It's a note (1).txt", taken: Set(afterImport))
+            let original = GuestPath.child("It's a note (1).txt", of: work)
+            #expect(try await guest.sha256(original) == bench.sha256(picks[0]), "Keep Both leaves the first file")
+            #expect(try await guest.sha256(GuestPath.child(copy, of: work)) == bench.sha256(again[0]), "the copy is \(copy)")
+            #expect(try await guest.sha256(GuestPath.child("fx_new.txt", of: work)) == bench.sha256(again[1]))
+
+            // MARK: Replace
+            let replacement = try bench.pick("blob.bin", bytes: 2 * Int(mib) + 5, seed: 21, modified: Date(timeIntervalSince1970: 1_700_000_000))
+            _ = try await guest.run("mkdir -p '\(work)/Clash'; echo keep > '\(work)/Clash/inside.txt'")
+            await browser.load(work)
+            let overFolder = try bench.pick("Clash", bytes: 64, seed: 22, modified: .now)
+            browser.received([replacement, overFolder])
+            let replaceConflict = try #require(browser.conflict)
+            #expect(Set(replaceConflict.clashing.map(\.name)) == ["blob.bin", "Clash"])
+            #expect(replaceConflict.folders.contains("Clash") && !replaceConflict.folders.contains("blob.bin"))
+            browser.resolveConflict(.replace)
+            transfer = try #require(browser.transfer)
+            try await settle(transfer)
+            #expect(transfer.stage == .finished, "\(transfer.title) \(transfer.detail)")
+            let blob = GuestPath.child("blob.bin", of: work)
+            #expect(try await guest.sha256(blob) == bench.sha256(replacement), "Replace puts the new file in place")
+            #expect(try await guest.size(blob) == replacement.size)
+            #expect(try await guest.run("cat '\(work)/Clash/inside.txt'").text == "keep\n", "a folder is never replaced")
+            #expect(try await guest.sha256(GuestPath.child("Clash (1)", of: work)) == bench.sha256(overFolder), "the file goes beside the folder")
+            await guest.expectNoPartials(work, "after Replace")
+
+            // MARK: Skip
+            browser.received([try bench.pick("fx_new.txt", bytes: 7, seed: 31, modified: .now), try bench.pick("fx_skip.txt", bytes: 7, seed: 32, modified: .now)])
+            #expect(browser.conflict?.clashing.map(\.name) == ["fx_new.txt"])
+            browser.resolveConflict(.skip)
+            transfer = try #require(browser.transfer)
+            try await settle(transfer)
+            #expect(transfer.items.map(\.name) == ["fx_skip.txt"])
+            #expect(try await guest.names(work).contains("fx_skip.txt"))
+            #expect(try await guest.sha256(GuestPath.child("fx_new.txt", of: work)) == bench.sha256(again[1]), "Skip leaves the file alone")
+
+            // MARK: Cancel an import
+            let large = try bench.pick("cancel me.bin", bytes: 700 * Int(mib), seed: 41, modified: .now)
+            browser.received([large])
+            transfer = try #require(browser.transfer)
+            try await waitUntil("the import has moved 64 MiB", seconds: 120) { transfer.items[0].moved >= 64 * mib || !transfer.running }
+            #expect(transfer.running, "the import ran for long enough to cancel: \(transfer.detail)")
+            let whileMoving = try await guest.names(work)
+            #expect(whileMoving.contains(where: GuestFiles.isPartial), "the partial file exists while it moves: \(whileMoving)")
+            browser.closeTransfer()
+            #expect(browser.transfer == nil)
+            await guest.expectNoPartials(work, "after Cancel")
+            let afterCancel = try await guest.names(work)
+            #expect(!afterCancel.contains("cancel me.bin"), "Cancel leaves no file of that name")
+
+            // MARK: Cancel a Replace: the original stays whole
+            let before = try await guest.sha256(blob)
+            let heavy = try bench.pick("blob.bin", bytes: 700 * Int(mib), seed: 42, modified: .now)
+            await browser.load(work)
+            browser.received([heavy])
+            browser.resolveConflict(.replace)
+            transfer = try #require(browser.transfer)
+            try await waitUntil("the replacement has moved 64 MiB", seconds: 120) { transfer.items[0].moved >= 64 * mib || !transfer.running }
+            #expect(transfer.running)
+            browser.closeTransfer()
+            await guest.expectNoPartials(work, "after cancelling a Replace")
+            #expect(try await guest.sha256(blob) == before, "the file Replace would have replaced is whole")
+
+            // MARK: Leaving the foreground
+            browser.received([large])
+            transfer = try #require(browser.transfer)
+            try await waitUntil("the import has moved 64 MiB", seconds: 120) { transfer.items[0].moved >= 64 * mib || !transfer.running }
+            #expect(transfer.running)
+            browser.leftForeground()
+            try await waitUntil("the transfer stops", seconds: 60) { !transfer.running }
+            #expect(transfer.stage == .failed)
+            #expect(transfer.items[0].state == .failed(FileBrowserModel.leftForegroundReason), "\(transfer.items[0].state)")
+            await guest.expectNoPartials(work, "after leaving the foreground")
+            let afterStop = try await guest.names(work)
+            #expect(!afterStop.contains("cancel me.bin"), "\(afterStop)")
+            // Try Again carries it out.
+            browser.retryFailed()
+            try await settle(transfer)
+            #expect(transfer.stage == .finished, "\(transfer.title) \(transfer.detail)")
+            #expect(try await guest.sha256(GuestPath.child("cancel me.bin", of: work)) == bench.sha256(large))
+            browser.closeTransfer()
+
+            // MARK: Export
+            _ = try await guest.run("""
+                mkdir -p '\(work)/Tree/a/b' '\(work)/Tree/empty'; \
+                printf 'one' > '\(work)/Tree/one.txt'; printf 'two two' > '\(work)/Tree/a/two.txt'; \
+                head -c 300000 /dev/urandom > '\(work)/Tree/a/b/three.bin'; touch -d 2021-03-04 '\(work)/Tree/one.txt'
+                """)
+            await browser.load(work)
+            let selection = browser.entries(in: work).filter { ["blob.bin", "It's a note (1).txt", "Tree"].contains($0.name) }
+            #expect(selection.count == 3)
+            browser.selection = selection
+            var shared: [URL] = []
+            var finishShare: (@MainActor (Bool) -> Void)?
+            browser.presentShare = { files, finished in
+                shared = files
+                finishShare = finished
+                return true
+            }
+            browser.exportSelection()
+            transfer = try #require(browser.transfer)
+            try await waitUntil("the export is ready", seconds: 180) { transfer.stage != .running }
+            #expect(transfer.stage == .ready, "\(transfer.title) \(transfer.detail)")
+            #expect(Set(shared.map(\.lastPathComponent)) == ["blob.bin", "It's a note (1).txt", "Tree"], "\(shared)")
+            for url in shared where url.lastPathComponent != "Tree" {
+                let remote = GuestPath.child(url.lastPathComponent, of: work)
+                let remoteHash = try await guest.sha256(remote)
+                #expect(try Bench.sha256(of: url) == remoteHash, "\(url.lastPathComponent) arrived whole")
+            }
+            let tree = try #require(shared.first { $0.lastPathComponent == "Tree" })
+            let listing = try Bench.tree(tree)
+            let remoteTree = try await guest.run("cd '\(work)/Tree' && find . | sort").text.split(separator: "\n").map(String.init).filter { $0 != "." }
+            #expect(listing == remoteTree.map { String($0.dropFirst(2)) }, "the folder arrives as it is: \(listing) / \(remoteTree)")
+            let threeHash = try await guest.sha256(work + "/Tree/a/b/three.bin")
+            #expect(try Bench.sha256(of: tree.appendingPathComponent("a/b/three.bin")) == threeHash)
+            let oneDate = try FileManager.default.attributesOfItem(atPath: tree.appendingPathComponent("one.txt").path)[.modificationDate] as? Date
+            #expect(oneDate.map { Calendar.current.isDate($0, inSameDayAs: Date(timeIntervalSince1970: 1_614_816_000)) } == true, "\(String(describing: oneDate))")
+            // The action menu ends it: the copies go.
+            let staging = try #require(transfer.directory)
+            finishShare?(true)
+            #expect(transfer.stage == .finished)
+            #expect(!FileManager.default.fileExists(atPath: staging.path), "the staged copies are removed")
+
+            // MARK: Cancel an export
+            _ = try await guest.run("dd if=/dev/urandom of='\(work)/pull.bin' bs=1048576 count=300 2>&1 | tail -1")
+            await browser.load(work)
+            let pull = try #require(browser.entries(in: work).first { $0.name == "pull.bin" })
+            browser.export([pull])
+            transfer = try #require(browser.transfer)
+            try await waitUntil("the export has moved 16 MiB", seconds: 120) { transfer.items[0].moved >= 16 * mib || !transfer.running }
+            #expect(transfer.running)
+            let staged = try #require(transfer.directory)
+            browser.closeTransfer()
+            #expect(!FileManager.default.fileExists(atPath: staged.path), "Cancel removes the partial copy")
+
+            // An export interrupted by the foreground leaves nothing either, and runs again.
+            browser.export([pull])
+            transfer = try #require(browser.transfer)
+            try await waitUntil("the export has moved 16 MiB", seconds: 120) { transfer.items[0].moved >= 16 * mib || !transfer.running }
+            browser.leftForeground()
+            try await waitUntil("the export stops", seconds: 60) { !transfer.running }
+            #expect(transfer.stage == .failed)
+            #expect(transfer.items[0].state == .failed(FileBrowserModel.leftForegroundReason))
+            browser.retryFailed()
+            try await waitUntil("the export is ready again", seconds: 240) { transfer.stage != .running }
+            #expect(transfer.stage == .ready, "\(transfer.title) \(transfer.detail)")
+            let pulledHash = try await guest.sha256(work + "/pull.bin")
+            #expect(try Bench.sha256(of: try #require(transfer.staged.first)) == pulledHash)
+            browser.closeTransfer()
+
+            // MARK: USB debugging off
+            // The channel is the application's own and works either way; the
+            // browser follows the setting the person sees in Settings.
+            _ = try? await operations.shell("settings put global adb_enabled 0; settings put global adb_wifi_enabled 0")
+            try await waitUntil("USB debugging reads as off", seconds: 90) {
+                await model.refreshUsbDebugging()
+                return model.session.usbDebugging == false
+            }
+            #expect(!model.adbOverNetworkAvailable, "the browser is unavailable with USB debugging off")
+            _ = try? await operations.shell("settings put global adb_enabled 1")
+            try await waitUntil("USB debugging reads as on", seconds: 90) {
+                await model.refreshUsbDebugging()
+                return model.session.usbDebugging == true
+            }
+            #expect(model.adbOverNetworkAvailable)
+            await browser.load(work)
+            #expect(browser.entries(in: work).contains { $0.name == "blob.bin" })
+            browser.sheetClosed()
+        }
+    }
+
+    // MARK: A file over 4 GiB
+
+    @Test(.timeLimit(.minutes(60)))
+    func aFileOver4GiBGoesBothWays() async throws {
+        guard Self.bigEnabled else { return }
+        try #require(Self.environment["ANDARIUM_GUEST_INSTANCE"] == "files-big")
+        try await withAndroidGuest(cleanupCommand: Self.cleanup) { model, operations in
+            let browser = try #require(model.fileBrowser)
+            let bench = try Bench()
+            defer { bench.remove() }
+            let guest = GuestSide(operations)
+            let work = Self.folder
+            #expect(await guest.waitForStorage(), "internal storage did not come up")
+            _ = try await guest.run("rm -rf '\(work)'; mkdir -p '\(work)'")
+            browser.route = [FolderRoute(path: GuestPath.root), FolderRoute(path: work)]
+            await browser.load(work)
+
+            let length = 4 * Int(Limits.bytesPerGiB) + 13 * Int(mib) + 1
+            let big = try bench.pick("over 4 GiB.bin", bytes: length, seed: 51, modified: Date(timeIntervalSince1970: 1_650_000_000))
+            let started = ContinuousClock.now
+            browser.received([big])
+            var transfer = try #require(browser.transfer)
+            try await settle(transfer, seconds: 1_500)
+            note("imported \(length) bytes in \(ContinuousClock.now - started)")
+            #expect(transfer.stage == .finished, "\(transfer.title) \(transfer.detail)")
+            let path = GuestPath.child("over 4 GiB.bin", of: work)
+            #expect(try await guest.size(path) == UInt64(length), "the guest has every byte")
+            // The first and the last megabytes, and one past 4 GiB, on the guest's side.
+            for block in [0, 1_024, 4_096, 4_105] {
+                let remote = try await guest.run("dd if='\(path)' bs=1048576 skip=\(block) count=1 2>/dev/null | sha256sum", seconds: 600).text
+                let local = try Bench.sha256(of: bench.url(for: big), blockOffset: block)
+                #expect(remote.hasPrefix(local), "block \(block) of the large file")
+            }
+            await browser.load(work)
+            let listed = try #require(browser.entries(in: work).first { $0.name == "over 4 GiB.bin" })
+            #expect(listed.size == UInt64(length), "the listing says \(listed.size): the sync v2 listing carries sizes past 4 GiB")
+
+            // Out again, and the same bytes.
+            browser.closeTransfer()
+            browser.export([listed])
+            transfer = try #require(browser.transfer)
+            let pulled = ContinuousClock.now
+            try await waitUntil("the export is ready", seconds: 2_400) { transfer.stage != .running }
+            note("exported \(length) bytes in \(ContinuousClock.now - pulled)")
+            #expect(transfer.stage == .ready, "\(transfer.title) \(transfer.detail)")
+            let staged = try #require(transfer.staged.first)
+            #expect(try Bench.sha256(of: staged) == bench.sha256(big), "the exported file is the imported one")
+            browser.closeTransfer()
+            browser.sheetClosed()
+        }
+    }
+
+    // MARK: Support
+
+    private func note(_ text: String) { print("FILEX: \(text)") }
+
+    private func waitUntil(
+        _ what: String, seconds: Int, _ condition: @MainActor () async -> Bool
+    ) async throws {
+        let deadline = ContinuousClock.now + .seconds(seconds)
+        while ContinuousClock.now < deadline {
+            if await condition() { return }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        Issue.record("timed out waiting for \(what)")
+        throw CancellationError()
+    }
+
+    /// The transfer is over, whatever it ended in.
+    private func settle(_ transfer: FileTransfer, seconds: Int = 600) async throws {
+        try await waitUntil("the transfer ends", seconds: seconds) { !transfer.running }
+    }
+
+    /// The guest's side, through the application's own channel.
+    private struct GuestSide {
+        let operations: AdbGuestOperations
+
+        init(_ operations: AdbGuestOperations) { self.operations = operations }
+
+        @discardableResult
+        func run(_ command: String, seconds: Int = 120) async throws -> ShellResult {
+            try await operations.shell(command, limit: .seconds(seconds))
+        }
+
+        /// One word of the guest's shell.
+        static func quoted(_ value: String) -> String {
+            "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        }
+
+        func sha256(_ path: String) async throws -> String {
+            let text = try await run("sha256sum \(Self.quoted(path))", seconds: 600).text
+            return String(text.prefix { !$0.isWhitespace })
+        }
+
+        func size(_ path: String) async throws -> UInt64 {
+            let text = try await run("stat -c %s \(Self.quoted(path))").text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return UInt64(text) ?? 0
+        }
+
+        func modified(_ path: String) async throws -> Int {
+            let text = try await run("stat -c %Y \(Self.quoted(path))").text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return Int(text) ?? 0
+        }
+
+        /// Every name in a folder, hidden ones too.
+        func names(_ folder: String) async throws -> [String] {
+            try await run("ls -A '\(folder)'").text.split(separator: "\n").map(String.init)
+        }
+
+        /// Android has finished booting before its internal storage is mounted
+        /// and the media provider has made the standard folders.
+        func waitForStorage(seconds: Int = 240) async -> Bool {
+            await waitFor("ls -A /storage/emulated/0", contains: "Download", seconds: seconds)
+        }
+
+        func waitFor(_ command: String, contains needle: String, seconds: Int) async -> Bool {
+            let deadline = ContinuousClock.now + .seconds(seconds)
+            while ContinuousClock.now < deadline {
+                if let text = try? await run(command).text, text.contains(needle) { return true }
+                try? await Task.sleep(for: .seconds(2))
+            }
+            return false
+        }
+
+        /// A stopped transfer's temporary file is removed on a connection of
+        /// its own, a moment after the transfer ends.
+        func expectNoPartials(_ folder: String, _ when: String) async {
+            let deadline = ContinuousClock.now + .seconds(60)
+            var names: [String] = []
+            while ContinuousClock.now < deadline {
+                names = (try? await self.names(folder)) ?? []
+                if !names.contains(where: GuestFiles.isPartial) { return }
+                try? await Task.sleep(for: .seconds(1))
+            }
+            Issue.record("a partial file is left \(when): \(names)")
+        }
+
+        /// The guest's own Files app, opened on the folder, lists these names.
+        func filesAppShows(folder: String, names: [String]) async -> Bool {
+            let encoded = folder.replacingOccurrences(of: "/", with: "%2F")
+            // A fresh guest waits in LineageOS's setup wizard, which covers every
+            // other app; this guest is the test's own.
+            _ = try? await run(
+                "settings put global device_provisioned 1; settings put secure user_setup_complete 1; pm disable-user --user 0 org.lineageos.setupwizard; am force-stop org.lineageos.setupwizard; sleep 2; input keyevent KEYCODE_HOME; sleep 2")
+            let started = try? await run(
+                "am start -a android.intent.action.VIEW -t vnd.android.document/directory -d 'content://com.android.externalstorage.documents/document/primary%3A\(encoded)' 2>&1 | tail -3")
+            let deadline = ContinuousClock.now + .seconds(90)
+            var seen: [String] = []
+            while ContinuousClock.now < deadline {
+                try? await Task.sleep(for: .seconds(4))
+                guard let dump = try? await run(
+                    "uiautomator dump /data/local/tmp/filex-ui.xml >/dev/null 2>&1; cat /data/local/tmp/filex-ui.xml", seconds: 60).text
+                else { continue }
+                seen = dump.components(separatedBy: "text=\"").dropFirst().compactMap { $0.components(separatedBy: "\"").first }.filter { !$0.isEmpty }
+                if names.allSatisfy({ dump.contains("text=\"\($0)\"") }) {
+                    _ = try? await run("rm -f /data/local/tmp/filex-ui.xml; input keyevent KEYCODE_HOME")
+                    return true
+                }
+            }
+            print("FILEX: am start said: \(started?.text ?? "nothing"); the screen's texts: \(seen.prefix(40))")
+            let top = try? await run("dumpsys activity activities | grep -E 'topResumedActivity' | head -3; pm list packages | grep -i documentsui")
+            print("FILEX: resumed: \(top?.text ?? "unknown")")
+            _ = try? await run("rm -f /data/local/tmp/filex-ui.xml; input keyevent KEYCODE_HOME")
+            return false
+        }
+    }
+
+    /// The host's side: files made for the tests, in a folder of their own.
+    private struct Bench {
+        let directory: URL
+
+        init() throws {
+            directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("FilexBench-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+
+        func remove() { try? FileManager.default.removeItem(at: directory) }
+
+        func url(for pick: FilePick) -> URL { pick.url ?? directory.appendingPathComponent(pick.name) }
+
+        /// A folder of its own for each file, so two files of one name differ.
+        private func slot(_ name: String) throws -> URL {
+            let folder = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            return folder.appendingPathComponent(name)
+        }
+
+        /// A file of `bytes` bytes whose every megabyte differs, from `seed`.
+        func pick(_ name: String, bytes: Int, seed: UInt8, modified: Date) throws -> FilePick {
+            let url = try slot(name)
+            let manager = FileManager.default
+            manager.createFile(atPath: url.path, contents: nil)
+            let handle = try FileHandle(forWritingTo: url)
+            defer { try? handle.close() }
+            var block = Data(count: 1 << 20)
+            var state = UInt64(seed) &* 0x9E37_79B9_7F4A_7C15 | 1
+            block.withUnsafeMutableBytes { buffer in
+                for index in stride(from: 0, to: buffer.count, by: 8) {
+                    state ^= state << 13
+                    state ^= state >> 7
+                    state ^= state << 17
+                    buffer.storeBytes(of: state, toByteOffset: index, as: UInt64.self)
+                }
+            }
+            var written = 0
+            var counter: UInt64 = 0
+            while written < bytes {
+                let count = min(block.count, bytes - written)
+                block.withUnsafeMutableBytes { $0.storeBytes(of: counter, toByteOffset: 0, as: UInt64.self) }
+                try handle.write(contentsOf: block.prefix(count))
+                written += count
+                counter += 1
+            }
+            try manager.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+            return FilePick(url: url, name: name, size: UInt64(bytes), modified: modified)
+        }
+
+        /// A real, tiny JPEG.
+        func jpeg(_ name: String, modified: Date) throws -> FilePick {
+            let data = Data(base64Encoded: "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=")!
+            let url = try slot(name)
+            try data.write(to: url)
+            try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+            return FilePick(url: url, name: name, size: UInt64(data.count), modified: modified)
+        }
+
+        func sha256(_ pick: FilePick) throws -> String { try Self.sha256(of: url(for: pick)) }
+
+        static func sha256(of url: URL, blockOffset: Int? = nil) throws -> String {
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            var hasher = SHA256()
+            if let blockOffset {
+                try handle.seek(toOffset: UInt64(blockOffset) << 20)
+                hasher.update(data: try handle.read(upToCount: 1 << 20) ?? Data())
+            } else {
+                while let chunk = try handle.read(upToCount: 4 << 20), !chunk.isEmpty {
+                    hasher.update(data: chunk)
+                }
+            }
+            return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        }
+
+        /// The paths below a folder, sorted, folders and files.
+        static func tree(_ url: URL) throws -> [String] {
+            let base = url.standardizedFileURL.path
+            let enumerator = FileManager.default.enumerator(atPath: base)
+            var paths: [String] = []
+            while let path = enumerator?.nextObject() as? String { paths.append(path) }
+            return paths.sorted()
+        }
+    }
+}
