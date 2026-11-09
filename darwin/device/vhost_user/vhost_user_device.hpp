@@ -131,6 +131,17 @@ public:
     {
         return false;
     }
+    /* Whether the transport answers a guest's kick before it runs the
+     * kicked queue rather than after. The kicking vCPU waits for that answer
+     * with its interrupts off, so a device whose requests can run long, or
+     * whose guest waits for their completions anyway, frees the vCPU for the
+     * length of the work. While such a queue runs the guest adds buffers
+     * without kicking, and the transport looks for them before it finishes.
+     */
+    [[nodiscard]] virtual bool answersKicksBeforeRunning() const noexcept
+    {
+        return false;
+    }
     // Called only on the transport worker. Returned spans are borrowed until
     // reset; devices must release all retained guest state in reset().
     virtual void setGuestMapper(GuestMapper) {}

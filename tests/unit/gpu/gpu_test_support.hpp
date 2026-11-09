@@ -484,6 +484,13 @@ public:
         return std::atomic_ref<std::uint16_t>(word(usedOffset))
             .load(std::memory_order_acquire);
     }
+    [[nodiscard]] std::uint16_t usedFlags() const
+    {
+        return std::atomic_ref<std::uint16_t>(
+                   *reinterpret_cast<std::uint16_t*>(
+                       memory_.data() + usedOffset))
+            .load(std::memory_order_acquire);
+    }
     [[nodiscard]] protocol::VirtqueueUsedElement usedElement(
         std::size_t index) const
     {
