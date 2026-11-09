@@ -1402,6 +1402,59 @@ void VhostUserServer::processQueue(std::uint32_t index)
         notifyQueue(index);
 }
 
+void VhostUserServer::suppressKicks(
+    std::uint32_t index,
+    bool suppress) noexcept
+{
+    if (index >= queues_.size())
+        return;
+    const auto& queue = queues_[index];
+    if (queue.size == 0)
+        return;
+    auto* used = translate(
+        queue.usedAddress, protocol::splitRingHeaderSize, true);
+    if (used == nullptr ||
+        reinterpret_cast<std::uintptr_t>(used) % alignof(std::uint16_t) != 0)
+        return;
+    storeSharedRingValue(
+        used,
+        suppress ? protocol::usedSuppressNotification : std::uint16_t {0},
+        std::memory_order_release);
+    /* The guest publishes a buffer and then reads this flag; the server
+     * clears the flag and then reads the published index. */
+    if (!suppress)
+        std::atomic_thread_fence(std::memory_order_seq_cst);
+}
+
+void VhostUserServer::runAnsweredKick(std::uint32_t index)
+{
+    if (index >= queues_.size())
+        throw std::runtime_error("invalid virtqueue index");
+    for (;;) {
+        const auto taken = queues_[index].lastAvailable;
+        suppressKicks(index, true);
+        /* Counted once the guest is told not to kick: a buffer it publishes
+         * from here on may come without one. */
+        const auto waitingBefore = waitingBuffers(index);
+        try {
+            processQueue(index);
+        } catch (...) {
+            suppressKicks(index, false);
+            throw;
+        }
+        suppressKicks(index, false);
+        if (waitingBuffers(index) == 0)
+            return;
+        /* A pass that took nothing of buffers already waiting when it began
+         * declined them: their device, gate or enable runs the queue again.
+         * A pass that began on an empty ring, because another run had
+         * drained it, declined nothing, and what waits now came unkicked
+         * while kicks were off. */
+        if (queues_[index].lastAvailable == taken && waitingBefore != 0)
+            return;
+    }
+}
+
 void VhostUserServer::handleMessage(
     int socket,
     VhostUserMessage& message)
@@ -1674,14 +1727,19 @@ void VhostUserServer::handleMessage(
              protocol::protocolFeatureInbandNotifications) == 0) {
             throw std::runtime_error("VRING_KICK was not negotiated");
         }
-        if ((message.header.flags & protocol::vhostUserNeedReply) == 0)
-            throw std::runtime_error("VRING_KICK requires reply acknowledgement");
+        // A kick may ask for no acknowledgement, so that the kicking vCPU
+        // never waits for the queue; a kick that asks for one gets it.
         const auto state =
             payloadAs<protocol::VringState>(message.payload);
         if (state.index >= queues_.size() || state.value != 0)
             throw std::runtime_error("invalid VRING_KICK");
         queues_[state.index].started = true;
-        processAcceptedQueue(state.index);
+        if (device_->answersKicksBeforeRunning()) {
+            acknowledgeAcceptedRequest();
+            runAnsweredKick(state.index);
+        } else {
+            processAcceptedQueue(state.index);
+        }
         break;
     }
     case protocol::VhostRequest::setVringCall: {

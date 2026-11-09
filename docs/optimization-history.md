@@ -538,6 +538,7 @@ often a fast path is taken before assuming its cost is the thing to reduce.
 | Give a macOS measurement run the container-file segments of iOS | Accepted as a switch, not a default. `shm_open` is denied on iOS, so texture exports and Venus blobs are unlinked files outside the footprint, but on macOS they read high; `VIRGL_ANON_FILE_UNLINKED=1` takes the file. Dirty file pages can be written back to the volume. |
 | Measure the presentation memory without a window | Accepted. The iPad allocates drawables and a frame-mirror pool a VNC run never does, and `--gpu-display=native` opens a window on a shared Mac; a windowless layer with three drawables and a three-buffer mirror pool matches it. |
 | Trim a guest GL context that has gone idle | Accepted, no cost to a submitting context. A Zink context keeps completed batch states and their resources until its next batch, and glthread keeps a deleted texture's last reference until the next fence, so an idle guest held up to five full-screen heaps. One second after the last command the renderer flushes and `eglTrimContextMESA` resets completed states: release idle state by explicit trim. |
+| Offer ETC and ASTC to the guest on a desktop GL host | Accepted. virglrenderer listed them only for a GLES host, so guest Mesa decoded every ETC or ASTC texture to RGBA8 at four or more times its size. Its ASTC sRGB entries also carried the linear formats' numbers. |
 
 ## Guest timer policy
 

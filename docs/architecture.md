@@ -448,14 +448,18 @@ waiting (`guest-vhost-user-backend-gone`). Recovery ends there: a lost GPU
 backend kills the guest's Vulkan client within seconds, but a client waiting on
 a full control queue stays blocked until Mesa's own ring timeout.
 
-**Control socket.** A queue is kicked by a synchronous request on the control
-socket, and the backend answers only after it has run the queue. The guest
-endpoint is blocking with no deadline, because `virtqueue_notify()` latches a
-virtqueue broken for good when a notification reports failure; a backend whose
-answer never comes, or is malformed, is gone and retired by the lost-backend
-path. Every request has a reply and only their order pairs them, so the guest
-holds the socket from a request until it has read the reply and serves the
-backend request stream during every synchronous wait.
+**Control socket.** A queue is kicked by a request on the control socket. A
+kick may ask for no answer, so that the kicking vCPU, which holds the socket
+with its interrupts off, never waits for queue work. A backend answers a kick
+that asks after it has run the queue, except the GPU and sound backends, which
+answer first; while those two run a queue they tell the guest not to kick
+(`VRING_USED_F_NO_NOTIFY`) until it has run dry. The guest endpoint is blocking
+with no deadline, because `virtqueue_notify()` latches a virtqueue broken for
+good when a notification reports failure; a backend whose answer never comes,
+or is malformed, is gone and retired by the lost-backend path. Every other
+request has a reply and only their order pairs them, so the guest holds the
+socket from a request until it has read the reply and serves the backend
+request stream during every synchronous wait.
 
 The default Apple graphics path, from guest Mesa through Virgl and virglrenderer
 to Zink on KosmicKrisp and the shared Metal presentation, is in

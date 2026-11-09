@@ -136,7 +136,7 @@ void partialFrameStopUsesOwnedWake(bool partialPayload)
  * irreversibly the moment that round trip reports a failure. A blocking
  * endpoint is what makes every remaining failure a genuine one: there is no
  * would-block to mistake for a dead backend, and a reply delayed behind GPU
- * work -- the backend answers a kick only after running that queue -- is
+ * work -- a request that arrives while a queue runs waits for it -- is
  * waited out rather than failed.
  */
 void guestTransportEndpointBlocks()
