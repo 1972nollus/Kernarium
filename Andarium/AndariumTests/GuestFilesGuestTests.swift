@@ -49,6 +49,8 @@ struct GuestFilesGuestTests {
             let guest = GuestSide(operations)
             let work = Self.folder
             #expect(await guest.waitForStorage(), "internal storage did not come up")
+            let watcher = try await openSettingsOnTheFiles(model, operations)
+            defer { watcher.cancel() }
             _ = try await guest.run("rm -rf '\(work)'; mkdir -p '\(work)'")
             browser.route = [FolderRoute(path: GuestPath.root), FolderRoute(path: work)]
 
@@ -624,6 +626,8 @@ struct GuestFilesGuestTests {
             let guest = GuestSide(operations)
             let work = Self.folder
             #expect(await guest.waitForStorage(), "internal storage did not come up")
+            let watcher = try await openSettingsOnTheFiles(model, operations)
+            defer { watcher.cancel() }
             _ = try await guest.run("rm -rf '\(work)'; mkdir -p '\(work)'")
             browser.route = [FolderRoute(path: GuestPath.root), FolderRoute(path: work)]
             await browser.load(work)
@@ -666,6 +670,21 @@ struct GuestFilesGuestTests {
     // MARK: Support
 
     private func note(_ text: String) { print("FILEX: \(text)") }
+
+    /// What the person does to have the browser: USB debugging is on in the
+    /// guest and Settings is open, which reads it and the storage. The browser
+    /// takes no import or export before it says they are.
+    private func openSettingsOnTheFiles(_ model: AppModel, _ operations: AdbGuestOperations) async throws -> Task<Void, Never> {
+        _ = try await operations.shell("settings put global adb_enabled 1", limit: .seconds(60))
+        let watcher = Task { await model.watchSettings() }
+        do {
+            try await waitUntil("the browser is available", seconds: 240) { model.filesAvailable }
+        } catch {
+            watcher.cancel()
+            throw error
+        }
+        return watcher
+    }
 
     private func waitUntil(
         _ what: String, seconds: Int, _ condition: @MainActor () async -> Bool
