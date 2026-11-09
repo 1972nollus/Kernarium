@@ -343,7 +343,10 @@ is on. `AndariumCore/Adb` speaks the protocol.
   `NSLocalNetworkUsageDescription`. Nothing listens before the toggle.
 - **Privacy.** The adb features add no required-reason API beyond the
   disk-space API with reason E174.1 (the start's own space check already uses
-  it).
+  it) and, for Files, the file-timestamp API: an import reads the date of a
+  file the person picked (3B52.1) and an export sets the date of its staged
+  copy inside the application's container (C617.1), so both keep the file's
+  own date.
 
 ## Acknowledgements
 
