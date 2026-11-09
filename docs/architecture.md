@@ -140,9 +140,10 @@ since a 4 GiB guest otherwise runs the host GPU short long before it runs the
 process short; that step is never under 2 GiB, because B is at most half of G
 and every limit that offers 4 GiB at one vCPU leaves a 2 GiB guest more than 1
 GiB at every count. A guest with more than the default but no more than the
-conservative size is likely to run out of graphics memory, and Andarium's
-System sheet says so beside its estimate of B for the chosen RAM and vCPUs
-(`gpu_budget`). The macOS launchers take the same default for a launch that
+conservative size, whose B is under 1 GiB, is likely to run out of graphics
+memory, and Andarium's System sheet says so beside its estimate of B for the
+chosen RAM and vCPUs (`gpu_budget`); it does not warn where B stays at 1 GiB
+or more. The macOS launchers take the same default for a launch that
 states a memory limit. The applications' vCPU limit is the rule
 `application_vcpu_limit` in the same header: the host's physical cores, at most
 8. It is the default and the maximum of Kernarium, Andarium and the macOS

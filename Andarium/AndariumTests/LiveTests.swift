@@ -176,6 +176,11 @@ struct HostDeviceTests {
                     && host.memory.safeMemoryMiB(vCPUs: $0) == host.memory.maximumMiB(vCPUs: $0)
                     && !host.memory.isAboveSafe(host.memory.maximumMiB(vCPUs: $0), vCPUs: $0)
             })
+            // Half the guest is the GPU's budget at every size above a new guest's,
+            // so the sheet warns about none of them.
+            #expect((1...host.processorCount).allSatisfy {
+                host.memory.risk(host.memory.maximumMiB(vCPUs: $0), vCPUs: $0) == .none
+            })
         }
         #expect(AppEntry.freeStorageBytes() > 0)
     }
@@ -254,6 +259,22 @@ struct DefaultGuestTests {
                     // On a device that offers 4 GiB, a new guest keeps a gibibyte for the GPU.
                     #expect((budget ?? 0) >= 1024, "limit \(limitMiB) MiB at \(count) vCPUs")
                 }
+                // The sheet warns about graphics memory from the first size past the
+                // default whose estimate is under a gibibyte, and about no size that
+                // keeps one: the loader's own evaluation of every size on the picker.
+                let line = policy.graphicsLineMiB(vCPUs: count)
+                #expect(line >= memory && line <= policy.safeMemoryMiB(vCPUs: count), "limit \(limitMiB) MiB")
+                for size in policy.stops(vCPUs: count) where size > memory && size <= policy.safeMemoryMiB(vCPUs: count) {
+                    let short = (policy.graphicsMemoryMiB(forMemory: size, vCPUs: count) ?? 0) < 1024
+                    #expect((policy.risk(size, vCPUs: count) == .graphics) == short,
+                            "limit \(limitMiB) MiB, \(size) MiB at \(count) vCPUs")
+                }
+            }
+            if limitMiB == 5120 {
+                // The default is 3 GiB at every count, but the GPU keeps a gibibyte a
+                // little above it: the sheet warns from there, not from the default.
+                #expect((1...8).map { policy.graphicsLineMiB(vCPUs: $0) }
+                    == [3392, 3392, 3328, 3264, 3264, 3264, 3200, 3200])
             }
         }
         // The loader's launch set is the conservative one; the maximum counts none.

@@ -18,7 +18,11 @@ import Foundation
 ///   a device whose bound reaches 4 GiB also the most that leaves the host
 ///   GPU a gibibyte, so it is never above the safe size;
 /// - the graphics memory is the host GPU's budget, B, a guest of a size and
-///   vCPU count would launch with.
+///   vCPU count would launch with;
+/// - the graphics line is the size above which a guest's B is under
+///   `Limits.minimumDefaultGraphicsMemoryMiB` and so games may run out of it:
+///   never under the default, and the default itself where B does not fall
+///   (or the host gives no estimate).
 ///
 /// Each added vCPU holds more of the process's memory, so neither bound,
 /// safe size nor default rises with the count. The limit is fixed for the
@@ -40,6 +44,9 @@ public struct MemoryPolicy: Equatable, Sendable {
     /// runtime's memory steps from the bottom of its range; empty where the
     /// host does not say.
     private let graphics: [[Int]]
+    /// The size above which a guest's graphics memory is under
+    /// `Limits.minimumDefaultGraphicsMemoryMiB`, at the same counts.
+    private let graphicsLines: [Int]
 
     /// The bounds, the defaults and the safe sizes as they are: each is taken
     /// down to the runtime's steps and into its range. A count without a
@@ -57,19 +64,37 @@ public struct MemoryPolicy: Equatable, Sendable {
             index < defaultsMiB.count ? Self.steppedDown(defaultsMiB[index]) : bounds[index]
         }
         defaults = steppedDefaults
-        safes = bounds.indices.map { index in
+        let steppedSafes = bounds.indices.map { index in
             guard index < safeMiB.count else { return steppedDefaults[index] }
             return min(max(Self.steppedDown(safeMiB[index]), steppedDefaults[index]), bounds[index])
         }
+        safes = steppedSafes
+        var table: [[Int]] = []
         if let graphicsMiB {
             // Every size a person may choose at any count, from the bottom of
             // the runtime's range.
             let steps = Self.runtimeSteps(through: bounds.max() ?? Limits.runtimeMemoryRangeMiB.lowerBound)
-            graphics = bounds.indices.map { index in
+            table = bounds.indices.map { index in
                 steps.map { graphicsMiB($0, index + 1) }
             }
-        } else {
-            graphics = []
+        }
+        graphics = table
+        // The largest size a person may choose that still keeps the graphics
+        // memory the default keeps on a device with room: no lower than the
+        // default (a new guest is never warned about) and no higher than the
+        // safe size (above it the warning is the worse one). The default
+        // itself where B falls below that figure just above it, and where the
+        // host gives no estimate.
+        graphicsLines = bounds.indices.map { index in
+            let atLeast = steppedDefaults[index]
+            guard !table.isEmpty else { return atLeast }
+            let row = table[index]
+            let first = Limits.runtimeMemoryRangeMiB.lowerBound
+            let top = (bounds[index] - first) / Limits.runtimeMemoryStepMiB
+            guard let kept = (0...top).last(where: { row[$0] >= Limits.minimumDefaultGraphicsMemoryMiB }) else {
+                return atLeast
+            }
+            return min(max(atLeast, first + kept * Limits.runtimeMemoryStepMiB), steppedSafes[index])
         }
     }
 
@@ -136,8 +161,8 @@ public struct MemoryPolicy: Equatable, Sendable {
     }
 
     /// Whether a guest with `mib` of memory and `vCPUs` vCPUs has more than a
-    /// new guest gets: graphics-hungry apps are then likely to run out of
-    /// graphics memory, though iOS need not end the application.
+    /// new guest gets. It need not be short of graphics memory: that is
+    /// `isShortOfGraphicsMemory`.
     public func isAboveDefault(_ mib: Int, vCPUs: Int) -> Bool {
         mib > defaultMemoryMiB(vCPUs: vCPUs)
     }
@@ -150,12 +175,33 @@ public struct MemoryPolicy: Equatable, Sendable {
         mib > safeMemoryMiB(vCPUs: vCPUs)
     }
 
+    /// The size above which a guest with `vCPUs` vCPUs is short of graphics
+    /// memory: the largest size that leaves its B at
+    /// `Limits.minimumDefaultGraphicsMemoryMiB` or more, and at least the
+    /// default, since a new guest is never warned about, and at most the safe
+    /// size, above which the closing warning is the one shown. It is the
+    /// default itself where B is already under that figure above it, as on a
+    /// device with little room, and where the host gives no estimate. A count
+    /// above the host's takes the last one.
+    public func graphicsLineMiB(vCPUs: Int) -> Int {
+        graphicsLines[min(max(vCPUs, 1), graphicsLines.count) - 1]
+    }
+
+    /// Whether a guest with `mib` of memory and `vCPUs` vCPUs has a B under
+    /// `Limits.minimumDefaultGraphicsMemoryMiB` as well as more than a new
+    /// guest gets: graphics-hungry apps are then likely to run out of
+    /// graphics memory, though iOS need not end the application. Where more
+    /// memory leaves B as it is, the sheet does not warn.
+    public func isShortOfGraphicsMemory(_ mib: Int, vCPUs: Int) -> Bool {
+        mib > graphicsLineMiB(vCPUs: vCPUs)
+    }
+
     /// What a guest of `mib` of memory and `vCPUs` vCPUs risks, the worse of
     /// the two when it risks both: iOS ending the application, then the guest
     /// running out of graphics memory.
     public func risk(_ mib: Int, vCPUs: Int) -> MemoryRisk {
         if isAboveSafe(mib, vCPUs: vCPUs) { return .closing }
-        return isAboveDefault(mib, vCPUs: vCPUs) ? .graphics : .none
+        return isShortOfGraphicsMemory(mib, vCPUs: vCPUs) ? .graphics : .none
     }
 
     /// The graphics memory, in MiB, a guest of `mib` of memory and `vCPUs`
@@ -236,17 +282,18 @@ public enum MemoryWarning {
 }
 
 /// What the System sheet says of the graphics memory (VRAM): that it is not
-/// part of the guest's RAM, and, when a guest has more RAM than a new one gets
-/// (`MemoryPolicy.isAboveDefault`), that a game may run short of it.
+/// part of the guest's RAM, and, when a guest has more RAM than leaves it the
+/// graphics memory a new one keeps (`MemoryPolicy.isShortOfGraphicsMemory`),
+/// that a game may run short of it.
 public enum GraphicsMemoryWarning {
     public static let title = "VRAM"
 
     /// Beneath the estimate: what VRAM is relative to the memory above it.
     public static let separateNote = "VRAM is graphics memory, separate from the guest\u{2019}s RAM."
 
-    /// The line beneath the memory picker above the default and not above the
-    /// safe size.
-    public static func note(defaultMiB: Int) -> String {
-        "Above \(Formats.size(mib: defaultMiB)), games may run out of graphics memory."
+    /// The line beneath the memory picker above the graphics line
+    /// (`MemoryPolicy.graphicsLineMiB`) and not above the safe size.
+    public static func note(aboveMiB: Int) -> String {
+        "Above \(Formats.size(mib: aboveMiB)), games may run out of graphics memory."
     }
 }

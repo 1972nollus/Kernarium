@@ -217,14 +217,15 @@ struct SystemControls: View {
         // many steps above the bottom of the ruler.
         let bottom = stops.first ?? Limits.minimumMemoryMiB
         let steps = (1024 - bottom % 1024) % 1024 / Limits.memoryStepMiB
-        // Sizes past what a new guest gets turn orange, and past the size
-        // where iOS is likely to close Andarium red where that is a higher
-        // one; the line beneath says why while the chosen size is one of
-        // them, the worse risk alone. Both sizes follow the vCPU count as the
-        // top does.
-        let defaultMiB = host.memory.defaultMemoryMiB(vCPUs: guest.cores)
+        // Sizes past the graphics line (what a new guest gets, or more where
+        // the graphics memory does not fall below a gibibyte above it) turn
+        // orange, and past the size where iOS is likely to close Andarium red
+        // where that is a higher one; the line beneath says why while the
+        // chosen size is one of them, the worse risk alone. Both sizes follow
+        // the vCPU count as the top does.
+        let graphicsLineMiB = host.memory.graphicsLineMiB(vCPUs: guest.cores)
         let safeMiB = host.memory.safeMemoryMiB(vCPUs: guest.cores)
-        let distinct = safeMiB > defaultMiB
+        let distinct = safeMiB > graphicsLineMiB
         let risk = host.memory.risk(guest.memoryMiB, vCPUs: guest.cores)
         return ControlRow(title: "Memory", symbol: "memorychip", value: Formats.size(mib: guest.memoryMiB)) {
             Ruler(
@@ -238,7 +239,7 @@ struct SystemControls: View {
                 minorEvery: 256 / Limits.memoryStepMiB,
                 label: { Formats.gibibytes(mib: stops[$0]) },
                 valueText: { Formats.size(mib: stops[$0]) },
-                warnFrom: stops.firstIndex { $0 > defaultMiB },
+                warnFrom: stops.firstIndex { $0 > graphicsLineMiB },
                 severeFrom: distinct ? stops.firstIndex { $0 > safeMiB } : nil,
                 accessibilityName: "Memory"
             )
@@ -248,7 +249,7 @@ struct SystemControls: View {
                 Label(MemoryWarning.note(safeMiB: safeMiB), systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(distinct ? Color.red : Color.orange)
             case .graphics:
-                Label(GraphicsMemoryWarning.note(defaultMiB: defaultMiB), systemImage: "exclamationmark.triangle.fill")
+                Label(GraphicsMemoryWarning.note(aboveMiB: graphicsLineMiB), systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
             case .none:
                 EmptyView()
@@ -258,8 +259,9 @@ struct SystemControls: View {
 }
 
 /// The third row of the System sheet: the estimate of the guest's graphics
-/// memory, orange while the chosen memory is above what a new guest gets, with
-/// the note that it is not part of the RAM.
+/// memory, orange while the chosen memory leaves it short
+/// (`MemoryPolicy.isShortOfGraphicsMemory`), with the note that it is not part
+/// of the RAM.
 struct GraphicsMemoryRow: View {
     let estimateMiB: Int
     let warns: Bool

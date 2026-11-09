@@ -191,10 +191,12 @@ control out.
   runtime's conservative size for its vCPU count (`safeMemoryMiB`) is likely
   to be closed by iOS: Home shows a notice and the memory ruler a line and red
   ticks, both following the guest's memory and vCPU count (`MemoryWarning`).
-  Where the default is lower, a guest with more than the default has less than
-  1 GiB of graphics memory (VRAM, the host GPU's budget): the System sheet
-  turns the ticks past the default orange and warns that games may run out of
-  it (`GraphicsMemoryWarning`), and Home says nothing. The sheet also shows
+  A guest with more than the default and an estimate of graphics memory (VRAM,
+  the host GPU's budget) under 1 GiB (`Limits.minimumDefaultGraphicsMemoryMiB`)
+  may run out of it: the System sheet turns the ticks past
+  `MemoryPolicy.graphicsLineMiB` orange and warns that games may
+  (`GraphicsMemoryWarning`), and Home says nothing. Where more memory leaves
+  the estimate at 1 GiB or more, the sheet does not warn. The sheet also shows
   the loader's estimate of VRAM for the chosen memory and vCPUs and says it is
   separate from the guest's RAM.
 - **Storage.** A guest's files live in `Library/Guest/` of the application's
