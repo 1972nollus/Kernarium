@@ -94,9 +94,30 @@ struct SessionRecordTests {
         #expect(first.orderly && first.memory == nil)
     }
 
+    @Test func readsTheTermsAndTheirHistory() throws {
+        var slot = """
+            uml-session 3
+            memory at 1794210239 footprint 6441524416 peak 6442458280 available 926528
+            terms guest 4090 gpu 1262/1251 age 0 graphics 905 media 0 cache 238 heaps 260 malloc 812/700 age 4 other 650 internal 5200 compressed 0
+            peak-terms at 1794210239 footprint 6143 guest 4090 gpu 1262/1251 age 0 graphics 905 media 0 cache 238 heaps 260 malloc 812/700 age 4 other 650 internal 5200 compressed 0
+            history seconds footprint available guest gpu graphics cache heaps malloc other
+            h 484 6100 43 4090 1250 900 238 258 790 614
+            h 486 6143 0 4090 1262 905 238 260 812 650
+
+            """
+        slot += String(repeating: " ", count: 4095 - slot.utf8.count) + "\n"
+        let near = try #require(SessionRecord(
+            text: slot + "state running\nend running\nstatus 0\npid 20373\nstarted 1794209753\n"))
+        #expect(near.running && near.nearMemoryLimit)
+        #expect(near.memory?.footprintBytes == 6_441_524_416 && near.memory?.availableBytes == 926_528)
+        #expect(near.terms?.hasPrefix("guest 4090 gpu 1262/1251") == true)
+        #expect(near.peakTerms?.hasPrefix("at 1794210239 footprint 6143 guest 4090") == true)
+        #expect(near.notice(endedOutOfForeground: false)?.title == "iOS ended Andarium")
+    }
+
     @Test func otherTextIsNoRecord() {
         #expect(SessionRecord(text: "") == nil)
-        #expect(SessionRecord(text: "uml-session 3\nstate ended\nend powered-off\n") == nil)
+        #expect(SessionRecord(text: "uml-session 4\nstate ended\nend powered-off\n") == nil)
         #expect(SessionRecord(text: "uml-session 2\nstatus 0\n") == nil)
         #expect(SessionRecord.read(at: URL(fileURLWithPath: "/nonexistent/session.txt")) == nil)
     }

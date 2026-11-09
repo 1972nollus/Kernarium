@@ -533,6 +533,8 @@ public:
 		if (const auto entry = test_kernel_entry(kernel_view_);
 		    entry != nullptr) {
 			if (!prepared.informational) {
+				::uml::runtime::set_memory_terms_reader(
+					&::uml::runtime::memory_terms);
 				(void)::uml::runtime::begin_session_record(
 					prepared.session_record_path, arguments);
 				run_end_recorder.emplace(*this);
@@ -546,6 +548,8 @@ public:
 #endif
 #if UML_EMULATOR_HAS_KERNEL_RUNNER
 		if (!prepared.informational) {
+			::uml::runtime::set_memory_terms_reader(
+				&::uml::runtime::memory_terms);
 			(void)::uml::runtime::begin_session_record(
 				prepared.session_record_path, arguments);
 			run_end_recorder.emplace(*this);

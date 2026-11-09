@@ -52,6 +52,47 @@ struct GuestRamUsage final {
 [[nodiscard]] std::optional<GuestRamUsage> guest_ram_usage() noexcept;
 
 /*
+ * The parts of the process's footprint the memory budgets count
+ * (guest_memory_budget.hpp), in bytes, for the session record's memory
+ * checkpoint (session_record.hpp), so that a record of a process the system
+ * ended says which part had grown. Every figure but malloc's is a counter
+ * something keeps anyway.
+ */
+struct MemoryTerms final {
+	/* guest_ram_usage()'s held bytes; 0 without a guest. */
+	std::uint64_t guest_held{};
+	/* The host GPU's budget B and what the GPU held against it when its
+	 * device last counted, and how long ago that was (-1: never); all 0
+	 * without a budget (platform/gpu_memory_figures.hpp). */
+	std::uint64_t gpu_budget{};
+	std::uint64_t gpu_held{};
+	std::int64_t gpu_age_ms{-1};
+	/* The footprint's graphics and media ledgers, compressed pages
+	 * included. */
+	std::uint64_t graphics{};
+	std::uint64_t media{};
+	/* What the gadget caches hold, the accounts asked to shed included
+	 * (cpu/gadget_cache_budget.hpp). */
+	std::uint64_t cache{};
+	/* The engine's domain heaps, committed (memory/domain_heap.hpp). */
+	std::uint64_t heaps{};
+	/* Every malloc zone's bytes, allocated to the zone and in use; 0 unless
+	 * asked for. */
+	std::uint64_t malloc_allocated{};
+	std::uint64_t malloc_in_use{};
+	/* The footprint's anonymous memory and its compressed share. */
+	std::uint64_t internal{};
+	std::uint64_t compressed{};
+};
+
+/* The terms now; any thread, and it never waits on the guest. With
+ * `read_malloc`, also the malloc zones' statistics: a walk of the zones that
+ * holds their locks while it runs, so every thread that allocates or frees
+ * meanwhile waits for it, about 4 ms with 900 MiB of malloc. The caller must
+ * hold no zone's lock. */
+[[nodiscard]] MemoryTerms memory_terms(bool read_malloc) noexcept;
+
+/*
  * Held by whoever retires the guest's RAM commitment (the hand-back of a
  * guest that restarted), so that a reader of guest_ram_usage() never meets
  * the object while it is deleted: a reader that finds it held reports

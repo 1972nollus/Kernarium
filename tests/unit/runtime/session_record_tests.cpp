@@ -8,6 +8,7 @@
 #include "session_record.hpp"
 #include "require.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -24,6 +25,8 @@ namespace {
 
 using uml::runtime::SessionEnd;
 using uml::testing::require;
+
+constexpr std::size_t slot_bytes = uml::runtime::session_memory_slot_bytes;
 
 std::string read_file(const std::string &path)
 {
@@ -141,9 +144,10 @@ void test_record_lifecycle()
 	const std::string path = temporary_record();
 	require(uml::runtime::begin_session_record(path, {}));
 	std::string record = read_file(path);
-	require(record.starts_with("uml-session 2\nmemory at ") &&
-		record.size() > 256 && record[255] == '\n' &&
-		record.substr(256).starts_with("state running\nend running\n"),
+	require(record.starts_with("uml-session 3\nmemory at ") &&
+		record.size() > slot_bytes && record[slot_bytes - 1] == '\n' &&
+		record.substr(slot_bytes).starts_with(
+			"state running\nend running\n"),
 		"a begun session is not running: " + record);
 	uml::runtime::end_session_record(SessionEnd::powered_off, 0);
 	record = read_file(path);
@@ -151,7 +155,7 @@ void test_record_lifecycle()
 		has(record, "\nended ") && !has(record, "kernel-output"),
 		"a power-off was recorded wrong: " + record);
 	uml::runtime::end_session_record(SessionEnd::kernel_exit, 143);
-	require(read_file(path).substr(256) == record.substr(256),
+	require(read_file(path).substr(slot_bytes) == record.substr(slot_bytes),
 		"a second end replaced the first");
 
 	/* A restart begins the next session in the same file. */
@@ -177,7 +181,7 @@ void test_memory_checkpoints()
 	const std::string path = temporary_record();
 	require(uml::runtime::begin_session_record(path, {}));
 	const std::string begun = read_file(path);
-	const std::string slot = begun.substr(0, 256);
+	const std::string slot = begun.substr(0, slot_bytes);
 	require(has(slot, " footprint ") && has(slot, " peak "),
 		"the memory slot has no footprint: " + slot);
 	/* A checkpoint rewrites the slot and nothing after it. */
@@ -191,12 +195,12 @@ void test_memory_checkpoints()
 	require(each < 5000.0, "a memory checkpoint is far too slow");
 	const std::string checked = read_file(path);
 	require(checked.size() == begun.size() &&
-		checked.substr(256) == begun.substr(256),
+		checked.substr(slot_bytes) == begun.substr(slot_bytes),
 		"a checkpoint changed the session's state");
 	uml::runtime::end_session_record(SessionEnd::powered_off, 0);
 	uml::runtime::checkpoint_session_memory();
 	const std::string ended = read_file(path);
-	require(ended.substr(256).starts_with("state ended\nend powered-off\n"),
+	require(ended.substr(slot_bytes).starts_with("state ended\nend powered-off\n"),
 		"a checkpoint after the end replaced it: " + ended);
 	/* The next session reuses the record's descriptor number. */
 	const std::string next = temporary_record();
@@ -207,6 +211,120 @@ void test_memory_checkpoints()
 	uml::runtime::reset_session_record();
 	unlink(path.c_str());
 	unlink(next.c_str());
+}
+
+std::atomic<unsigned> malloc_readings{0};
+
+uml::runtime::MemoryTerms fixed_terms(bool read_malloc) noexcept
+{
+	constexpr std::uint64_t mib = std::uint64_t{1} << 20;
+	if (read_malloc)
+		malloc_readings.fetch_add(1, std::memory_order_relaxed);
+	return {
+		.guest_held = 4000 * mib,
+		.gpu_budget = 1251 * mib,
+		.gpu_held = 1240 * mib,
+		.gpu_age_ms = 3500,
+		.graphics = 700 * mib,
+		.media = 5 * mib,
+		.cache = 240 * mib,
+		.heaps = 250 * mib,
+		.malloc_allocated = read_malloc ? 900 * mib : 0,
+		.malloc_in_use = read_malloc ? 800 * mib : 0,
+		.internal = 5000 * mib,
+		.compressed = 12 * mib,
+	};
+}
+
+/* When a checkpoint reads malloc's term. */
+namespace due {
+using uml::runtime::memory_malloc_reading_due;
+constexpr std::uint64_t mib = std::uint64_t{1} << 20;
+static_assert(memory_malloc_reading_due(false, 0, 0),
+	"the first checkpoint reads it");
+static_assert(memory_malloc_reading_due(true, 1064 * mib, 1000 * mib) &&
+		!memory_malloc_reading_due(true, 1064 * mib - 1, 1000 * mib) &&
+		!memory_malloc_reading_due(true, 900 * mib, 1000 * mib),
+	"then only a footprint 64 MiB above the highest reading's");
+} // namespace due
+
+std::size_t count_of(const std::string &text, const char *part)
+{
+	std::size_t count = 0;
+	for (auto at = text.find(part); at != std::string::npos;
+	     at = text.find(part, at + 1))
+		++count;
+	return count;
+}
+
+void test_memory_terms()
+{
+	uml::runtime::reset_session_record();
+	uml::runtime::set_memory_terms_reader(&fixed_terms);
+	malloc_readings.store(0);
+	const std::string path = temporary_record();
+	require(uml::runtime::begin_session_record(path, {}));
+	const std::string begun = read_file(path);
+	const std::string first = begun.substr(0, slot_bytes);
+	require(has(first, "\nterms guest 4000 gpu 1240/1251 age 3 graphics 700 "
+			"media 5 cache 240 heaps 250 malloc 900/800 age 0 other 0 "
+			"internal 5000 compressed 12\n") &&
+		has(first, "\npeak-terms at ") &&
+		has(first, "\nhistory seconds footprint available guest gpu "
+			"graphics cache heaps malloc other\n") &&
+		count_of(first, "\nh ") == 1,
+		"the first checkpoint has no terms: " + first);
+	/* Enough checkpoints to fill both histories, which then stay at their
+	 * sizes, oldest first. */
+	constexpr unsigned checkpoints = uml::runtime::memory_history_recent +
+		uml::runtime::memory_history_older_stride *
+			(uml::runtime::memory_history_older + 2);
+	for (unsigned index = 0; index < checkpoints; ++index)
+		uml::runtime::checkpoint_session_memory();
+	const std::string checked = read_file(path);
+	const std::string slot = checked.substr(0, slot_bytes);
+	require(count_of(slot, "\nh ") == uml::runtime::memory_history_recent +
+			uml::runtime::memory_history_older &&
+		slot[slot_bytes - 1] == '\n' &&
+		slot.find_last_not_of(" \n") < slot_bytes - 2,
+		"the history did not keep its sizes: " + slot);
+	long previous = -1;
+	for (auto at = slot.find("\nh "); at != std::string::npos;
+	     at = slot.find("\nh ", at + 1)) {
+		const long seconds = std::strtol(slot.c_str() + at + 3, nullptr, 10);
+		require(seconds >= previous, "the history is out of order: " + slot);
+		previous = seconds;
+	}
+	require(checked.substr(slot_bytes) == begun.substr(slot_bytes),
+		"a checkpoint changed the session's state");
+	/* Checkpoints at one footprint read malloc's term once, and repeat that
+	 * reading. */
+	require(malloc_readings.load() == 1 &&
+			has(slot, "\nterms guest 4000 gpu 1240/1251 age 3 graphics "
+				"700 media 5 cache 240 heaps 250 malloc 900/800 age "),
+		"malloc's term was read again or not repeated: " + slot);
+
+	/* What the product reads, and what that costs. */
+	uml::runtime::set_memory_terms_reader(&uml::runtime::memory_terms);
+	constexpr int timed = 200;
+	const auto start = std::chrono::steady_clock::now();
+	for (int index = 0; index < timed; ++index)
+		uml::runtime::checkpoint_session_memory();
+	const auto each = std::chrono::duration<double, std::micro>(
+		std::chrono::steady_clock::now() - start).count() / timed;
+	const auto walk_start = std::chrono::steady_clock::now();
+	for (int index = 0; index < timed; ++index)
+		(void)uml::runtime::memory_terms(true);
+	const auto walk = std::chrono::duration<double, std::micro>(
+		std::chrono::steady_clock::now() - walk_start).count() / timed;
+	std::printf("a memory checkpoint with its terms takes %.1f us; reading "
+		"malloc's term as well takes %.1f us\n", each, walk);
+	require(each < 5000.0, "a memory checkpoint is far too slow");
+	require(has(read_file(path).substr(0, slot_bytes), " malloc "),
+		"the product's reader wrote no terms");
+	uml::runtime::set_memory_terms_reader(nullptr);
+	uml::runtime::reset_session_record();
+	unlink(path.c_str());
 }
 
 void *crash_on_a_thread(void *)
@@ -278,7 +396,7 @@ void test_host_fault()
 		has(record, "owns no virtual CPU"),
 		"a host fault was recorded wrong: " + record);
 	uml::runtime::record_kernel_crash();
-	require(read_file(path).substr(256) == record.substr(256),
+	require(read_file(path).substr(slot_bytes) == record.substr(slot_bytes),
 		"a later crash replaced the fault");
 	uml::runtime::reset_session_record();
 	unlink(path.c_str());
@@ -327,6 +445,7 @@ int main()
 		test_kept_output();
 		test_record_lifecycle();
 		test_memory_checkpoints();
+		test_memory_terms();
 		test_kernel_crash();
 		test_host_fault();
 		test_unopenable_record();

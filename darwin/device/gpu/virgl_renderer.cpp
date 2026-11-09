@@ -4,6 +4,7 @@
 
 #include "device_memory_pool.hpp"
 #include "host_gl_provider.hpp"
+#include "gpu_memory_figures.hpp"
 #include "host_gpu_memory.hpp"
 #include "protocol.hpp"
 
@@ -376,7 +377,12 @@ VirglRenderer::VirglRenderer()
                         uml::platform::hostGraphicsFootprintBytes();
                     const std::uint64_t heaps =
                         virgl_renderer_get_resident_heap_memory();
-                    return accountedGpuBytes(metal, imported, ledger, heaps);
+                    const std::uint64_t held =
+                        accountedGpuBytes(metal, imported, ledger, heaps);
+                    /* For the session record's memory checkpoint, which
+                     * reads it without waiting on the pool. */
+                    uml::platform::publishGpuMemoryHeld(held);
+                    return held;
                 },
                 static_cast<std::uint64_t>(getpagesize()),
                 /* The counter alone follows a release at once, the ledger
@@ -390,6 +396,7 @@ VirglRenderer::VirglRenderer()
                         uml::platform::hostGpuAllocatedBytes(), imported);
                 },
                 deviceMemoryReserveBytes);
+            uml::platform::publishGpuMemoryBudget(limit);
             /* A Venus guest is shown, and budgets, what the pool admits. */
             const virgl_renderer_device_memory_pool pool {
                 .limit = deviceMemoryPool->ceiling(),
@@ -536,6 +543,8 @@ VirglRenderer::~VirglRenderer()
     /* The pool is the renderer's: nothing the cleanup left can reach it, and
      * the guest that comes after this one starts with nothing reserved. */
     virgl_renderer_set_device_memory_pool(nullptr);
+    if (deviceMemoryPool)
+        uml::platform::publishGpuMemoryBudget(0);
     deviceMemoryPool.reset();
     rendererInstanceActive.store(false, std::memory_order_release);
 }
