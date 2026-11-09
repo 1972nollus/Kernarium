@@ -15,12 +15,19 @@ does for USB devices, so that the blocking write paces it. A stream
 built on StreamAlsaMonoPipe chooses this with outputUsesPipe(); the
 primary output does, and the pacing and skipping stay with its input.
 Every frame the client writes now reaches the device.
+
+The writer keeps the device fed only if it runs as soon as AudioFlinger
+hands it a buffer. AudioFlinger asks for the HAL thread of an output
+with a fast mixer to run at SCHED_FIFO priority 3, and leaves that to
+an AIDL HAL, which raises only the workers of FAST streams. Let the
+primary output's writer raise itself to that priority on its first
+transfer, as the HAL raises a FAST worker, and log a refusal.
 ---
- audio/aidl/default/alsa/StreamAlsaMonoPipe.cpp      | 13 +++++++++++++
- .../default/include/core-impl/StreamAlsaMonoPipe.h  |  6 ++++++
- .../aidl/default/include/core-impl/StreamPrimary.h  |  2 ++
- audio/aidl/default/primary/StreamPrimary.cpp        |  5 +++++
- 4 files changed, 26 insertions(+)
+ .../aidl/default/alsa/StreamAlsaMonoPipe.cpp  | 13 ++++++++++++
+ .../include/core-impl/StreamAlsaMonoPipe.h    |  6 ++++++
+ .../default/include/core-impl/StreamPrimary.h |  4 ++++
+ audio/aidl/default/primary/StreamPrimary.cpp  | 21 +++++++++++++++++++
+ 4 files changed, 44 insertions(+)
 
 diff --git a/audio/aidl/default/alsa/StreamAlsaMonoPipe.cpp b/audio/aidl/default/alsa/StreamAlsaMonoPipe.cpp
 index 3738f3056f6ffb60a9de4899d8b2cd2cc265494b..625c51d6c7cf76e03fef67ec2016681b1a822b77 100644
@@ -71,10 +78,10 @@ index 98f4d3bd1b0bab35a075d807738ea468e89ef6c4..aaa6b881b90a020dfb011477024221ed
      ::android::NBAIO_Format getPipeFormat() const;
      ::android::sp<::android::MonoPipe> makeSink(bool writeCanBlock);
 diff --git a/audio/aidl/default/include/core-impl/StreamPrimary.h b/audio/aidl/default/include/core-impl/StreamPrimary.h
-index 87dcc3b166c15c35133b934b8248c53f4806eba7..9468b985223f985961a513ef7744300b5afe1a1e 100644
+index 87dcc3b166c15c35133b934b8248c53f4806eba7..e9c06b1d7ac659cfe39ef9b4e03a972be9b68468 100644
 --- a/audio/aidl/default/include/core-impl/StreamPrimary.h
 +++ b/audio/aidl/default/include/core-impl/StreamPrimary.h
-@@ -49,6 +49,8 @@ class StreamPrimary : public StreamAlsaMonoPipe {
+@@ -49,9 +49,13 @@ class StreamPrimary : public StreamAlsaMonoPipe {
    protected:
      std::vector<alsa::DeviceProfile> getDeviceProfiles() override;
      bool isStubStream();
@@ -83,17 +90,45 @@ index 87dcc3b166c15c35133b934b8248c53f4806eba7..9468b985223f985961a513ef7744300b
  
      const bool mIsAsynchronous;
      int64_t mStartTimeNs = 0;
++    // Whether the output's writer has asked for its real-time priority (see 'transfer').
++    bool mWriterPriorityRequested = false;
+     long mFramesSinceStart = 0;
+     bool mSkipNextTransfer = false;
+ 
 diff --git a/audio/aidl/default/primary/StreamPrimary.cpp b/audio/aidl/default/primary/StreamPrimary.cpp
-index ac0d3020c75d30059c794d5807f431e509b470da..2ae1f465c2d2784d01578cedb9c79d78306b24aa 100644
+index ac0d3020c75d30059c794d5807f431e509b470da..43a99a4b828344ed1c669c34045e4aa3ff285e79 100644
 --- a/audio/aidl/default/primary/StreamPrimary.cpp
 +++ b/audio/aidl/default/primary/StreamPrimary.cpp
-@@ -97,6 +97,11 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
+@@ -16,6 +16,8 @@
+ 
+ #define LOG_TAG "AHAL_StreamPrimary"
+ 
++#include <sched.h>
++
+ #include <cstdio>
+ 
+ #include <Log.h>
+@@ -97,6 +99,25 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
      if (isStubStreamOnWorker()) {
          return mStubDriver.transfer(buffer, frameCount, actualFrameCount, latencyMs);
      }
 +    if (!mIsInput) {
 +        // The Virtio sound device takes the output in real time: the blocking write into the
 +        // ALSA ring paces the output, and every frame reaches the device.
++        if (!mWriterPriorityRequested) {
++            mWriterPriorityRequested = true;
++            // The writer keeps the device fed only if it runs as soon as AudioFlinger hands it a
++            // buffer. AudioFlinger asks for the HAL thread of an output with a fast mixer to run
++            // at FIFO priority 3 and leaves that to the HAL, which raises only FAST workers
++            // itself (see 'setWorkerThreadPriority'). The writer is the calling thread.
++            constexpr int kWriterPriority = 3;
++            struct sched_param param = {
++                    .sched_priority = kWriterPriority,
++            };
++            if (sched_setscheduler(0, SCHED_FIFO | SCHED_RESET_ON_FORK, &param) != 0) {
++                PLOG(WARNING) << __func__ << ": failed to set FIFO scheduler and priority";
++            }
++        }
 +        return StreamAlsaMonoPipe::transfer(buffer, frameCount, actualFrameCount, latencyMs);
 +    }
      // This is a workaround for the emulator implementation which has a host-side buffer

@@ -16,10 +16,10 @@ In standby, and for the input, the client's count stays.
  1 file changed, 6 insertions(+), 1 deletion(-)
 
 diff --git a/audio/aidl/default/primary/StreamPrimary.cpp b/audio/aidl/default/primary/StreamPrimary.cpp
-index 2ae1f465c2d2784d01578cedb9c79d78306b24aa..1d28b5fb115262f42f2970ba1574bc7ad388364c 100644
+index 43a99a4b828344ed1c669c34045e4aa3ff285e79..6c74ae917387c8a0ea62a713de066747561e8e0c 100644
 --- a/audio/aidl/default/primary/StreamPrimary.cpp
 +++ b/audio/aidl/default/primary/StreamPrimary.cpp
-@@ -135,7 +135,12 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
+@@ -151,7 +151,12 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
      return ::android::OK;
  }
  
