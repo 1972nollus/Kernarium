@@ -134,11 +134,13 @@ struct LaunchOverridesTests {
     }
 
     @Test func statistics() {
-        #expect(launch([.stats: "1"]).statistics)
-        #expect(!launch([.stats: "0"]).statistics)
-        #expect(!launch([.stats: "yes"]).statistics)
-        #expect(!launch([:]).statistics)
+        #expect(launch([.stats: "1"]).statistics == true)
+        #expect(launch([.stats: "0"]).statistics == false)
+        // Neither stated: the person's own choice stands.
+        #expect(launch([.stats: "yes"]).statistics == nil)
+        #expect(launch([:]).statistics == nil)
         #expect(!launch([.stats: "1"]).isEmpty)
+        #expect(!launch([.stats: "0"]).isEmpty)
     }
 
     @Test func isolatedInstanceNamesCannotEscapeTheirDirectory() {
