@@ -594,8 +594,11 @@ void VirglRenderer::destroyContext(std::uint32_t contextId) noexcept
     virgl_renderer_context_destroy(contextId);
     try {
         idleContexts_.remove(contextId);
-        // Destroying a context deletes the textures only it held.
-        idleContexts_.noteRelease(ContextIdleTracker::Clock::now());
+        // Destroying a context deletes the textures only it held, and leaves
+        // the driver caching what they and its batches used.
+        const auto now = ContextIdleTracker::Clock::now();
+        idleContexts_.noteRelease(now);
+        idleContexts_.noteDestroyed(now);
         std::lock_guard lock(mutex_);
         std::erase_if(
             retiredContextFences_,
@@ -1255,13 +1258,18 @@ void VirglRenderer::trimIdleContexts() noexcept
     if (!idleTrimEnabled_)
         return;
     try {
-        for (const auto contextId : idleContexts_.takeIdle(
-                 ContextIdleTracker::Clock::now())) {
+        const auto now = ContextIdleTracker::Clock::now();
+        for (const auto contextId : idleContexts_.takeIdle(now)) {
             virgl_renderer_context_trim(contextId);
             // A missing GL entry point is reported through the next call that
             // checks; trimming has no result to carry it.
             (void)checkGlDispatchResult(0);
         }
+        // The contexts have released what a destroyed context's resources
+        // held; the driver's caches keep it until they are asked, and no
+        // guest that is not allocating asks.
+        if (idleContexts_.takeRelease(now))
+            (void)provider_->releaseCachedMemory();
     } catch (...) {
         // Never carry a C++ exception through the C renderer API.
     }

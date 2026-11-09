@@ -224,7 +224,10 @@ public:
      * outstanding; the renderer is told once, and again after the context is
      * next active. The service thread asks how long until the next context
      * could be idle, arms a timer for it, and calls trimIdleContexts when it
-     * fires. */
+     * fires. A destroyed context leaves the driver caching what it used, and
+     * trimIdleContexts also asks the host drivers to release their caches
+     * once the surviving contexts have released what the destruction freed
+     * (ContextIdleTracker::noteDestroyed). */
     [[nodiscard]] std::optional<std::chrono::steady_clock::duration>
         nextIdleTrimDelay() const noexcept;
     void trimIdleContexts() noexcept;
