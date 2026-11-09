@@ -78,6 +78,12 @@ namespace uml::gpu {
  * limit, whichever threads make them. Reservations are charged in whole
  * granules, the unit in which `allocated` counts an allocation.
  *
+ * A pool given a `reserve` admits reservations only up to its ceiling, the
+ * limit less the reserve, and keeps the rest for what it counts but never
+ * refuses: memory nobody reserves, such as the driver's command storage, grows
+ * past the last reservation into that room rather than past the limit. A
+ * reserve that would leave no ceiling is not kept.
+ *
  * Memory the host driver caches for reuse counts against the pool, and the
  * driver releases it only when a client of that driver is refused, never for
  * another consumer's refusal. So the pool takes one reclaim hook, which frees
@@ -120,12 +126,16 @@ public:
     DeviceMemoryPool(std::uint64_t limit,
         std::function<std::uint64_t()> allocated,
         std::uint64_t granule,
-        std::function<std::uint64_t()> prompt = {});
+        std::function<std::uint64_t()> prompt = {},
+        std::uint64_t reserve = 0);
 
     DeviceMemoryPool(const DeviceMemoryPool&) = delete;
     DeviceMemoryPool& operator=(const DeviceMemoryPool&) = delete;
 
     [[nodiscard]] std::uint64_t limit() const noexcept { return limit_; }
+
+    /* The usage reservations are admitted up to: the limit less the reserve. */
+    [[nodiscard]] std::uint64_t ceiling() const noexcept { return ceiling_; }
 
     /* The bytes allocated and reserved now. */
     [[nodiscard]] std::uint64_t usage() const;
@@ -201,6 +211,7 @@ private:
         std::uint64_t charged, std::uint64_t& used);
 
     const std::uint64_t limit_;
+    const std::uint64_t ceiling_;
     const std::function<std::uint64_t()> allocated_;
     const std::function<std::uint64_t()> prompt_;
     const std::uint64_t granule_;

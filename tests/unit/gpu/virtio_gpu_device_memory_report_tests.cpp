@@ -564,6 +564,33 @@ void memoryTheHostCannotFreeIsPressureBeforeAnyRefusal()
     require(guest.renderer.reclaims == 1, "the host reclaimed more than once for one stretch");
 }
 
+/* A pool that keeps a reserve refuses at its ceiling, below the budget: the
+ * pressure comes the margin ahead of the ceiling, and the reply still carries
+ * the budget. */
+void thePressureIsTheMarginAheadOfTheCeiling()
+{
+    constexpr std::uint64_t ceiling = budget - 16 * mebibyte;
+    constexpr std::uint64_t usage = ceiling - uml::gpu::MemoryPressure::margin;
+    Guest guest;
+    guest.context(1, "t|pid=100|comm=p", 100 * mebibyte, 20s);
+    (void)ask(guest.device, query(VIRTIO_GPU_UML_MEMORY_SUBSCRIBE));
+    guest.renderer.memory = VirglRenderer::DeviceMemory {
+        .budgetBytes = budget, .usageBytes = usage, .ceilingBytes = budget};
+    require(!guest.device.evaluateMemory(guest.now) &&
+            !guest.device.memoryDeadline().has_value(),
+        "a usage short of the margin of the budget was not calm");
+
+    guest.renderer.memory->ceilingBytes = ceiling;
+    require(!guest.device.evaluateMemory(guest.now), "reaching the margin raised the event");
+    require(guest.renderer.reclaims == 1, "the host's reclaim was not run");
+    require(guest.device.evaluateMemory(guest.now + 1s),
+        "the margin ahead of the pool's ceiling was no pressure");
+    const auto reply = ask(guest.device, query(VIRTIO_GPU_UML_MEMORY_SUBSCRIBE));
+    require((reply.fixed.state & VIRTIO_GPU_UML_STATE_PRESSURE) != 0 &&
+            reply.fixed.budget_bytes == budget && reply.fixed.used_bytes == usage,
+        "the reply did not carry the pressure, the budget and the usage");
+}
+
 void aRefusalRaisesTheEventAndTheNextReplyReportsIt()
 {
     Guest guest;
@@ -646,6 +673,7 @@ int main()
     aSubscriptionRaisesTheEventOncePerChange();
     memoryTheHostFreesItselfIsNoPressure();
     memoryTheHostCannotFreeIsPressureBeforeAnyRefusal();
+    thePressureIsTheMarginAheadOfTheCeiling();
     aRefusalRaisesTheEventAndTheNextReplyReportsIt();
     theGuestsSettingsEndWithTheConnection();
     std::puts("Virtio-GPU memory report tests passed");

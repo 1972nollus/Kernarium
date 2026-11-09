@@ -250,9 +250,11 @@ private:
 int main()
 {
     // The pool takes its limit when the renderer starts, and counts everything
-    // the process holds, so the limit is what is held now plus the room.
+    // the process holds, so the limit is what is held now plus the room, and
+    // the reserve the pool keeps inside its limit.
     const std::uint64_t before = used();
-    const std::uint64_t limit = before + roomBytes;
+    const std::uint64_t limit = before + roomBytes +
+        uml::gpu::VirglRenderer::deviceMemoryReserveBytes;
     uml::gpu::VirglRenderer::setDeviceMemoryLimit(limit);
     std::unique_ptr<uml::gpu::VirglRenderer> renderer;
     try {
