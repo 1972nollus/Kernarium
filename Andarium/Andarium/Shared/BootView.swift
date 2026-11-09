@@ -84,6 +84,11 @@ struct BootView: View {
                 ?? "Preparing"
             steps[0] = Step(title: steps[0].title, detail: detail, seconds: 0)
         }
+        #if !APP_STORE
+        if model.preparingJit {
+            steps[0] = Step(title: steps[0].title, detail: JitStatus.preparing, seconds: 0)
+        }
+        #endif
         return steps
     }
 
@@ -155,6 +160,23 @@ struct BootView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .modifier(BootPanel(dimmed: dimmed, radius: 22))
             }
+
+            #if !APP_STORE
+            if let sentence = model.jitLastStart?.fallbackSentence {
+                Label {
+                    Text(sentence)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "bolt.slash.fill")
+                        .foregroundStyle(Color.accentColor)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .modifier(BootPanel(dimmed: dimmed, radius: 22))
+            }
+            #endif
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 20)

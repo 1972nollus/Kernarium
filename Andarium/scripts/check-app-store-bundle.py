@@ -314,7 +314,11 @@ DEBUG_SYMBOLS = (
     ("JIT", (b"10jit_memory", b"5arm643jit", b"11JitCompiler", b"11JitExecutor",
              b"9JitEngine", b"16JitCacheGeometry", b"uml_arm64_jit_",
              b"darwin_uml_jit_enter_guest", b"kernarium_runtime_loader_prepare_jit",
-             b"kernarium_runtime_loader_debugger_attached")),
+             b"kernarium_runtime_loader_debugger_attached",
+             # The application's own: the preference, the policy, the
+             # debugger side and the Home section (Andarium/Shared/Jit.swift).
+             b"13JitPreference", b"8JitShape", b"9JitAnswer", b"9JitStatus",
+             b"11JitDebugger", b"10JitSection")),
 )
 DEBUG_STRINGS = (
     ("frame mirror", (b"uml-frame-tap",)),
@@ -326,7 +330,8 @@ DEBUG_STRINGS = (
                     b"ADB authorization is off", b"removed the boot payload")),
     ("remote framebuffer", (b"RFB 003.00",)),
     ("JIT", (b"--jit-cache-budget=", b"--execution-engine=jit",
-             b"running on gadgets, not the JIT")),
+             b"running on gadgets, not the JIT", b"open Andarium from StikDebug",
+             b"Started without JIT")),
 )
 # What runs tests: a test bundle, and the frameworks and libraries that load it
 # (XCTest, XCUIAutomation and the rest, Swift Testing). They are in an

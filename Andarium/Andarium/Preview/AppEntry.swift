@@ -59,6 +59,7 @@ struct AppEntry {
         "home-capabilities": "capabilities", "home-mic-on": "capabilities", "home-mic-denied": "capabilities",
         "home-mic-alert": "capabilities", "home-gyroscope-unavailable": "capabilities",
         "home-backup": "backup",
+        "home-jit": "jit", "home-jit-no-debugger": "jit", "home-jit-fallback": "jit",
     ]
 
     /// Where Settings scrolls to for a screen that shows a lower section.
@@ -105,6 +106,7 @@ struct AppEntry {
             createRequirementBytes: PreviewData.createRequirementBytes
         )
         let freeze = !play
+        model.jitAvailable = true
 
         func boot(_ kind: BootKind, stage: Int, seconds: Int) {
             model.frozenBootStage = freeze ? (bootStage ?? stage) : nil
@@ -142,6 +144,15 @@ struct AppEntry {
             model.guest = PreviewData.highMemoryGuest(on: host)
         case "home-options", "home-display", "home-capabilities", "home-backup", "system-edit":
             break
+        case "home-jit":
+            model.jitOn = true
+        case "home-jit-no-debugger":
+            model.jitOn = true
+            model.previewJitDebugger = false
+        case "home-jit-fallback":
+            model.jitOn = true
+            model.previewJitDebugger = false
+            model.jitLastStart = .noDebugger
         case "home-mic-on":
             model.guest?.microphone = true
             model.microphoneState = .granted
@@ -170,6 +181,14 @@ struct AppEntry {
             boot(.recovery, stage: 3, seconds: 7)
         case "boot-restart":
             boot(.restart, stage: 3, seconds: 8)
+        case "boot-jit":
+            model.jitOn = true
+            model.preparingJit = true
+            boot(.normal, stage: 0, seconds: 3)
+        case "boot-jit-fallback":
+            model.jitOn = true
+            model.jitLastStart = .noDebugger
+            boot(.normal, stage: 1, seconds: 4)
         case "session", "session-tip", "session-open", "session-keyboard", "session-stats",
              "session-power", "session-setup", "session-off", "session-left", "session-volume",
              "session-graphics-notice":

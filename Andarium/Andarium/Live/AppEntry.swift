@@ -100,6 +100,11 @@ struct AppEntry {
             guest: guest, host: host, system: system, capabilities: .device,
             createRequirementBytes: storage.createRequirementBytes
         )
+        #if !APP_STORE && !targetEnvironment(simulator)
+        // A development build on a device can run the guest on the JIT engine
+        // when a debugger prepares its memory.
+        model.jitAvailable = true
+        #endif
         // The rulers offer no size the carried system's data disk would refuse.
         model.releaseMaximumGiB = storage.release.maximumGiB
         // Retina mode is the person's choice where they made one, else on when
@@ -118,6 +123,13 @@ struct AppEntry {
         model.statsDecidedByLaunch = !stats.keepsChanges
         #if !APP_STORE
         model.printsStatistics = launch.statistics == true
+        // The JIT row follows the person's last choice, unless the launch is a
+        // harness's and decides for its run alone (`JitPreference.launch`).
+        let jit = JitPreference().launch(
+            stated: JitPreference.stated(in: ProcessInfo.processInfo.environment),
+            hasOtherSettings: !launch.isEmpty)
+        model.jitOn = jit.isOn
+        model.jitDecidedByLaunch = !jit.keepsChanges
         #endif
 
         #if APP_STORE

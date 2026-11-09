@@ -72,6 +72,10 @@ DEBUG_SUPPORT = (
     ("JIT", 'const char *fixture(void) { return "--jit-cache-budget="; }\n'),
     ("JIT", 'const char *fixture(void) { return "Kernarium: running on gadgets, not the JIT: %s"; }\n'),
     ("JIT", 'void fixture(void) { __asm__ volatile(".inst 0xd43e01a0"); }\n'),
+    ("JIT", "int _s8Andarium13JitPreferenceV5isOnSbvg(void) { return 1; }\n"),
+    ("JIT", "int _s8Andarium11JitDebuggerO8attachedSbyFZ(void) { return 1; }\n"),
+    ("JIT", 'const char *fixture(void) { return "To use JIT, open Andarium from StikDebug."; }\n'),
+    ("JIT", 'const char *fixture(void) { return "Started without JIT: StikDebug is not connected."; }\n'),
 )
 # What an App Store runtime keeps so that the runtime API table's layout and
 # version stay: its entries answer -ENOTSUP, and a virtual Jetsam that never
