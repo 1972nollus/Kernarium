@@ -515,6 +515,10 @@ FORBIDDEN_FEATURE_DECLARATIONS = {
 # there is no peer-to-peer, Aware or RTT, and Passpoint waits for the first Wi-Fi
 # CTS run. android.hardware.ethernet is not declared, because eth0 is the management
 # NIC and the framework must not manage it.
+# system_server starts MidiService only with android.software.midi, which no
+# handheld declaration of the platform carries, and applications call
+# MidiManager without a null check. Virtual MIDI devices (MidiDeviceService)
+# need no hardware transport, so the declaration adds no USB or Bluetooth MIDI.
 REQUIRED_FEATURE_NAMES = {
     "android.hardware.touchscreen",
     "android.hardware.touchscreen.multitouch",
@@ -525,6 +529,7 @@ REQUIRED_FEATURE_NAMES = {
     "android.hardware.microphone",
     "android.hardware.wifi",
     "android.software.companion_device_setup",
+    "android.software.midi",
     "android.hardware.opengles.aep",
 }
 FORBIDDEN_FEATURE_NAMES = {
