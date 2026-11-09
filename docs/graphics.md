@@ -265,14 +265,14 @@ process past B. The ledger counts a heap only once its pages are resident, so
 the driver makes each heap resident before its reservation ends, and a burst of
 creations with no work between them is refused at B
 (`gpu-host-gl-allocation-burst`). A reservation that does not fit first frees
-what the host GL driver caches and is decided again. Memory the host frees
-leaves Metal's counter at once but the ledger only later, within milliseconds or
-at its next sweep. The pool sees the release in Metal's counter, and when the
-request would fit once the ledger had caught up with it, waits for the ledger
-(re-reading it every millisecond, for 300 ms at most) rather than refuse. A
-request that follows no release, or would not fit even then, is refused at once,
-and a wait that reached its bound is not repeated until Metal's counter falls
-again.
+what the host GL driver has cached unused for a while and is decided again.
+Memory the host frees leaves Metal's counter at once but the ledger only later,
+within milliseconds or at its next sweep. The pool sees the release in Metal's
+counter, and when the request would fit once the ledger had caught up with it,
+waits for the ledger (re-reading it every millisecond, for 300 ms at most)
+rather than refuse. A request that follows no release, or would not fit even
+then, is refused at once, and a wait that reached its bound is not repeated
+until Metal's counter falls again.
 
 - `vkAllocateMemory` of any type is refused with
   `VK_ERROR_OUT_OF_DEVICE_MEMORY` when the pool cannot hold it. That covers
