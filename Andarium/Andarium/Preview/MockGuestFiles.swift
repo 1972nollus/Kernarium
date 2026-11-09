@@ -65,6 +65,12 @@ final class MockGuestFiles: GuestFilesBackend {
 
     func freeBytes() async -> UInt64? { free }
 
+    func prepareImport(bytes: UInt64, into folder: String) async throws {}
+
+    func prepareExport(bytes: UInt64) async throws {}
+
+    func scan(_ paths: [String]) async {}
+
     func measure(_ file: GuestFile) async throws -> UInt64 {
         try await Task.sleep(for: .milliseconds(600))
         return node(at: file.path).map(Self.bytes) ?? 0
@@ -93,19 +99,23 @@ final class MockGuestFiles: GuestFilesBackend {
         var errorDescription: String? { message }
     }
 
-    func send(_ pick: FilePick, to path: String, progress: @escaping @Sendable (UInt64) -> Void) async throws {
+    func send(
+        _ pick: FilePick, to path: String, replacing: Bool, progress: @escaping @Sendable (UInt64, UInt64) -> Void
+    ) async throws {
         let reason = failing[pick.name]
         if recovering.contains(pick.name) { failing[pick.name] = nil }
-        try await move(pick.size, failing: reason, progress: progress)
+        try await move(pick.size, failing: reason) { progress($0, pick.size) }
         let name = GuestPath.name(of: path)
         guard let parent = node(at: GuestPath.parent(of: path)) else { return }
         free -= min(free, pick.size)
         parent.children?[name] = Node(size: pick.size, modified: MockTree.now)
     }
 
-    func receive(_ file: GuestFile, into directory: URL, progress: @escaping @Sendable (UInt64) -> Void) async throws -> URL {
+    func receive(
+        _ file: GuestFile, into directory: URL, progress: @escaping @Sendable (UInt64, UInt64) -> Void
+    ) async throws -> URL {
         let total = try await measure(file)
-        try await move(total, failing: failing[file.name], progress: progress)
+        try await move(total, failing: failing[file.name]) { progress($0, total) }
         let url = directory.appendingPathComponent(file.name, isDirectory: file.isFolder)
         if file.isFolder {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -177,7 +187,7 @@ final class MockGuestFiles: GuestFilesBackend {
             browser.selection = (photos.map { GuestPath.child($0, of: camera) } + [GuestPath.child("Boarding pass.pdf", of: download)])
                 .compactMap(files.file(at:))
             browser.reviewingSelection = false
-        case "files-transfer", "files-transfer-open", "files-transfer-paused":
+        case "files-transfer", "files-transfer-open":
             route = folder("Download")
             let transfer = held(.importing, download, [
                 item("Lisbon walk, full.mov", 4 * gib + 716 * mib, moved: 2 * gib + 100 * mib, state: .moving),
@@ -185,7 +195,6 @@ final class MockGuestFiles: GuestFilesBackend {
                 item("Harbour.jpg", 6 * mib),
             ])
             transfer.expanded = screen == "files-transfer-open"
-            transfer.pausedWhileAway = screen == "files-transfer-paused"
             browser.transfer = transfer
         case "files-done":
             route = folder("Download")
@@ -226,6 +235,17 @@ final class MockGuestFiles: GuestFilesBackend {
             browser.transfer = transfer
             files.add(["Harbour.jpg"], to: download)
             browser.fresh = [GuestPath.child("Harbour.jpg", of: download)]
+        case "files-stopped":
+            route = folder("Download")
+            let reason = FileBrowserModel.leftForegroundReason
+            let transfer = held(.importing, download, [
+                item("Lisbon walk, full.mov", 4 * gib + 716 * mib, state: .failed(reason)),
+                item("Tram 28.mov", 812 * mib, state: .failed(reason)),
+                item("Harbour.jpg", 6 * mib, moved: 6 * mib, state: .done),
+            ])
+            transfer.stage = .failed
+            browser.transfer = transfer
+            files.add(["Harbour.jpg"], to: download)
         case "files-conflict":
             route = folder("Download")
             browser.conflict = ImportConflict(

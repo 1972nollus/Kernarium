@@ -24,8 +24,20 @@ struct FolderPage: View {
             .navigationSubtitle(subtitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbar }
-            .task(id: path) { await browser.load(path) }
+            .task(id: LoadKey(path: path, available: model.adbOverNetworkAvailable)) {
+                if model.adbOverNetworkAvailable { await browser.load(path) }
+            }
     }
+
+    /// What a folder is read again for: another folder, or USB debugging
+    /// coming back on.
+    private struct LoadKey: Hashable {
+        var path: String
+        var available: Bool
+    }
+
+    /// USB debugging is not known yet: Settings reads it as it opens.
+    private var checking: Bool { model.driver != nil && model.session.usbDebugging == nil }
 
     /// The selection when there is one, otherwise the folder.
     private var subtitle: String {
@@ -38,7 +50,9 @@ struct FolderPage: View {
     }
 
     @ViewBuilder private var content: some View {
-        if !model.adbOverNetworkAvailable {
+        if checking {
+            loading
+        } else if !model.adbOverNetworkAvailable {
             ContentUnavailableView {
                 Label("USB debugging is off", systemImage: "cable.connector")
             } description: {

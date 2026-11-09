@@ -36,6 +36,8 @@ struct ImportConflict {
     var picks: [FilePick]
     var clashing: [FilePick]
     var folder: String
+    /// The names that are folders there, which an import never replaces.
+    var folders: Set<String> = []
 }
 
 enum ConflictChoice {
@@ -70,6 +72,8 @@ final class FileTransfer: Identifiable {
         var isFolder = false
         var moved: UInt64 = 0
         var state: ItemState = .waiting
+        /// Where an imported file goes in the guest.
+        var path: String?
     }
 
     let id = UUID()
@@ -82,12 +86,14 @@ final class FileTransfer: Identifiable {
     var measuring = false
     /// The card shows every item.
     var expanded = false
-    /// iOS stopped the guest while Andarium was away, and the transfer with it.
-    var pausedWhileAway = false
     /// The staged copies of an export, for the action menu.
     var staged: [URL] = []
     /// A held screen stays as it is.
     var stays = false
+    /// The export's own folder of the staging area, which holds every copy.
+    @ObservationIgnored var directory: URL?
+    /// Why the transfer was stopped from outside, which its files then say.
+    @ObservationIgnored var interruption: String?
     @ObservationIgnored var task: Task<Void, Never>?
 
     init(direction: Direction, folder: String, items: [Item]) {
@@ -133,7 +139,6 @@ final class FileTransfer: Identifiable {
     var detail: String {
         switch stage {
         case .running:
-            if pausedWhileAway { return "Paused while Andarium was in the background" }
             if measuring { return "Counting files\u{2026}" }
             let moved = "\(Formats.size(bytes: movedBytes)) of \(Formats.size(bytes: totalBytes))"
             guard items.count > 1, let index = items.firstIndex(where: { $0.state == .moving }) else { return moved }
@@ -152,10 +157,13 @@ final class FileTransfer: Identifiable {
 }
 
 /// The file browser behind Settings: where the person is, what is selected
-/// and the one transfer. It outlives a closed sheet, so a run's folders do not
-/// load again.
+/// and the one transfer. It lasts for a run, and is emptied when Settings
+/// closes (`sheetClosed`) and when the run ends (`reset`).
 @Observable
 final class FileBrowserModel {
+    /// What a transfer's files say when iOS stopped the guest under it.
+    static let leftForegroundReason = "Stopped when Andarium left the foreground."
+
     @ObservationIgnored let backend: any GuestFilesBackend
 
     /// The Settings sheet's navigation path: empty on Settings itself, then
@@ -172,6 +180,8 @@ final class FileBrowserModel {
     var fresh: Set<String> = []
     private(set) var freeBytes: UInt64?
     private var listings: [String: FolderListing] = [:]
+    @ObservationIgnored private var retry: (() -> Void)?
+    @ObservationIgnored private var observer: NSObjectProtocol?
 
     /// The system's action menu; a test or a preview may put its own here.
     @ObservationIgnored
@@ -181,13 +191,25 @@ final class FileBrowserModel {
 
     init(backend: any GuestFilesBackend) {
         self.backend = backend
+        // iOS pauses the guest when the application enters the background,
+        // so a transfer cannot go on through it.
+        observer = NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.leftForeground() }
+        }
+    }
+
+    isolated deinit {
+        if let observer { NotificationCenter.default.removeObserver(observer) }
     }
 
     var browsing: Bool { !route.isEmpty }
     var current: String { route.last?.path ?? GuestPath.root }
     var running: Bool { transfer?.running == true }
 
-    /// A new import or export has to wait.
+    /// A new import or export has to wait, and so do the guest's other
+    /// operations, which share its adb channel.
     var busy: Bool { running || conflict != nil }
 
     // MARK: Folders
@@ -211,27 +233,30 @@ final class FileBrowserModel {
         }
     }
 
+    /// Reads `folder` again. A folder that answers at once never shows a
+    /// placeholder, and one that is listed already keeps its listing when the
+    /// new reading fails.
     func load(_ folder: String) async {
-        // A folder that answers at once never shows a placeholder.
         let placeholder = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled, let self, self.listings[folder] == nil else { return }
             self.listings[folder] = .loading
         }
         defer { placeholder.cancel() }
+        let free = Task { await backend.freeBytes() }
         do {
             listings[folder] = .loaded(try await backend.list(folder))
         } catch is CancellationError {
         } catch GuestFolderProblem.refused {
             listings[folder] = .refused
         } catch {
-            listings[folder] = .failed(error.localizedDescription)
+            if case .loaded = listings[folder] {} else { listings[folder] = .failed(error.localizedDescription) }
         }
-        freeBytes = await backend.freeBytes()
+        freeBytes = await free.value
     }
 
     func canImport(into folder: String) -> Bool {
-        if case .loaded = listings[folder] { return true }
+        if case .loaded = listings[folder] { return !busy }
         return false
     }
 
@@ -282,18 +307,36 @@ final class FileBrowserModel {
 
     // MARK: Import
 
-    /// The picker's result, for the folder on screen.
+    /// One file of an import: where it goes and whether it takes the place of
+    /// a file of that name.
+    struct ImportStep {
+        var pick: FilePick
+        var path: String
+        var replacing: Bool
+    }
+
+    /// The picker's result, for the folder on screen. Picks of one name from
+    /// different places are told apart first, as the guest's Files app does.
     func received(_ picks: [FilePick]) {
         picking = false
         guard !picks.isEmpty, !busy else { return }
         let folder = current
-        let names = Set(entries(in: folder).map(\.name))
-        let clashing = picks.filter { names.contains($0.name) }
+        let names = GuestFileNames.distinct(picks.map(\.name))
+        let renamed = zip(picks, names).map { pick, name -> FilePick in
+            var copy = pick
+            copy.name = name
+            return copy
+        }
+        let existing = Dictionary(
+            entries(in: folder).map { ($0.name, $0.isFolder) }, uniquingKeysWith: { first, _ in first })
+        let clashing = renamed.filter { existing[$0.name] != nil }
         guard clashing.isEmpty else {
-            conflict = ImportConflict(picks: picks, clashing: clashing, folder: folder)
+            conflict = ImportConflict(
+                picks: renamed, clashing: clashing, folder: folder,
+                folders: Set(existing.filter(\.value).keys))
             return
         }
-        startImport(picks.map { ($0, GuestPath.child($0.name, of: folder)) }, into: folder)
+        startImport(renamed.map { ImportStep(pick: $0, path: GuestPath.child($0.name, of: folder), replacing: false) }, into: folder)
     }
 
     func resolveConflict(_ choice: ConflictChoice) {
@@ -301,86 +344,107 @@ final class FileBrowserModel {
         self.conflict = nil
         let clashing = Set(conflict.clashing.map(\.name))
         var taken = Set(entries(in: conflict.folder).map(\.name)).union(conflict.picks.map(\.name))
-        var plan: [(FilePick, String)] = []
+        var plan: [ImportStep] = []
         for pick in conflict.picks {
             var name = pick.name
+            var replacing = false
             if clashing.contains(name) {
                 switch choice {
                 case .skip: continue
-                case .replace: break
+                case .replace:
+                    // A folder is never replaced: the file goes beside it.
+                    if conflict.folders.contains(name) {
+                        name = GuestFileNames.freeName(for: name, taken: taken)
+                        taken.insert(name)
+                    } else {
+                        replacing = true
+                    }
                 case .keepBoth:
-                    name = Self.freeName(for: name, taken: taken)
+                    name = GuestFileNames.freeName(for: name, taken: taken)
                     taken.insert(name)
                 }
             }
             var renamed = pick
             renamed.name = name
-            plan.append((renamed, GuestPath.child(name, of: conflict.folder)))
+            plan.append(ImportStep(pick: renamed, path: GuestPath.child(name, of: conflict.folder), replacing: replacing))
         }
         if !plan.isEmpty { startImport(plan, into: conflict.folder) }
     }
 
     func cancelConflict() { conflict = nil }
 
-    /// "Clip.mov" as "Clip (1).mov", the way Android names a second copy.
-    static func freeName(for name: String, taken: Set<String>) -> String {
-        let base = (name as NSString).deletingPathExtension
-        let suffix = (name as NSString).pathExtension
-        var count = 1
-        while true {
-            let candidate = suffix.isEmpty ? "\(base) (\(count))" : "\(base) (\(count)).\(suffix)"
-            if !taken.contains(candidate) { return candidate }
-            count += 1
-        }
-    }
-
-    private func startImport(_ plan: [(pick: FilePick, path: String)], into folder: String) {
+    private func startImport(_ plan: [ImportStep], into folder: String) {
         let transfer = FileTransfer(
             direction: .importing, folder: folder,
-            items: plan.map { FileTransfer.Item(name: $0.pick.name, size: $0.pick.size) }
+            items: plan.map { FileTransfer.Item(name: $0.pick.name, size: $0.pick.size, path: $0.path) }
         )
         replaceTransfer(with: transfer)
         runImport(transfer, plan: plan, retrying: Array(plan.indices))
     }
 
-    private func runImport(_ transfer: FileTransfer, plan: [(pick: FilePick, path: String)], retrying indices: [Int]) {
+    private func runImport(_ transfer: FileTransfer, plan: [ImportStep], retrying indices: [Int]) {
         let backend = backend
+        transfer.interruption = nil
+        for index in indices {
+            transfer.items[index].moved = 0
+            transfer.items[index].state = .waiting
+        }
+        let again: ([Int]) -> Void = { [weak self] failed in self?.runImport(transfer, plan: plan, retrying: failed) }
         transfer.task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let bytes = indices.reduce(0) { $0 + plan[$1].pick.size }
+                try await backend.prepareImport(bytes: bytes, into: transfer.folder)
+            } catch is CancellationError {
+                self.stopped(transfer, rerun: again)
+                return
+            } catch {
+                for index in indices { transfer.items[index].state = .failed(error.localizedDescription) }
+                self.importEnded(transfer, plan: plan, rerun: again)
+                return
+            }
             for index in indices {
-                guard !Task.isCancelled else { return }
-                transfer.items[index].moved = 0
+                if Task.isCancelled {
+                    self.stopped(transfer, rerun: again)
+                    return
+                }
                 transfer.items[index].state = .moving
                 do {
-                    try await backend.send(plan[index].pick, to: plan[index].path) { bytes in
-                        Task { @MainActor in transfer.items[index].moved = bytes }
+                    try await backend.send(plan[index].pick, to: plan[index].path, replacing: plan[index].replacing) { moved, total in
+                        Task { @MainActor in Self.progress(transfer, index, moved, total) }
                     }
                     transfer.items[index].moved = transfer.items[index].size
                     transfer.items[index].state = .done
                 } catch is CancellationError {
+                    self.stopped(transfer, rerun: again)
                     return
                 } catch {
                     transfer.items[index].moved = 0
                     transfer.items[index].state = .failed(error.localizedDescription)
                 }
             }
-            self?.importEnded(transfer, plan: plan)
+            self.importEnded(transfer, plan: plan, rerun: again)
         }
     }
 
-    private func importEnded(_ transfer: FileTransfer, plan: [(pick: FilePick, path: String)]) {
-        let arrived = transfer.items.indices.filter { transfer.items[$0].state == .done }.map { plan[$0].path }
+    private static func progress(_ transfer: FileTransfer, _ index: Int, _ moved: UInt64, _ total: UInt64) {
+        guard transfer.items.indices.contains(index), transfer.items[index].state == .moving else { return }
+        transfer.items[index].moved = moved
+        // The size a file has once it is here, which an iCloud file did not
+        // say when it was picked.
+        if total > 0, total != transfer.items[index].size { transfer.items[index].size = total }
+    }
+
+    private func importEnded(_ transfer: FileTransfer, plan: [ImportStep], rerun: @escaping ([Int]) -> Void) {
+        guard self.transfer === transfer else { return }
+        let arrived = transfer.items.compactMap { $0.state == .done ? $0.path : nil }
         fresh = Set(arrived)
+        if !arrived.isEmpty { Task { [backend] in await backend.scan(arrived) } }
         Task { await load(transfer.folder) }
-        let failed = transfer.items.indices.filter { transfer.items[$0].state != .done }
-        if failed.isEmpty {
+        if transfer.items.allSatisfy({ $0.state == .done }) {
             finish(transfer)
         } else {
-            transfer.stage = .failed
-            retry = { [weak self, weak transfer] in
-                guard let self, let transfer else { return }
-                transfer.stage = .running
-                self.runImport(transfer, plan: plan, retrying: failed)
-            }
+            failed(transfer, rerun: rerun)
         }
     }
 
@@ -408,53 +472,79 @@ final class FileBrowserModel {
 
     private func runExport(_ transfer: FileTransfer, files: [GuestFile], retrying indices: [Int]) {
         let backend = backend
+        transfer.interruption = nil
+        for index in indices {
+            transfer.items[index].moved = 0
+            transfer.items[index].state = .waiting
+        }
+        let again: ([Int]) -> Void = { [weak self] failed in self?.runExport(transfer, files: files, retrying: failed) }
         transfer.task = Task { [weak self] in
-            guard let directory = try? Self.makeStagingDirectory() else {
+            guard let self else { return }
+            do {
+                if transfer.directory == nil { transfer.directory = try GuestFileStaging.makeTransferDirectory() }
+            } catch {
                 for index in indices {
                     transfer.items[index].state = .failed("Andarium couldn\u{2019}t make room for the copy.")
                 }
-                transfer.stage = .failed
+                self.exportEnded(transfer, rerun: again)
                 return
             }
-            do {
-                for index in indices where files[index].isFolder {
+            // A folder's size is what its files add up to.
+            for index in indices where files[index].isFolder {
+                do {
                     transfer.items[index].size = try await backend.measure(files[index])
+                } catch is CancellationError {
+                    self.stopped(transfer, rerun: again)
+                    return
+                } catch {
+                    transfer.items[index].state = .failed(error.localizedDescription)
                 }
-            } catch {
-                return
             }
             transfer.measuring = false
-            for index in indices {
-                guard !Task.isCancelled else { return }
-                transfer.items[index].moved = 0
+            let moving = indices.filter { transfer.items[$0].state == .waiting }
+            do {
+                try await backend.prepareExport(bytes: moving.reduce(0) { $0 + transfer.items[$1].size })
+            } catch is CancellationError {
+                self.stopped(transfer, rerun: again)
+                return
+            } catch {
+                for index in moving { transfer.items[index].state = .failed(error.localizedDescription) }
+                self.exportEnded(transfer, rerun: again)
+                return
+            }
+            for index in moving {
+                if Task.isCancelled {
+                    self.stopped(transfer, rerun: again)
+                    return
+                }
+                guard let directory = transfer.directory?.appendingPathComponent(String(index), isDirectory: true) else { return }
                 transfer.items[index].state = .moving
                 do {
-                    let url = try await backend.receive(files[index], into: directory) { bytes in
-                        Task { @MainActor in transfer.items[index].moved = bytes }
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    let url = try await backend.receive(files[index], into: directory) { moved, total in
+                        Task { @MainActor in Self.progress(transfer, index, moved, total) }
                     }
                     transfer.staged.append(url)
                     transfer.items[index].moved = transfer.items[index].size
                     transfer.items[index].state = .done
                 } catch is CancellationError {
+                    try? FileManager.default.removeItem(at: directory)
+                    self.stopped(transfer, rerun: again)
                     return
                 } catch {
+                    try? FileManager.default.removeItem(at: directory)
                     transfer.items[index].moved = 0
                     transfer.items[index].state = .failed(error.localizedDescription)
                 }
             }
-            self?.exportEnded(transfer, files: files)
+            self.exportEnded(transfer, rerun: again)
         }
     }
 
-    private func exportEnded(_ transfer: FileTransfer, files: [GuestFile]) {
-        let failed = transfer.items.indices.filter { transfer.items[$0].state != .done }
-        guard failed.isEmpty else {
-            transfer.stage = .failed
-            retry = { [weak self, weak transfer] in
-                guard let self, let transfer else { return }
-                transfer.stage = .running
-                self.runExport(transfer, files: files, retrying: failed)
-            }
+    private func exportEnded(_ transfer: FileTransfer, rerun: @escaping ([Int]) -> Void) {
+        guard self.transfer === transfer else { return }
+        guard transfer.items.allSatisfy({ $0.state == .done }) else {
+            failed(transfer, rerun: rerun)
             return
         }
         transfer.stage = .ready
@@ -466,28 +556,19 @@ final class FileBrowserModel {
     func share(_ transfer: FileTransfer) {
         guard transfer.stage == .ready else { return }
         _ = presentShare(transfer.staged) { [weak self, weak transfer] completed in
-            guard completed, let self, let transfer else { return }
+            guard completed, let self, let transfer, self.transfer === transfer else { return }
             Self.removeStaged(transfer)
             self.finish(transfer)
         }
     }
 
     private static func removeStaged(_ transfer: FileTransfer) {
-        for file in transfer.staged { try? FileManager.default.removeItem(at: file) }
+        if let directory = transfer.directory { try? FileManager.default.removeItem(at: directory) }
+        transfer.directory = nil
         transfer.staged = []
     }
 
-    private static func makeStagingDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("GuestFiles", isDirectory: true)
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
-
     // MARK: Ending
-
-    @ObservationIgnored private var retry: (() -> Void)?
 
     func retryFailed() { retry?() }
 
@@ -501,6 +582,7 @@ final class FileBrowserModel {
 
     private func finish(_ transfer: FileTransfer) {
         transfer.stage = .finished
+        retry = nil
         guard !transfer.stays else { return }
         Task { [weak self, weak transfer] in
             try? await Task.sleep(for: .seconds(4))
@@ -509,24 +591,95 @@ final class FileBrowserModel {
         }
     }
 
-    /// Cancel, or the capsule's close: nothing partial stays behind.
+    /// The transfer ends with files that did not arrive; Try Again runs those
+    /// again, and only those.
+    private func failed(_ transfer: FileTransfer, rerun: @escaping ([Int]) -> Void) {
+        let undone = transfer.items.indices.filter { transfer.items[$0].state != .done }
+        transfer.stage = .failed
+        retry = { [weak self, weak transfer] in
+            guard let self, let transfer, self.transfer === transfer else { return }
+            transfer.stage = .running
+            rerun(undone)
+        }
+    }
+
+    /// A transfer's task ended by cancellation. When the person cancelled,
+    /// the transfer is already gone; when something stopped it (`interrupt`),
+    /// its files say why, and keep what has arrived.
+    private func stopped(_ transfer: FileTransfer, rerun: @escaping ([Int]) -> Void) {
+        guard self.transfer === transfer, let reason = transfer.interruption else { return }
+        transfer.measuring = false
+        for index in transfer.items.indices {
+            switch transfer.items[index].state {
+            case .waiting, .moving:
+                transfer.items[index].moved = 0
+                transfer.items[index].state = .failed(reason)
+            case .done, .failed:
+                break
+            }
+        }
+        failed(transfer, rerun: rerun)
+    }
+
+    /// Stops the running transfer from outside, for `reason`.
+    func interrupt(because reason: String) {
+        guard let transfer, transfer.running else { return }
+        transfer.interruption = reason
+        transfer.task?.cancel()
+    }
+
+    /// iOS stops the guest while Andarium is in the background, and the adb
+    /// stream with it, which has no way to continue: the transfer stops and
+    /// its files say so.
+    func leftForeground() {
+        interrupt(because: Self.leftForegroundReason)
+    }
+
+    /// Cancel, or the capsule's close: nothing partial stays behind. The
+    /// backend removes what the stopped file left in the guest.
     func closeTransfer() {
         guard let transfer else { return }
         transfer.task?.cancel()
         Self.removeStaged(transfer)
+        let arrived = transfer.direction == .importing
+            ? transfer.items.compactMap { $0.state == .done ? $0.path : nil } : []
         self.transfer = nil
         retry = nil
-        if transfer.direction == .importing { Task { await load(transfer.folder) } }
+        if transfer.direction == .importing {
+            if !arrived.isEmpty { Task { [backend] in await backend.scan(arrived) } }
+            Task { await load(transfer.folder) }
+        }
     }
 
-    /// iOS stops the guest while Andarium is in the background. A transfer
-    /// goes on when it is back, and says what happened for a moment.
-    func cameBack() {
-        guard let transfer, transfer.running else { return }
-        transfer.pausedWhileAway = true
-        Task { [weak transfer] in
-            try? await Task.sleep(for: .seconds(5))
-            transfer?.pausedWhileAway = false
+    // MARK: Lifetime
+
+    /// Settings has closed: it opens again at its top, with nothing selected
+    /// and every folder read afresh. A transfer that is over goes with it.
+    func sheetClosed() {
+        route = []
+        selection = []
+        reviewingSelection = false
+        picking = false
+        conflict = nil
+        fresh = []
+        listings = [:]
+        freeBytes = nil
+        if let transfer, !transfer.running {
+            Self.removeStaged(transfer)
+            self.transfer = nil
+            retry = nil
         }
+    }
+
+    /// The run is over, or the guest cannot be reached any more: whatever the
+    /// browser held belonged to it.
+    func reset() {
+        if let transfer {
+            transfer.task?.cancel()
+            Self.removeStaged(transfer)
+        }
+        transfer = nil
+        retry = nil
+        sheetClosed()
     }
 }

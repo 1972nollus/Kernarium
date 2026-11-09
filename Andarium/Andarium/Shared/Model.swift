@@ -432,6 +432,7 @@ final class AppModel {
     func guestPausingForSpace(freeBytes: UInt64) {
         host.freeStorageBytes = freeBytes
         abandonOperation()
+        fileBrowser?.reset()
         stopAdbOverNetwork()
         spacePause = SpacePause(freeBytes: freeBytes, stage: .pausing)
     }
@@ -729,7 +730,7 @@ final class AppModel {
     /// (minutes, under emulation) and the finished zip goes to the share
     /// sheet, where Save to Files is one of the actions.
     func createBugReport() {
-        guard capabilities.bugReport, case .running(.normal) = phase else { return }
+        guard capabilities.bugReport, case .running(.normal) = phase, fileBrowser?.busy != true else { return }
         runOperation(
             BusyState(
                 title: "Creating bug report",
@@ -793,6 +794,11 @@ final class AppModel {
     /// scope is held to the end of the install.
     func installPicked(_ url: URL) {
         guard busy == nil else { return }
+        guard fileBrowser?.busy != true else {
+            alert = AppAlert(
+                title: Self.installFailure, message: "Wait for the file transfer to finish, then install the app.")
+            return
+        }
         let name = url.lastPathComponent
         if let refusal = InstallRefusal(fileName: name) {
             busy = ended(title: Self.installFailure, detail: refusal.message, failed: true)
@@ -891,6 +897,7 @@ final class AppModel {
     /// reason the failure screen reports.
     func runEnded(_ end: RunEnd, uptimeSeconds: Int?) {
         abandonOperation()
+        fileBrowser?.reset()
         endAdbOverNetwork()
         spacePause = nil
         graphicsNotice = GraphicsNotice()
@@ -916,6 +923,7 @@ final class AppModel {
     /// install list belong to the run that ended.
     func restart() {
         abandonOperation()
+        fileBrowser?.reset()
         endAdbOverNetwork()
         spacePause = nil
         graphicsNotice = GraphicsNotice()

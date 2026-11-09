@@ -29,7 +29,7 @@ struct SessionSettingsSheet: View {
             ScrollViewReader { proxy in
                 List {
                     if model.capabilities.statistics { stats(session) }
-                    if normalSession, model.fileBrowser != nil { files }
+                    if normalSession, model.capabilities.guestFiles, model.fileBrowser != nil { files }
                     if normalSession, model.capabilities.apkInstall { apps }
                     if normalSession, model.capabilities.adbOverNetwork { developer(session) }
                     if normalSession, model.capabilities.bugReport { diagnostics }
@@ -56,8 +56,9 @@ struct SessionSettingsSheet: View {
         }
         // The bar is outside the pages, so folders slide under it.
         .safeAreaBar(edge: .bottom) {
-            if let browser = model.fileBrowser, model.adbOverNetworkAvailable, browser.browsing || browser.transfer != nil {
-                FilesBar(browser: browser, bottomInset: filesBarInset)
+            if let browser = model.fileBrowser,
+               (model.adbOverNetworkAvailable && browser.browsing) || browser.transfer != nil || browser.conflict != nil {
+                FilesBar(browser: browser, usable: model.adbOverNetworkAvailable, bottomInset: filesBarInset)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -77,6 +78,7 @@ struct SessionSettingsSheet: View {
             if browsing == true, model.adbOverNetworkAvailable { detent = .large }
         }
         .task { await model.watchSettings() }
+        .onDisappear { model.fileBrowser?.sheetClosed() }
         .presentationDetents([.medium, .large], selection: $detent)
         .presentationBackground(Color(.systemGroupedBackground))
         .presentationBackgroundInteraction(.enabled(upThrough: .medium))
@@ -138,6 +140,8 @@ struct SessionSettingsSheet: View {
                     Spacer()
                 }
             }
+            // The guest's one adb channel is busy with the transfer.
+            .disabled(model.fileBrowser?.busy == true)
         }
     }
 
@@ -158,6 +162,7 @@ struct SessionSettingsSheet: View {
                         .foregroundStyle(Color(.secondaryLabel))
                 }
             }
+            .disabled(model.fileBrowser?.busy == true)
         }
     }
 

@@ -10,8 +10,10 @@ import UniformTypeIdentifiers
 struct FilesBar: View {
     static let height: CGFloat = 50
 
-    @Environment(\.scenePhase) private var scenePhase
     @Bindable var browser: FileBrowserModel
+    /// USB debugging is on, so the guest can be browsed: the trail and Import
+    /// or Export show. A transfer or a question stays in view regardless.
+    let usable: Bool
     /// The sheet's own bottom inset, measured outside the bar: read here, the
     /// bar's padding would feed its own measurement.
     let bottomInset: CGFloat
@@ -23,7 +25,7 @@ struct FilesBar: View {
                 if browser.conflict != nil || browser.transfer != nil {
                     FileTransferSlot(browser: browser)
                 }
-                if browser.browsing {
+                if browser.browsing, usable {
                     HStack(spacing: 10) {
                         trail
                         action
@@ -41,9 +43,6 @@ struct FilesBar: View {
         .animation(.snappy, value: browser.transfer?.id)
         .animation(.snappy, value: browser.conflict == nil)
         .modifier(ImportPickerPresenter(browser: browser))
-        .onChange(of: scenePhase) { old, new in
-            if old == .background, new != .background { browser.cameBack() }
-        }
     }
 
     /// Rows fade out under the glass, so a name never reads through it.
@@ -213,10 +212,7 @@ struct ImportPickerPresenter: ViewModifier {
                 isPresented: $browser.picking, allowedContentTypes: [.item], allowsMultipleSelection: true
             ) { result in
                 guard case let .success(urls) = result else { return }
-                browser.received(urls.map { url in
-                    let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-                    return FilePick(url: url, name: url.lastPathComponent, size: UInt64(max(bytes, 0)))
-                })
+                browser.received(urls.map(FilePick.picked))
             }
         }
     }
