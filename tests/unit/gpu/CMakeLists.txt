@@ -74,6 +74,14 @@ if(TARGET uml_gpu_memory_pressure)
         LIBRARIES UML::GpuMemoryPressure)
 endif()
 
+# Whether a refused Venus allocation waits for the guest's reclaimer: the
+# policy needs no GPU device either.
+if(TARGET uml_gpu_reclaim_wait)
+    uml_add_gpu_unit_test(gpu-reclaim-wait
+        uml_gpu_reclaim_wait_tests reclaim_wait_tests.cpp
+        LIBRARIES UML::GpuReclaimWait Threads::Threads)
+endif()
+
 uml_add_gpu_unit_test(gpu-metal-submit-timing-collector
     uml_gpu_metal_submit_timing_tests metal_submit_timing_tests.cpp
     LIBRARIES Threads::Threads
@@ -380,6 +388,15 @@ if(TARGET uml_gpu_service)
     uml_add_gpu_unit_test(gpu-host-gl-batch-storage
         uml_gpu_host_gl_batch_storage_tests
         host_gl_batch_storage_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries} UML::HostGpuMemory
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY TIMEOUT 120)
+
+    # What the driver caches for a context that is idle or destroyed goes
+    # back while other contexts go on drawing.
+    uml_add_gpu_unit_test(gpu-host-gl-idle-release
+        uml_gpu_host_gl_idle_release_tests
+        host_gl_idle_release_tests.cpp
         LIBRARIES ${_uml_host_gl_libraries} UML::HostGpuMemory
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY TIMEOUT 120)
