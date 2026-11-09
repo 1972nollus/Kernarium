@@ -110,8 +110,8 @@ struct SystemSheet: View {
                 }
             }
         }
-        .presentationDetents([.height(450)])
-        .presentationSizing(FixedSheetSizing(width: 540, height: 460))
+        .presentationDetents([.height(470)])
+        .presentationSizing(FixedSheetSizing(width: 540, height: 480))
         .onAppear { draft = model.guest }
     }
 }

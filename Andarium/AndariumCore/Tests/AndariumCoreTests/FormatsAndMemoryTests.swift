@@ -225,28 +225,44 @@ struct MemoryPolicyTests {
     /// memory limit. The bound counts none of the launch allowances; the default
     /// counts the conservative set (64 MiB for the application, 320 for the rest
     /// of the engine, 149 of headroom), takes the result down to 0.5 GiB, holds
-    /// it within 1.5 to 4 GiB and never above the bound. `AndariumTests` asks
-    /// the loader for the same rows, so these stay the rule's.
-    static let defaultFixtures: [(limitMiB: Int, bounds: [Int], defaults: [Int])] = [
+    /// it within 1.5 to 4 GiB and never above the bound (the safe size); where
+    /// the bound is 4096 the default is also the most that leaves the host GPU
+    /// a gibibyte. `AndariumTests` asks the loader for the same rows, so these
+    /// stay the rule's.
+    static let defaultFixtures: [(limitMiB: Int, bounds: [Int], defaults: [Int], safe: [Int])] = [
         // Below 1.5 GiB the bound wins: the default is never above what the picker offers.
-        (1536, [960, 960, 896, 896, 896, 896, 896, 896], [960, 960, 896, 896, 896, 896, 896, 896]),
-        (2048, [1472, 1472, 1408, 1408, 1344, 1344, 1344, 1344], [1472, 1472, 1408, 1408, 1344, 1344, 1344, 1344]),
+        (1536, [960, 960, 896, 896, 896, 896, 896, 896], [960, 960, 896, 896, 896, 896, 896, 896],
+            [960, 960, 896, 896, 896, 896, 896, 896]),
+        (2048, [1472, 1472, 1408, 1408, 1344, 1344, 1344, 1344], [1472, 1472, 1408, 1408, 1344, 1344, 1344, 1344],
+            [1472, 1472, 1408, 1408, 1344, 1344, 1344, 1344]),
         // The lower clamp: the conservative 1216 to 1024 MiB come up to 1536, under the bound.
-        (2304, [1728, 1728, 1664, 1664, 1600, 1600, 1600, 1600], Array(repeating: 1536, count: 8)),
+        (2304, [1728, 1728, 1664, 1664, 1600, 1600, 1600, 1600], Array(repeating: 1536, count: 8),
+            Array(repeating: 1536, count: 8)),
         // An iPad mini 6's 2867 MiB: 1.5 GiB at every count, 2 GiB still on the picker.
-        (2867, [2304, 2304, 2240, 2240, 2176, 2176, 2176, 2176], Array(repeating: 1536, count: 8)),
-        (3584, [3008, 3008, 2944, 2944, 2880, 2880, 2880, 2880], Array(repeating: 2048, count: 8)),
-        (4096, [3520, 3520, 3456, 3456, 3392, 3392, 3392, 3392], Array(repeating: 2560, count: 8)),
-        (5120, Array(repeating: 4096, count: 8), Array(repeating: 3584, count: 8)),
+        (2867, [2304, 2304, 2240, 2240, 2176, 2176, 2176, 2176], Array(repeating: 1536, count: 8),
+            Array(repeating: 1536, count: 8)),
+        (3584, [3008, 3008, 2944, 2944, 2880, 2880, 2880, 2880], Array(repeating: 2048, count: 8),
+            Array(repeating: 2048, count: 8)),
+        (4096, [3520, 3520, 3456, 3456, 3392, 3392, 3392, 3392], Array(repeating: 2560, count: 8),
+            Array(repeating: 2560, count: 8)),
+        // A limit that offers 4096 at one to three vCPUs only: the default keeps the GPU a gibibyte at every count,
+        // 2560 where the safe size is 3584 at one and two and 3072 after.
+        (4700, [4096, 4096, 4096, 4032, 4032, 4032, 3968, 3968], Array(repeating: 2560, count: 8),
+            [3584, 3584, 3072, 3072, 3072, 3072, 3072, 3072]),
+        // A limit that offers 4096 everywhere: 3584 MiB would leave the GPU 699 to 871 MiB, so a new guest gets
+        // 3072 and the safe size stays at 3584.
+        (5120, Array(repeating: 4096, count: 8), Array(repeating: 3072, count: 8), Array(repeating: 3584, count: 8)),
         // The upper clamp: a limit that leaves the whole range, and a Mac with none.
-        (6144, Array(repeating: 4096, count: 8), Array(repeating: 4096, count: 8)),
-        (0, Array(repeating: 4096, count: 8), Array(repeating: 4096, count: 8)),
+        (6144, Array(repeating: 4096, count: 8), Array(repeating: 4096, count: 8), Array(repeating: 4096, count: 8)),
+        (0, Array(repeating: 4096, count: 8), Array(repeating: 4096, count: 8), Array(repeating: 4096, count: 8)),
     ]
 
     @Test(arguments: [1, 4, 6, 8])
     func aNewGuestTakesEveryCoreAndTheRuntimesDefault(cores: Int) {
         for fixture in Self.defaultFixtures {
-            let policy = MemoryPolicy(maximumsMiB: fixture.bounds, defaultsMiB: fixture.defaults)
+            let policy = MemoryPolicy(
+                maximumsMiB: fixture.bounds, defaultsMiB: fixture.defaults, safeMiB: fixture.safe
+            )
             let device = host(policy, processors: cores)
             let guest = Guest.fresh(on: device)
             #expect(guest.cores == cores)
@@ -262,8 +278,12 @@ struct MemoryPolicyTests {
             if policy.maximumMiB(vCPUs: cores) >= Limits.defaultMemoryRangeMiB.lowerBound {
                 #expect(Limits.defaultMemoryRangeMiB.contains(guest.memoryMiB))
             }
-            // A new guest is not one the application warns about.
+            // A new guest is not one the application warns about, and the
+            // safe size is never under the default.
             #expect(!policy.isAboveDefault(guest.memoryMiB, vCPUs: cores))
+            #expect(!policy.isAboveSafe(guest.memoryMiB, vCPUs: cores))
+            #expect(policy.safeMemoryMiB(vCPUs: cores) == fixture.safe[cores - 1])
+            #expect(policy.safeMemoryMiB(vCPUs: cores) >= guest.memoryMiB)
         }
     }
 
@@ -304,8 +324,10 @@ struct MemoryPolicyTests {
         #expect(policy.defaultMemoryMiB(vCPUs: 2) == 1920)
     }
 
-    /// The warning threshold: a guest has more than a new one gets. Home and
-    /// the memory picker both ask it, so a size and a count give one answer.
+    /// The default threshold: a guest has more than a new one gets. Where the
+    /// default is the safe size, as in these fixtures, it is also the line
+    /// Home and the memory picker warn about, so a size and a count give one
+    /// answer.
     @Test func aGuestAboveTheDefaultIsTheOneTheApplicationWarnsAbout() {
         // An iPad mini 6: 1.5 GiB at every count, 2 GiB still selectable.
         let mini = MemoryPolicy(
@@ -346,6 +368,118 @@ struct MemoryPolicyTests {
         #expect(mini.isAboveDefault(guest.memoryMiB, vCPUs: guest.cores))
         guest.memoryMiB = 1536
         #expect(!mini.isAboveDefault(guest.memoryMiB, vCPUs: guest.cores))
+    }
+
+    /// The two thresholds. An iPhone 18 Pro Max-like device: 4 GiB offered at
+    /// every count, a new guest at 3 GiB (the most that keeps a gibibyte for
+    /// the GPU) and iOS likely to close Andarium above 3.5 GiB.
+    private let phone = MemoryPolicy(
+        maximumsMiB: Array(repeating: 4096, count: 8), defaultsMiB: Array(repeating: 3072, count: 8),
+        safeMiB: Array(repeating: 3584, count: 8)
+    )
+
+    @Test func theGraphicsThresholdIsTheDefaultAndTheClosingOneIsTheSafeSize() {
+        for count in 1...8 {
+            #expect(phone.defaultMemoryMiB(vCPUs: count) == 3072)
+            #expect(phone.safeMemoryMiB(vCPUs: count) == 3584)
+            // At the default and below: nothing to warn about.
+            #expect(!phone.isAboveDefault(3072, vCPUs: count) && !phone.isAboveSafe(3072, vCPUs: count))
+            #expect(phone.risk(3072, vCPUs: count) == .none)
+            #expect(phone.risk(1536, vCPUs: count) == .none)
+            // One step above the default: the graphics warning only.
+            #expect(phone.isAboveDefault(3136, vCPUs: count) && !phone.isAboveSafe(3136, vCPUs: count))
+            #expect(phone.risk(3136, vCPUs: count) == .graphics)
+            #expect(phone.risk(3584, vCPUs: count) == .graphics, "the safe size itself is not a crash risk")
+            // Above the safe size: iOS is likely to close Andarium, which is the worse risk.
+            #expect(phone.isAboveSafe(3648, vCPUs: count))
+            #expect(phone.risk(3648, vCPUs: count) == .closing)
+            #expect(phone.risk(4096, vCPUs: count) == .closing)
+        }
+    }
+
+    @Test func theHomeNoticeKeepsMeaningAboveTheSafeSizeAlone() {
+        // Between the thresholds Home says nothing (it asks isAboveSafe), only
+        // the sheet warns (it asks risk, then isAboveDefault).
+        #expect(!phone.isAboveSafe(3584, vCPUs: 8))
+        #expect(phone.isAboveDefault(3584, vCPUs: 8))
+        // Where the default is the safe size, as on an iPad mini 6 or with no
+        // second bound, the two coincide and the graphics warning never shows
+        // on its own.
+        let mini = MemoryPolicy(
+            maximumsMiB: [2304, 2304, 2240, 2240, 2176, 2176], defaultsMiB: Array(repeating: 1536, count: 6)
+        )
+        for count in 1...6 {
+            #expect(mini.defaultMemoryMiB(vCPUs: count) == mini.safeMemoryMiB(vCPUs: count))
+            for mib in stride(from: 512, through: 2304, by: Limits.memoryStepMiB) {
+                #expect(mini.isAboveDefault(mib, vCPUs: count) == mini.isAboveSafe(mib, vCPUs: count))
+                #expect(mini.risk(mib, vCPUs: count) != .graphics)
+            }
+        }
+    }
+
+    @Test func theSafeSizeIsHeldBetweenTheDefaultAndTheBound() {
+        // Stepped down like the others, never under the default or over the bound.
+        let policy = MemoryPolicy(
+            maximumsMiB: [3520, 3520, 3456], defaultsMiB: [2560, 2560, 2560], safeMiB: [2570, 2000, 9000]
+        )
+        #expect(policy.safeMemoryMiB(vCPUs: 1) == 2560)
+        #expect(policy.safeMemoryMiB(vCPUs: 2) == 2560, "not under the default")
+        #expect(policy.safeMemoryMiB(vCPUs: 3) == 3456, "not over the bound")
+        // A count without a safe size takes its default; so does a policy without any.
+        #expect(MemoryPolicy(maximumsMiB: [3520, 3456], defaultsMiB: [2560, 2048]).safeMemoryMiB(vCPUs: 2) == 2048)
+        #expect(MemoryPolicy(maximumsMiB: [3520, 3456]).safeMemoryMiB(vCPUs: 1) == 3520)
+        // A count above the host's takes the last one; zero counts as one.
+        #expect(phone.safeMemoryMiB(vCPUs: 12) == 3584)
+        #expect(phone.safeMemoryMiB(vCPUs: 0) == 3584)
+    }
+
+    @Test func moreVCPUsDoNotRaiseTheThresholds() {
+        let falling = MemoryPolicy(
+            processorCount: 4,
+            bound: { 4096 - ($0 - 1) * 64 },
+            defaultMemory: { 3072 - ($0 - 1) * 64 },
+            safeMemory: { 3584 - ($0 - 1) * 64 }
+        )
+        for count in 1..<4 {
+            #expect(falling.defaultMemoryMiB(vCPUs: count + 1) <= falling.defaultMemoryMiB(vCPUs: count))
+            #expect(falling.safeMemoryMiB(vCPUs: count + 1) <= falling.safeMemoryMiB(vCPUs: count))
+        }
+        // The thresholds follow the count live: 3.5 GiB is a crash risk at four vCPUs, not at one.
+        #expect(falling.risk(3456, vCPUs: 1) == .graphics)
+        #expect(falling.risk(3456, vCPUs: 4) == .closing)
+    }
+
+    @Test func theLoaderIsAskedOncePerCountForTheSafeSizeAndOncePerSizeForGraphics() {
+        var safeAsked: [Int] = []
+        var graphicsAsked = 0
+        let policy = MemoryPolicy(
+            processorCount: 3,
+            bound: { _ in 4096 }, defaultMemory: { _ in 2048 },
+            safeMemory: { safeAsked.append($0); return 3072 },
+            graphicsMemory: { memory, count in graphicsAsked += 1; return memory / 2 - count }
+        )
+        #expect(safeAsked == [1, 2, 3])
+        #expect(graphicsAsked == 3 * 57, "57 sizes of the runtime's range at 3 counts")
+        #expect(policy.safeMemoryMiB(vCPUs: 2) == 3072)
+        // The estimate is the table's, for the size and count asked.
+        #expect(policy.graphicsMemoryMiB(forMemory: 2048, vCPUs: 1) == 1023)
+        #expect(policy.graphicsMemoryMiB(forMemory: 4096, vCPUs: 3) == 2045)
+        #expect(policy.graphicsMemoryMiB(forMemory: 512, vCPUs: 2) == 254)
+        // A size between steps takes the step below; one outside the range, its edge.
+        #expect(policy.graphicsMemoryMiB(forMemory: 2080, vCPUs: 1) == 1023)
+        #expect(policy.graphicsMemoryMiB(forMemory: 100, vCPUs: 1) == 255)
+        #expect(policy.graphicsMemoryMiB(forMemory: 9999, vCPUs: 1) == 2047)
+        // A count above the host's takes the last row; zero counts as one.
+        #expect(policy.graphicsMemoryMiB(forMemory: 2048, vCPUs: 9) == 1021)
+        #expect(policy.graphicsMemoryMiB(forMemory: 2048, vCPUs: 0) == 1023)
+        // A policy that is not given the host's answer has none.
+        #expect(phone.graphicsMemoryMiB(forMemory: 2048, vCPUs: 1) == nil)
+        #expect(MemoryPolicy(maximumsMiB: [4096]).graphicsMemoryMiB(forMemory: 2048, vCPUs: 1) == nil)
+    }
+
+    @Test func theGraphicsWordsSayItIsSeparateAndWhereGamesRunShort() {
+        #expect(GraphicsMemoryWarning.separateNote.contains("separate") && GraphicsMemoryWarning.separateNote.contains("RAM"))
+        #expect(GraphicsMemoryWarning.note(defaultMiB: 3072) == "Above 3 GiB, games may run out of graphics memory.")
     }
 
     @Test func theMemoryWarningNamesTheSizesAndWhatHappens() {

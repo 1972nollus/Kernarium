@@ -5,8 +5,8 @@ import SwiftUI
 
 /// A ruler with a cyan needle: the whole range as ticks, the chosen value
 /// under the needle. Drag along it or tap a tick. Limits are drawn on the
-/// ruler itself: ticks past a recommendation turn orange, and ticks below a
-/// floor are hatched and out of reach.
+/// ruler itself: ticks past a recommendation turn orange, ticks past a second,
+/// harder limit turn red, and ticks below a floor are hatched and out of reach.
 struct Ruler: View {
     @Binding var index: Int
     let count: Int
@@ -22,6 +22,8 @@ struct Ruler: View {
     var valueText: ((Int) -> String)?
     /// Positions at and above this one are past the recommended value.
     var warnFrom: Int?
+    /// Positions at and above this one are past a harder limit than `warnFrom`.
+    var severeFrom: Int?
     var accessibilityName: String = ""
 
     @State private var dragging = false
@@ -40,10 +42,21 @@ struct Ruler: View {
                     .fill(Color.primary.opacity(0.06))
                     .frame(width: geo.size.width, height: track)
                 if let warnFrom, warnFrom < count {
-                    UnevenRoundedRectangle(topLeadingRadius: 4, bottomLeadingRadius: 4, bottomTrailingRadius: track / 2, topTrailingRadius: track / 2)
+                    let end = severeFrom.map { min($0, count) } ?? count
+                    let endsRuler = end >= count
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: 4, bottomLeadingRadius: 4,
+                        bottomTrailingRadius: endsRuler ? track / 2 : 4, topTrailingRadius: endsRuler ? track / 2 : 4
+                    )
                         .fill(Color.orange.opacity(0.14))
-                        .frame(width: geo.size.width - x(warnFrom) + step / 2, height: track)
+                        .frame(width: (endsRuler ? geo.size.width : x(end) - step / 2) - x(warnFrom) + step / 2, height: track)
                         .offset(x: x(warnFrom) - step / 2)
+                }
+                if let severeFrom, severeFrom < count {
+                    UnevenRoundedRectangle(topLeadingRadius: 4, bottomLeadingRadius: 4, bottomTrailingRadius: track / 2, topTrailingRadius: track / 2)
+                        .fill(Color.red.opacity(0.14))
+                        .frame(width: geo.size.width - x(severeFrom) + step / 2, height: track)
+                        .offset(x: x(severeFrom) - step / 2)
                 }
                 if floor > 0 {
                     let shape = UnevenRoundedRectangle(topLeadingRadius: track / 2, bottomLeadingRadius: track / 2, bottomTrailingRadius: 4, topTrailingRadius: 4)
@@ -59,17 +72,18 @@ struct Ruler: View {
                 ForEach(0..<count, id: \.self) { i in
                     let major = (i - majorOffset) % majorEvery == 0
                     let warn = warnFrom.map { i >= $0 } ?? false
+                    let severe = severeFrom.map { i >= $0 } ?? false
                     let below = i < floor
                     if major || (i - majorOffset) % minorEvery == 0 {
                         Capsule()
-                            .fill(tickColor(major: major, warn: warn, below: below))
+                            .fill(tickColor(major: major, warn: warn, severe: severe, below: below))
                             .frame(width: 2, height: major ? 14 : 8)
                             .position(x: x(i), y: track / 2)
                     }
                     if major {
                         Text(label(i))
                             .font(.system(size: 12, weight: i == index ? .bold : .medium, design: .rounded).monospacedDigit())
-                            .foregroundStyle(labelStyle(selected: i == index, warn: warn, below: below))
+                            .foregroundStyle(labelStyle(selected: i == index, warn: warn, severe: severe, below: below))
                             .fixedSize()
                             .position(x: x(i), y: track + 13)
                     }
@@ -122,15 +136,17 @@ struct Ruler: View {
         if clamped != index { index = clamped }
     }
 
-    private func tickColor(major: Bool, warn: Bool, below: Bool) -> Color {
+    private func tickColor(major: Bool, warn: Bool, severe: Bool, below: Bool) -> Color {
         if below { return Color.primary.opacity(0.14) }
+        if severe { return Color.red.opacity(major ? 0.95 : 0.6) }
         if warn { return Color.orange.opacity(major ? 0.95 : 0.6) }
         return Color.primary.opacity(major ? 0.45 : 0.22)
     }
 
-    private func labelStyle(selected: Bool, warn: Bool, below: Bool) -> AnyShapeStyle {
+    private func labelStyle(selected: Bool, warn: Bool, severe: Bool, below: Bool) -> AnyShapeStyle {
         if selected { return AnyShapeStyle(.primary) }
         if below { return AnyShapeStyle(Color.primary.opacity(0.25)) }
+        if severe { return AnyShapeStyle(Color.red) }
         if warn { return AnyShapeStyle(Color.orange) }
         return AnyShapeStyle(.secondary)
     }
@@ -150,11 +166,14 @@ nonisolated struct HatchPattern: Shape {
     }
 }
 
-/// Processor and memory, the two rows of the System sheet: each with its
-/// value on the right and a ruler beneath. The rulers keep the limits of the
-/// host: the processor count stops at the vCPUs the device offers, and memory
-/// runs from 1.5 GiB to the bound of the chosen vCPU count, with the bound
-/// said beneath it.
+/// Processor, memory and graphics memory, the three rows of the System sheet.
+/// The first two have their value on the right and a ruler beneath, and keep
+/// the limits of the host: the processor count stops at the vCPUs the device
+/// offers, and memory runs from 1.5 GiB to the bound of the chosen vCPU count,
+/// with the bound said beneath it. The third is the estimate of the guest's
+/// graphics memory (VRAM) for the chosen memory and vCPUs, which the host
+/// reads from the runtime (`MemoryPolicy.graphicsMemoryMiB`); it is left out
+/// where the host gives none.
 struct SystemControls: View {
     @Binding var guest: Guest
     let host: HostDevice
@@ -164,6 +183,12 @@ struct SystemControls: View {
             processor
             Divider().padding(.leading, 58)
             memory
+            if let vram = host.memory.graphicsMemoryMiB(forMemory: guest.memoryMiB, vCPUs: guest.cores) {
+                Divider().padding(.leading, 58)
+                GraphicsMemoryRow(
+                    estimateMiB: vram, warns: host.memory.risk(guest.memoryMiB, vCPUs: guest.cores) != .none
+                )
+            }
         }
         .glassEffect(.regular, in: .rect(cornerRadius: 30))
     }
@@ -192,11 +217,15 @@ struct SystemControls: View {
         // many steps above the bottom of the ruler.
         let bottom = stops.first ?? Limits.minimumMemoryMiB
         let steps = (1024 - bottom % 1024) % 1024 / Limits.memoryStepMiB
-        // Sizes past what a new guest gets turn orange, and the line beneath
-        // says why while the chosen size is one of them. The default follows
-        // the vCPU count as the top does.
-        let safeMiB = host.memory.defaultMemoryMiB(vCPUs: guest.cores)
-        let above = host.memory.isAboveDefault(guest.memoryMiB, vCPUs: guest.cores)
+        // Sizes past what a new guest gets turn orange, and past the size
+        // where iOS is likely to close Andarium red where that is a higher
+        // one; the line beneath says why while the chosen size is one of
+        // them, the worse risk alone. Both sizes follow the vCPU count as the
+        // top does.
+        let defaultMiB = host.memory.defaultMemoryMiB(vCPUs: guest.cores)
+        let safeMiB = host.memory.safeMemoryMiB(vCPUs: guest.cores)
+        let distinct = safeMiB > defaultMiB
+        let risk = host.memory.risk(guest.memoryMiB, vCPUs: guest.cores)
         return ControlRow(title: "Memory", symbol: "memorychip", value: Formats.size(mib: guest.memoryMiB)) {
             Ruler(
                 index: Binding(
@@ -209,15 +238,46 @@ struct SystemControls: View {
                 minorEvery: 256 / Limits.memoryStepMiB,
                 label: { Formats.gibibytes(mib: stops[$0]) },
                 valueText: { Formats.size(mib: stops[$0]) },
-                warnFrom: stops.firstIndex { $0 > safeMiB },
+                warnFrom: stops.firstIndex { $0 > defaultMiB },
+                severeFrom: distinct ? stops.firstIndex { $0 > safeMiB } : nil,
                 accessibilityName: "Memory"
             )
         } note: {
-            if above {
+            switch risk {
+            case .closing:
                 Label(MemoryWarning.note(safeMiB: safeMiB), systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(distinct ? Color.red : Color.orange)
+            case .graphics:
+                Label(GraphicsMemoryWarning.note(defaultMiB: defaultMiB), systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
+            case .none:
+                EmptyView()
             }
         }
+    }
+}
+
+/// The third row of the System sheet: the estimate of the guest's graphics
+/// memory, orange while the chosen memory is above what a new guest gets, with
+/// the note that it is not part of the RAM.
+struct GraphicsMemoryRow: View {
+    let estimateMiB: Int
+    let warns: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ControlHeader(
+                title: GraphicsMemoryWarning.title, symbol: "cube", value: "\u{2248} " + Formats.size(mib: estimateMiB),
+                valueColor: warns ? .orange : .primary
+            )
+            Text(GraphicsMemoryWarning.separateNote)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 12)
     }
 }
 
