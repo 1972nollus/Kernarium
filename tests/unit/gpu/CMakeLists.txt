@@ -344,6 +344,17 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY TIMEOUT 120)
 
+    # The budget counts an IOSurface, which only Metal's counter holds, and
+    # the driver's command storage, which only the graphics ledger holds,
+    # both, and admits no texture into the room they take.
+    uml_add_gpu_unit_test(gpu-host-gl-surface-and-command-storage
+        uml_gpu_host_gl_surface_and_command_storage_tests
+        host_gl_surface_and_command_storage_tests.mm
+        LIBRARIES ${_uml_host_gl_libraries} UML::HostGpuMemory
+            "-framework Foundation" "-framework Metal" "-framework IOSurface"
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY TIMEOUT 120)
+
     # A creation the budget refuses only because a quiet guest context still
     # holds its deleted textures is not refused: the renderer finishes and
     # trims every context, then creates the resource again. A real overcommit
@@ -516,6 +527,7 @@ if(TARGET uml_gpu_service)
         gpu-packed-yuv-planes gpu-texture-barrier-clear gpu-padded-row-transfer
         gpu-host-context-trim gpu-host-context-trim-concurrent
         gpu-host-gl-device-memory-budget gpu-host-gl-allocation-burst
+        gpu-host-gl-surface-and-command-storage
         gpu-host-gl-reclaim-retry gpu-host-imported-memory
         PROPERTIES SKIP_RETURN_CODE 77)
 

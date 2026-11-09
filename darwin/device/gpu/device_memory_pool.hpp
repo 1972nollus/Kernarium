@@ -10,7 +10,7 @@
 namespace uml::gpu {
 
 /* The device memory the host GPU holds for the process, as the pool counts
- * it, from three readings.
+ * it, from four readings.
  *
  * `metalAllocated` is Metal's allocation counter, which counts every heap
  * from its creation, a no-copy buffer at its full size whatever backs it, and
@@ -23,12 +23,18 @@ namespace uml::gpu {
  * graphics ledger, part of what jetsam counts. It holds the driver's own
  * command storage, which Metal's counter omits, and not the IOSurfaces, and it
  * counts a heap's pages only once they are resident, so a consumer makes a
- * heap resident before it releases the heap's reservation (KosmicKrisp does);
- * a heap that is not would be hidden from the pool while the ledger leads the
- * counter. Neither estimate may lower the other, so the larger counts only
- * the larger of the command storage and the IOSurfaces, and an import larger
- * than the counter (the two are read at different instants) leaves the
- * ledger alone.
+ * heap resident before it releases the heap's reservation (KosmicKrisp does).
+ * `residentHeaps` is what both hold: the heaps KosmicKrisp made resident.
+ *
+ * The usage is the counter less imports, plus what the ledger holds beyond
+ * the resident heaps, so the IOSurfaces and the command storage both count;
+ * it is never less than either estimate alone. A heap enters `residentHeaps`
+ * only once the ledger holds it and leaves before Metal drops it, so reading
+ * `residentHeaps` last can count a heap twice for a moment but never leave it
+ * out; a heap made between the readings is still reserved. Other memory that
+ * both hold, the host's own Metal textures and buffers, counts twice. An
+ * import larger than the counter (the two are read at different instants)
+ * reads as nothing made.
  *
  * Read `imported` before `metalAllocated`: an import that lands between the
  * two readings is then counted a moment too long and never too short.
@@ -43,10 +49,19 @@ namespace uml::gpu {
 [[nodiscard]] constexpr std::uint64_t accountedGpuBytes(
     std::uint64_t metalAllocated,
     std::uint64_t imported,
-    std::uint64_t graphicsFootprint) noexcept
+    std::uint64_t graphicsFootprint,
+    std::uint64_t residentHeaps) noexcept
 {
     const std::uint64_t made = madeGpuBytes(metalAllocated, imported);
-    return made > graphicsFootprint ? made : graphicsFootprint;
+    const std::uint64_t larger =
+        made > graphicsFootprint ? made : graphicsFootprint;
+    const std::uint64_t ledgerOnly = graphicsFootprint > residentHeaps
+        ? graphicsFootprint - residentHeaps
+        : 0;
+    const std::uint64_t both = made > ~std::uint64_t {0} - ledgerOnly
+        ? ~std::uint64_t {0}
+        : made + ledgerOnly;
+    return both > larger ? both : larger;
 }
 
 /* The device memory the host grants a Venus guest, as one pool that every
@@ -74,7 +89,7 @@ namespace uml::gpu {
  * counter drops the moment a heap is freed, and the graphics ledger beside it
  * follows later: within milliseconds, or only at the ledger's next sweep,
  * a quarter of a second at most. A request that fits once everything is freed
- * is therefore refused by the larger figure for that while. A pool given a
+ * is therefore refused by the ledger's share for that while. A pool given a
  * `prompt` reading, the part of `allocated` that does follow at once, sees
  * the release: at every decision it compares the prompt reading with the one
  * before, and what it fell by is what the ledger still owes, less what
@@ -84,8 +99,8 @@ namespace uml::gpu {
  * admits the request, the ledger has paid and it still does not fit, or the
  * bound below passes, and a wait that reached its bound forgets what the
  * ledger owed. A request that would not fit even then, or that follows no
- * release, is refused at once: a ledger that stays above the counter for
- * good, by the command storage the counter omits, costs no wait. */
+ * release, is refused at once: command storage that the ledger holds for
+ * good costs no wait. */
 class DeviceMemoryPool final {
 public:
     /* Frees what the host drivers cache for reuse, on whichever thread was

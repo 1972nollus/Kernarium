@@ -336,21 +336,25 @@ VirglRenderer::VirglRenderer()
         deviceMemoryPool.reset();
         if (limit != 0) {
             /*
-             * What the host GPU holds is the larger of Metal's allocation
-             * counter less the host memory the drivers only import, and the
-             * graphics ledger jetsam counts: the ledger also holds the
-             * driver's command storage, which the counter omits, and the
-             * counter holds the IOSurfaces and an import at its full size,
-             * though iOS keeps an import's file-backed pages outside the
-             * footprint. Neither estimate may lower the other.
+             * What the host GPU holds is Metal's allocation counter less the
+             * host memory the drivers only import, which holds the
+             * IOSurfaces, plus what the graphics ledger jetsam counts holds
+             * beyond the heaps both count, the driver's command storage. iOS
+             * keeps an import's file-backed pages outside the footprint. The
+             * readings go in the order accountedGpuBytes() needs: imports
+             * before the counter, the resident heaps last.
              */
             deviceMemoryPool = std::make_unique<DeviceMemoryPool>(limit,
                 [] {
                     const std::uint64_t imported =
                         virgl_renderer_get_imported_host_memory();
-                    return accountedGpuBytes(
-                        uml::platform::hostGpuAllocatedBytes(), imported,
-                        uml::platform::hostGraphicsFootprintBytes());
+                    const std::uint64_t metal =
+                        uml::platform::hostGpuAllocatedBytes();
+                    const std::uint64_t ledger =
+                        uml::platform::hostGraphicsFootprintBytes();
+                    const std::uint64_t heaps =
+                        virgl_renderer_get_resident_heap_memory();
+                    return accountedGpuBytes(metal, imported, ledger, heaps);
                 },
                 static_cast<std::uint64_t>(getpagesize()),
                 /* The counter alone follows a release at once, the ledger
