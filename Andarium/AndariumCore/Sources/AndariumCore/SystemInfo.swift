@@ -8,7 +8,9 @@ import Foundation
 public struct SystemInfo: Equatable, Sendable {
     /// The system's version number as the screens say it ("17").
     public var version: String
-    /// The release identifier, which names this build everywhere.
+    /// The release identifier, which names this build everywhere. A screen
+    /// shows its `ReleaseLabel` instead; the ID itself is what reports,
+    /// records and logs carry.
     public var release: String
     /// The system's own build identifier.
     public var buildID: String?
