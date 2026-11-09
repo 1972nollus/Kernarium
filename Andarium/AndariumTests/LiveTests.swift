@@ -179,7 +179,7 @@ struct DefaultGuestTests {
             (2867, [2304, 2304, 2240, 2240, 2176, 2176, 2176, 2176], Array(repeating: 1536, count: 8)),
             (3584, [3008, 3008, 2944, 2944, 2880, 2880, 2880, 2880], Array(repeating: 2048, count: 8)),
             (4096, [3520, 3520, 3456, 3456, 3392, 3392, 3392, 3392], Array(repeating: 2560, count: 8)),
-            (5120, Array(repeating: 4096, count: 8), Array(repeating: 3584, count: 8)),
+            (5120, Array(repeating: 4096, count: 8), Array(repeating: 3072, count: 8)),
             (6144, Array(repeating: 4096, count: 8), Array(repeating: 4096, count: 8)),
             (0, Array(repeating: 4096, count: 8), Array(repeating: 4096, count: 8)),
         ] as [(Int, [Int], [Int])] {

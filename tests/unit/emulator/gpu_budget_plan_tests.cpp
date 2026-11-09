@@ -239,6 +239,9 @@ void aLauncherTakesTheDefaultGuestMemoryOnlyWhereALimitIsStated()
 		"the applications' default vCPU count");
 	require(argument({"--memory-limit=3584M", "ncpus=6"}) == "mem=2048M");
 	require(argument({"--memory-limit=4096M", "ncpus=6"}) == "mem=2560M");
+	/* Where a guest may have 4096 MiB the default also keeps the GPU a
+	 * gibibyte: 3584 MiB would leave it 739 at six vCPUs, 3072 leaves 1251. */
+	require(argument({"--memory-limit=5120M", "ncpus=6"}) == "mem=3072M");
 	require(argument({"--memory-limit=8192M", "ncpus=8"}) == "mem=4096M",
 		"the range's top");
 	require(argument({"--memory-limit=2048M", "ncpus=4"}) == "mem=1408M",

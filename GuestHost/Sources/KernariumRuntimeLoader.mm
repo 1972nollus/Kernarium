@@ -520,6 +520,55 @@ extern "C" uint32_t kernarium_runtime_loader_default_guest_memory_mib(
         parameters);
 }
 
+extern "C" uint32_t
+kernarium_runtime_loader_conservative_guest_memory_mib_for_limit(
+    uint64_t limitBytes,
+    uint32_t guestProcessorCount,
+    kernarium_launch_memory_set parameters)
+{
+    return uml::runtime::guest_memory::conservative_guest_memory_mib(
+        limitBytes, guestProcessorCount, launchMemorySet(parameters));
+}
+
+extern "C" uint32_t kernarium_runtime_loader_conservative_guest_memory_mib(
+    uint32_t guestProcessorCount,
+    kernarium_launch_memory_set parameters)
+{
+    return kernarium_runtime_loader_conservative_guest_memory_mib_for_limit(
+        uml::platform::os_memory_limit_bytes(),
+        guestProcessorCount,
+        parameters);
+}
+
+extern "C" uint32_t kernarium_runtime_loader_gpu_budget_mib_for_limit(
+    uint64_t limitBytes,
+    uint32_t guestMemoryMiB,
+    uint32_t guestProcessorCount,
+    kernarium_launch_memory_set parameters)
+{
+    namespace budget = uml::runtime::guest_memory;
+    return static_cast<uint32_t>(
+        budget::gpu_budget(
+            limitBytes,
+            guestMemoryMiB,
+            guestProcessorCount,
+            launchMemorySet(parameters))
+            .bytes /
+        budget::mebibyte);
+}
+
+extern "C" uint32_t kernarium_runtime_loader_gpu_budget_mib(
+    uint32_t guestMemoryMiB,
+    uint32_t guestProcessorCount,
+    kernarium_launch_memory_set parameters)
+{
+    return kernarium_runtime_loader_gpu_budget_mib_for_limit(
+        uml::platform::os_memory_limit_bytes(),
+        guestMemoryMiB,
+        guestProcessorCount,
+        parameters);
+}
+
 extern "C" int kernarium_runtime_loader_set_microphone(int enabled)
 {
     const kernarium_runtime_api* runtime = api();
