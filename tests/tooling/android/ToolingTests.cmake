@@ -96,6 +96,15 @@ uml_add_tooling_test(
     LABELS android
     TIMEOUT 30)
 
+# Each Android runner's default adb forward port is its guest slot's first
+# port, and its own fixed port outside a slot.
+uml_add_tooling_test(
+    NAME android-runner-slot-ports
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_slot_port_defaults.py
+    LABELS android
+    TIMEOUT 30)
+
 uml_add_tooling_test(
     NAME android17-adb-debugging-runner
     COMMAND ${Python3_EXECUTABLE} -B

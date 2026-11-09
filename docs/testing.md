@@ -512,7 +512,9 @@ Every first-party script that reaches a guest over adb uses the one shared adb
 server, names the guest with `-s 127.0.0.1:<port>` and at the end only
 disconnects its own serial; the stranger-key step of `android-adb-debugging` is
 the only private server, and `repository-adb-shared-server` fails any other
-script that selects a server or runs `kill-server`.
+script that selects a server or runs `kill-server`. Each Android runner's
+default forward port is its guest slot's first port (`GUEST_SLOT_PORT_BASE`)
+and a fixed port outside a slot.
 
 ## x86 instruction conformance
 

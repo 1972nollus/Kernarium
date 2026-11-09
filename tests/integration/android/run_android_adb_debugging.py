@@ -54,13 +54,12 @@ from typing import Callable
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 LAUNCHER = REPOSITORY / "tools" / "boot_android.py"
+sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
+import slot_ports  # noqa: E402
+
+DEFAULT_ADB_PORT = 5575
 SETTLE_SECONDS = 30
 SHARED_SERVER_PORT = 5037
-# A guest slot owns base..base+99 (GUEST_SLOT_PORT_BASE); its wrapper stops any adb
-# server listening there. The private server takes the top of the range, clear of
-# the guest's own forwards at the bottom.
-SLOT_PORTS = 100
-PRIVATE_PORT_FLOOR = 50
 KILL_SERVER_SECONDS = 15
 # `adb root` on a build that cannot run adbd as root answers in well under a second. A guest
 # that announces "restarting adbd as root" makes the client wait about 45 s for a restart
@@ -128,13 +127,16 @@ def stop_private_servers() -> None:
 
 def private_server_port() -> int:
     """A free loopback port: in the slot's range when the runner holds a guest slot."""
-    base = os.environ.get("GUEST_SLOT_PORT_BASE")
+    base = slot_ports.slot_base()
     if base is None:
         return free_loopback_port()
-    for port in range(int(base) + SLOT_PORTS - 1, int(base) + PRIVATE_PORT_FLOOR - 1, -1):
+    # The slot's wrapper stops an adb server listening in the slot's range. The top of the
+    # range is clear of the guest's own forward at the bottom.
+    first, last = slot_ports.PRIVATE_SERVER_FLOOR, slot_ports.SLOT_PORTS - 1
+    for port in range(base + last, base + first - 1, -1):
         if port_is_free(port):
             return port
-    raise Failure(f"no free port in {base}+{PRIVATE_PORT_FLOOR}..{SLOT_PORTS - 1} for the private adb server")
+    raise Failure(f"no free port in {base}+{first}..{last} for the private adb server")
 
 
 TERMINATION_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
@@ -407,17 +409,23 @@ def stop_launcher(guest: subprocess.Popen) -> None:
             guest.wait(timeout=30)
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--release", type=pathlib.Path, help="release directory (default: the accepted release)")
     parser.add_argument("--serial", help="a running guest on a fresh data partition (host:port) that "
                         "accepts this adb's key; no guest is launched")
     parser.add_argument("--adb", default="adb")
     parser.add_argument("--emulator", type=pathlib.Path, help="the Android macOS executable (the launcher's default)")
-    parser.add_argument("--adb-port", type=int, default=5575, help="loopback port the launcher forwards adbd to")
+    parser.add_argument("--adb-port", type=int, default=slot_ports.slot_port(slot_ports.ADB_OFFSET, DEFAULT_ADB_PORT),
+                        help="loopback port the launcher forwards adbd to (default: the guest slot's first port "
+                        f"when GUEST_SLOT_PORT_BASE is set, else {DEFAULT_ADB_PORT})")
     parser.add_argument("--cpus", type=int, default=4)
     parser.add_argument("--boot-timeout", type=int, default=900)
-    options = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    options = build_parser().parse_args()
 
     adb = shutil.which(options.adb) or options.adb
     guest: subprocess.Popen | None = None

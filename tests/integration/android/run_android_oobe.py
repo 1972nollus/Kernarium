@@ -67,7 +67,11 @@ from typing import Callable
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 LAUNCHER = REPOSITORY / "tools" / "boot_android.py"
 sys.path.insert(0, str(REPOSITORY / "tools"))
+sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 import android_provision  # noqa: E402
+import slot_ports  # noqa: E402
+
+DEFAULT_ADB_PORT = 5576
 
 WIZARD = android_provision.SETUP_WIZARD
 LAUNCHER_PACKAGE = "com.android.launcher3"
@@ -807,19 +811,25 @@ def helper_guest(device: Device, log: pathlib.Path) -> None:
     print("helper: nothing left to do on a provisioned guest")
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--release", type=pathlib.Path, help="release directory (default: the accepted release)")
     parser.add_argument("--adb", default="adb")
     parser.add_argument("--emulator", type=pathlib.Path, help="the Android macOS executable (the launcher's default)")
-    parser.add_argument("--adb-port", type=int, default=5576, help="loopback port the launcher forwards adbd to")
+    parser.add_argument("--adb-port", type=int, default=slot_ports.slot_port(slot_ports.ADB_OFFSET, DEFAULT_ADB_PORT),
+                        help="loopback port the launcher forwards adbd to (default: the guest slot's first port "
+                        f"when GUEST_SLOT_PORT_BASE is set, else {DEFAULT_ADB_PORT})")
     parser.add_argument("--cpus", type=int, default=4)
     parser.add_argument("--width", type=int, help="guest display width in pixels (the launcher's default)")
     parser.add_argument("--height", type=int, help="guest display height in pixels (the launcher's default)")
     parser.add_argument("--dpi", type=int, help="guest display density: with the size it picks the launcher's grid")
     parser.add_argument("--boot-timeout", type=int, default=900)
     parser.add_argument("--only", choices=("wizard", "helper"), help="run one of the two guests")
-    options = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    options = build_parser().parse_args()
 
     adb = shutil.which(options.adb) or options.adb
     with tempfile.TemporaryDirectory(prefix="android-oobe-") as scratch_name:
