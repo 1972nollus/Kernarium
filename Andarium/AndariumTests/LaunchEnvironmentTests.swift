@@ -34,7 +34,7 @@ struct LaunchEnvironmentTests {
         #expect(overrides.retina == true)
         #expect(overrides.start == .recovery)
         #expect(overrides.erase)
-        #expect(overrides.statistics)
+        #expect(overrides.statistics == true)
         #expect(overrides.instance == "legacy-test")
     }
 
