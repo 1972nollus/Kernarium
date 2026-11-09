@@ -185,6 +185,21 @@ uint32_t kernarium_runtime_loader_gpu_budget_mib_for_limit(
  * it too, for the same reason. */
 uint32_t kernarium_runtime_loader_application_vcpu_limit(
     uint32_t physical_processor_count);
+#ifndef UML_APP_STORE_APPLICATION
+/* Prepares the JIT for a guest of `guest_memory_mib` and `guest_processor_count`
+ * vCPUs when `enable` is nonzero, or tells an attached debugger to detach when
+ * it is zero; see kernarium_runtime_prepare_jit_function. Returns the runtime's
+ * KERNARIUM_RUNTIME_JIT_ answer, or KERNARIUM_RUNTIME_JIT_UNSUPPORTED when no
+ * runtime is loaded. It blocks for the seconds a debugger takes, so call it
+ * away from the main thread. */
+int kernarium_runtime_loader_prepare_jit(
+    int enable,
+    uint32_t guest_memory_mib,
+    uint32_t guest_processor_count);
+/* Whether a debugger is attached to this process, which the application knows
+ * before any runtime is loaded. */
+int kernarium_runtime_loader_debugger_attached(void);
+#endif
 /* Turns the guest's microphone on (nonzero) or off (zero), as
  * kernarium_runtime_set_microphone_function does, and returns the resulting
  * KERNARIUM_RUNTIME_MICROPHONE_ value, or -1 when no runtime is loaded. It

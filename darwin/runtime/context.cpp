@@ -85,7 +85,12 @@ constexpr auto platform_default = ExecutionEngine::gadgets;
 {
 	switch (engine) {
 	case ExecutionEngine::jit:
+#ifdef UML_APP_STORE_RUNTIME
+		/* The App Store runtime has no JIT engine to enter. */
+		return nullptr;
+#else
 		return darwin_uml_jit_enter_guest;
+#endif
 	case ExecutionEngine::gadgets:
 	case ExecutionEngine::automatic:
 		return darwin_uml_static_enter_guest;
@@ -556,6 +561,7 @@ std::size_t gadget_cache_budget_for(std::size_t guest_memory_bytes,
 		executors);
 }
 
+#ifndef UML_APP_STORE_RUNTIME
 std::size_t jit_cache_budget_for(std::size_t guest_memory_bytes,
 	unsigned executors) noexcept
 {
@@ -579,6 +585,7 @@ void release_jit_debugger() noexcept
 {
 	::uml::cpu::release_jit_debugger();
 }
+#endif
 
 std::size_t set_gadget_cache_budget(std::size_t guest_memory_bytes,
 	std::size_t bytes, unsigned executors) noexcept

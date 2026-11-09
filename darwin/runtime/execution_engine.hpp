@@ -65,6 +65,7 @@ void set_process_memory_limit(std::size_t bytes) noexcept;
 std::size_t set_gadget_cache_budget(std::size_t guest_memory_bytes,
 	std::size_t bytes, unsigned executors) noexcept;
 
+#ifndef UML_APP_STORE_RUNTIME
 /* JIT on an iOS device, where a debugger the user attached prepares the
  * executable memory once per process (cpu/jit_memory/executable_memory.hpp).
  * The JIT's cache takes the gadget cache's budget there (jit_cache_budget_for),
@@ -92,6 +93,7 @@ using JitMemoryStatus = ::uml::cpu::JitMemoryStatus;
  * process that will not use JIT. */
 [[nodiscard]] bool jit_debugger_attached() noexcept;
 void release_jit_debugger() noexcept;
+#endif
 
 /* Parses a byte count with an optional K/M/G suffix. Zero if unparsable. */
 [[nodiscard]] std::size_t parse_translation_cache_quantity(

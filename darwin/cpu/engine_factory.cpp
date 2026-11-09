@@ -57,7 +57,7 @@ bool cpu_engine_available(EngineKind kind) noexcept
 }
 
 HostCapabilities engine_host_capabilities(
-	EngineKind kind, HostCapabilities host) noexcept
+	[[maybe_unused]] EngineKind kind, HostCapabilities host) noexcept
 {
 #if UML_ARM64_JIT_ENGINE
 	const bool jit = kind == EngineKind::jit;
@@ -93,6 +93,7 @@ void release_translation_cache_run_session() noexcept
 	arm64::release_jit_cache_run_session();
 }
 
+#ifndef UML_APP_STORE_RUNTIME
 JitMemoryStatus prepare_jit_memory(std::size_t total_bytes,
 	unsigned executors, std::size_t per_executor_bytes) noexcept
 {
@@ -109,6 +110,7 @@ void release_jit_debugger() noexcept
 {
 	arm64::release_jit_debugger();
 }
+#endif
 #else
 /* No JIT engine, so no translated-code cache to size or to serialize. */
 bool set_translation_cache_budget(std::size_t, unsigned,
@@ -123,19 +125,6 @@ bool acquire_translation_cache_run_session() noexcept
 }
 
 void release_translation_cache_run_session() noexcept {}
-
-JitMemoryStatus prepare_jit_memory(std::size_t, unsigned,
-	std::size_t) noexcept
-{
-	return JitMemoryStatus::unsupported;
-}
-
-bool jit_debugger_attached() noexcept
-{
-	return false;
-}
-
-void release_jit_debugger() noexcept {}
 #endif
 
 std::size_t parse_translation_cache_quantity(const char *text) noexcept

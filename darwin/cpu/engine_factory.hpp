@@ -39,12 +39,14 @@ void release_translation_cache_run_session() noexcept;
 [[nodiscard]] std::size_t parse_translation_cache_quantity(
 	const char *text) noexcept;
 
+#ifndef UML_APP_STORE_RUNTIME
 /* Prepares the executable memory the JIT needs on an iOS device, where a
  * debugger the user attached makes it once per process, for the whole-process
  * budget and executor count a JIT run will set, and publishes that budget
- * (set_translation_cache_budget). A product without the route, such as the
- * App Store runtime, answers unsupported. Blocks for the seconds the debugger
- * takes: call it from a worker thread, before the run. */
+ * (set_translation_cache_budget). A product without the route answers
+ * unsupported. Blocks for the seconds the debugger takes: call it from a
+ * worker thread, before the run. The App Store runtime has no JIT engine and
+ * declares none of this. */
 [[nodiscard]] JitMemoryStatus prepare_jit_memory(std::size_t total_bytes,
 	unsigned executors, std::size_t per_executor_bytes) noexcept;
 
@@ -52,6 +54,7 @@ void release_translation_cache_run_session() noexcept;
  * process that will not use JIT does not stay under it. */
 [[nodiscard]] bool jit_debugger_attached() noexcept;
 void release_jit_debugger() noexcept;
+#endif
 
 /* Materialize any lazily resident architectural state before runtime exports
  * a guest task frame. Runtime must not know which concrete engine held it. */
