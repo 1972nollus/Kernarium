@@ -318,7 +318,9 @@ that reached its bound is not repeated until Metal's counter falls again.
   refusal reaches the guest as a failed context at the next command naming the
   allocation, and only that guest process aborts. The Android guest allocates
   synchronously, so there the application gets `VK_ERROR_OUT_OF_DEVICE_MEMORY`
-  and keeps its device. A refused Venus allocation is not retried.
+  and keeps its device. While a guest reclaimer is armed, a refused Venus
+  allocation may first wait for it to end a cached holder and be tried again
+  (see the memory report below); an OpenGL refusal never waits on the host.
 - A device's first geometry heap is made at its floor size even when the pool
   refuses it, so a full pool can leave the process one floor per device past
   the ceiling.
@@ -330,7 +332,9 @@ live memory is below B.
 The device counts each OpenGL resource creation or blob it answers with out of
 memory, and each Venus allocation the pool refuses, on the display
 (`Display::memoryRefusals`), so a refusal the host reclaimed and retried past
-is not counted and a restarted guest does not reset the count. The applications
+is not counted and a restarted guest does not reset the count; neither is a
+Venus allocation that waited for the guest's reclaimer and was then made. The
+applications
 read it as `gpu_memory_refusals` of the runtime's statistics, and the macOS
 launchers print it as `gpu-refusals` with `--stats`. The renderer reports a
 Venus refusal through the pool's `refused` callback, which the device
@@ -387,6 +391,20 @@ when a refusal was counted; the guest then asks again.
   `read_graphics_memory` (runtime API 29) and the launchers' `--stats` line as
   `guest-reclaim=on`. While it is set `GraphicsReclaim` stands down and does not
   end an app.
+- While the reclaimer is armed, a Venus allocation the pool refused waits up to
+  1.5 s on the render-server thread that runs it, so only that context's
+  commands wait, and is tried again once room shows or a quiet holder has gone
+  (`device/gpu/reclaim_wait.*`, through the pool's `wait` and `waited`
+  callbacks). It waits only when the reclaimer could make the room in time: the
+  largest holder that meets the reclaimer's armed terms, other than the
+  requesting process, holds at least what the pool lacks, fewer than three
+  holders have gone in the reclaimer's episode, none went in the last 1.5 s,
+  and no wait in the last 10 s saw nothing go; otherwise the allocation is
+  refused at once. The guest is told of a wait as of a refusal, at once, so
+  its reclaimer acts; `Display::memoryRefusals` counts only the allocations
+  refused in the end. OpenGL allocations run on the transport thread, which
+  also carries the guest's memory query and the dying holder's context
+  destruction, so they never wait.
 
 ### Android guest requirements
 

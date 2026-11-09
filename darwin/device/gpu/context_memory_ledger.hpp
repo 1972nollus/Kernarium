@@ -151,6 +151,13 @@ public:
 
     [[nodiscard]] std::uint64_t totalBytes() const noexcept;
 
+    /* The guest process of a context: 0 for one the ledger does not know or
+     * whose name carries none. */
+    [[nodiscard]] std::uint32_t processOf(
+        std::uint32_t contextId) const noexcept;
+    /* Whether a guest process has any context. */
+    [[nodiscard]] bool hasProcess(std::uint32_t pid) const noexcept;
+
     /* How many contexts and resources the ledger keeps. */
     struct Counts {
         std::size_t contexts {};

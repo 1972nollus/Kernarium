@@ -89,6 +89,10 @@ std::atomic<void*> memoryRefusalObserverData;
 // Who is told how much device memory each Venus context holds; the same rule.
 std::atomic<VirglRenderer::MemoryAccountObserver> memoryAccountObserver;
 std::atomic<void*> memoryAccountObserverData;
+// Who decides whether a refused Venus allocation waits; the same rule.
+std::atomic<VirglRenderer::MemoryWaitObserver> memoryWaitObserver;
+std::atomic<VirglRenderer::MemoryWaitedObserver> memoryWaitedObserver;
+std::atomic<void*> memoryWaitObserverData;
 // Guards the pool's address for the readers of its figures: a statistics read
 // from any thread must not meet a renderer that is going.
 std::mutex deviceMemoryReadMutex;
@@ -115,6 +119,24 @@ void deviceMemoryRefused(void*) noexcept
     if (const auto observer =
             memoryRefusalObserver.load(std::memory_order_acquire)) {
         observer(memoryRefusalObserverData.load(std::memory_order_relaxed));
+    }
+}
+
+bool deviceMemoryWait(void*, std::uint32_t contextId, std::uint64_t size,
+    std::uint32_t attempt) noexcept
+{
+    const auto observer = memoryWaitObserver.load(std::memory_order_acquire);
+    return observer != nullptr &&
+        observer(memoryWaitObserverData.load(std::memory_order_relaxed),
+            contextId, size, attempt);
+}
+
+void deviceMemoryWaited(void*, std::uint32_t, bool admitted) noexcept
+{
+    if (const auto observer =
+            memoryWaitedObserver.load(std::memory_order_acquire)) {
+        observer(
+            memoryWaitObserverData.load(std::memory_order_relaxed), admitted);
     }
 }
 
@@ -377,6 +399,8 @@ VirglRenderer::VirglRenderer()
                 .release = &releaseDeviceMemory,
                 .refused = &deviceMemoryRefused,
                 .account = &deviceMemoryAccounted,
+                .wait = &deviceMemoryWait,
+                .waited = &deviceMemoryWaited,
             };
             virgl_renderer_set_device_memory_pool(&pool);
         } else {
@@ -459,6 +483,20 @@ void VirglRenderer::setMemoryAccountObserver(
         memoryAccountObserver.store(observer, std::memory_order_release);
 }
 
+void VirglRenderer::setMemoryWaitObserver(MemoryWaitObserver wait,
+    MemoryWaitedObserver waited, void* data) noexcept
+{
+    if (wait == nullptr) {
+        memoryWaitObserver.store(nullptr, std::memory_order_release);
+        memoryWaitedObserver.store(nullptr, std::memory_order_release);
+    }
+    memoryWaitObserverData.store(data, std::memory_order_relaxed);
+    if (wait != nullptr) {
+        memoryWaitedObserver.store(waited, std::memory_order_release);
+        memoryWaitObserver.store(wait, std::memory_order_release);
+    }
+}
+
 std::optional<VirglRenderer::DeviceMemory> VirglRenderer::deviceMemory() noexcept
 {
     std::lock_guard lock(deviceMemoryReadMutex);
@@ -485,6 +523,7 @@ VirglRenderer::~VirglRenderer()
     // they report is wanted after that.
     setMemoryRefusalObserver(nullptr, nullptr);
     setMemoryAccountObserver(nullptr, nullptr);
+    setMemoryWaitObserver(nullptr, nullptr, nullptr);
     {
         // A reader of the pool's figures that is inside the pool finishes
         // first, and none starts after this.

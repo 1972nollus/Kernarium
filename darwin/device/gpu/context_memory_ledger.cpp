@@ -334,6 +334,25 @@ std::uint64_t ContextMemoryLedger::totalBytes() const noexcept
     return heldResourceBytes_ + venusTotal_;
 }
 
+std::uint32_t ContextMemoryLedger::processOf(
+    std::uint32_t contextId) const noexcept
+{
+    std::lock_guard lock(mutex_);
+    const auto found = contexts_.find(contextId);
+    return found != contexts_.end() && found->second.owner
+        ? found->second.owner->pid
+        : 0;
+}
+
+bool ContextMemoryLedger::hasProcess(std::uint32_t pid) const noexcept
+{
+    std::lock_guard lock(mutex_);
+    return std::any_of(contexts_.begin(), contexts_.end(),
+        [pid](const auto& entry) {
+            return entry.second.owner && entry.second.owner->pid == pid;
+        });
+}
+
 ContextMemoryLedger::Counts ContextMemoryLedger::counts() const noexcept
 {
     std::lock_guard lock(mutex_);

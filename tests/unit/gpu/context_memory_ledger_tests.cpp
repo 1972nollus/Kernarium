@@ -342,6 +342,25 @@ void aProcessIsTheSumOfItsContexts()
     require(snapshot.totalBytes == 40 * mebibyte, "the total was wrong");
 }
 
+void aContextNamesItsProcessUntilTheProcessIsGone()
+{
+    ContextMemoryLedger ledger;
+    ledger.contextCreated(2, owned(77, "app"), false, origin);
+    ledger.contextCreated(3, owned(77, "app"), true, origin);
+    ledger.contextCreated(4, "RenderThread", false, origin);
+    require(ledger.processOf(2) == 77 && ledger.processOf(3) == 77,
+        "a named context did not name its process");
+    require(ledger.processOf(4) == 0 && ledger.processOf(99) == 0,
+        "an unnamed or unknown context named a process");
+    require(ledger.hasProcess(77) && !ledger.hasProcess(78),
+        "the process's contexts were not found");
+    ledger.contextDestroyed(2);
+    require(ledger.hasProcess(77), "one context's end took its process");
+    ledger.contextDestroyed(3);
+    require(!ledger.hasProcess(77) && ledger.processOf(3) == 0,
+        "a process outlived its contexts");
+}
+
 void aHolderIsIdleWhenItsMostRecentContextIs()
 {
     ContextMemoryLedger ledger;
@@ -547,6 +566,7 @@ int main()
     aBlobBelongsToItsCreatorUnlessTheCreatorIsVenus();
     venusMemoryFollowsTheRenderersReports();
     aProcessIsTheSumOfItsContexts();
+    aContextNamesItsProcessUntilTheProcessIsGone();
     aHolderIsIdleWhenItsMostRecentContextIs();
     theSnapshotKeepsTheLargestHoldersThatAreBigEnough();
     clearForgetsTheGuest();
