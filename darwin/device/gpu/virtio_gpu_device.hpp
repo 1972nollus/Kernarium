@@ -83,10 +83,19 @@ public:
      * subscribe to an event for a change. It is offered while the renderer has
      * a budget. */
     [[nodiscard]] bool offersMemoryReport() const noexcept;
+    /* How soon a wake asks the transport to evaluate the subscription. */
+    enum class MemoryWake {
+        /* Graphics memory changed: once a burst of changes has passed. */
+        coalesced,
+        /* An allocation was refused: at once, so that the guest's reclaimer
+         * hears of it while the allocation's caller still waits. */
+        immediate,
+    };
     /* Called, on whichever thread made the change and with no lock held,
-     * when graphics memory changes while a guest is subscribed; the transport
-     * sets it before the guest runs, and it must be quick. */
-    void setMemoryWake(std::function<void()> wake);
+     * when graphics memory changes or an allocation is refused while a guest
+     * is subscribed; the transport sets it before the guest runs, and it must
+     * be quick. */
+    void setMemoryWake(std::function<void(MemoryWake)> wake);
     /* Evaluates the subscription at `now` (MemoryPressure), on the transport
      * thread; returns whether it raised the event. */
     bool evaluateMemory(std::chrono::steady_clock::time_point now) noexcept;
@@ -202,6 +211,8 @@ private:
         std::span<const std::uint8_t> bytes,
         std::size_t capacity);
     [[nodiscard]] MemoryPressure::Reading memoryReading() const noexcept;
+    /* The ledger's observer that calls memoryWake_, or none without one. */
+    [[nodiscard]] std::function<void()> memoryObserver();
     [[nodiscard]] std::vector<std::uint8_t> displayInfo(
         const protocol::GpuControlHeader& request) const;
     [[nodiscard]] std::vector<std::uint8_t> edid(
@@ -290,7 +301,10 @@ private:
     /* How many events this connection has raised. */
     std::uint32_t memoryEventsRaised_ {};
     MemoryPressure memoryPressure_;
-    std::function<void()> memoryWake_;
+    std::function<void(MemoryWake)> memoryWake_;
+    /* The refusals the last wake knew of, which the ledger's observer reads
+     * and updates. */
+    std::atomic<std::uint64_t> wokenRefusals_ {};
     std::vector<SharedMemoryAction> sharedMemoryActions_;
     std::uint64_t nextSharedMemoryActionId_ {1};
     std::uint32_t scanoutResource_ {};
