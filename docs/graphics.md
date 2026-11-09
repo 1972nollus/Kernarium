@@ -267,8 +267,10 @@ Metal makes it, so allocations that each fit alone never together take the
 process past B. The ledger counts a heap only once its pages are resident, so
 the driver makes each heap resident before its reservation ends, and a burst of
 creations with no work between them is refused at the ceiling
-(`gpu-host-gl-allocation-burst`). A reservation that does not fit first frees
-the buffers the host GL driver caches, and the command storage it has left
+(`gpu-host-gl-allocation-burst`). A heap is in the driver's resident tally
+while its pages arrive, so the pool is over by at most the heap's size while a
+heap is made resident, not twice that. A reservation that does not fit first
+frees the buffers the host GL driver caches, and the command storage it has left
 unused for a while, and is decided again. Memory the host frees leaves Metal's
 counter at once but the ledger only later, within milliseconds or at its next
 sweep. The pool sees the release in Metal's counter, and when the request would
