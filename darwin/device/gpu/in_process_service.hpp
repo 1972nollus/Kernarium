@@ -41,10 +41,9 @@ struct InProcessGpuOptions {
 struct DeviceMemoryFigures {
     /* The budget, B. */
     std::uint64_t budgetBytes {};
-    /* The pool's own count, which the budget refuses by: the larger of
-     * Metal's allocation less the host memory the drivers only import and the
-     * graphics footprint, plus the reservations in flight. Memory the host's
-     * drivers hold for reuse is in it. */
+    /* The pool's own count, which the budget refuses by
+     * (accountedGpuBytes(), plus the reservations in flight). Memory the
+     * host's drivers hold for reuse is in it. */
     std::uint64_t usageBytes {};
 };
 

@@ -174,6 +174,9 @@ int main()
     const auto start = uml::gpu::VirglRenderer::deviceMemory();
     require(start.has_value() && start->budgetBytes == limit,
         "the renderer did not report its device memory budget");
+    require(start->ceilingBytes ==
+            limit - uml::gpu::VirglRenderer::deviceMemoryReserveBytes,
+        "the pool does not keep its reserve inside the budget");
 
     std::uint32_t nextResourceId = 1;
     std::vector<std::unique_ptr<Texture>> held;

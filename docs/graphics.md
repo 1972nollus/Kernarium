@@ -253,9 +253,12 @@ beyond the heaps KosmicKrisp made resident, which both hold. The counter holds
 the IOSurfaces of presentation and decoding, which the ledger does not, and the
 ledger the driver's command storage, which the counter does not, so both count
 (`gpu-host-gl-surface-and-command-storage`); the host's own Metal textures and
-buffers, which both hold too, count twice. The renderer shrinks every
-advertised heap to B and bounds every heap budget it reports by the pool's
-headroom, so a guest sizes its allocations from B less what the host already
+buffers, which both hold too, count twice. The pool keeps 16 MiB of B in
+reserve: it refuses a reservation that would take its usage above B - 16 MiB,
+its ceiling, so what it counts but never refuses grows into that room before it
+passes B (`gpu-device-memory-pool`). The renderer shrinks every advertised heap
+to the ceiling and bounds every heap budget it reports by the pool's headroom,
+so a guest sizes its allocations from the ceiling less what the host already
 holds.
 
 KosmicKrisp is the one place every allocation passes: every device the process
@@ -263,7 +266,7 @@ creates, Venus guests' and host GL's alike, reserves a heap from the pool before
 Metal makes it, so allocations that each fit alone never together take the
 process past B. The ledger counts a heap only once its pages are resident, so
 the driver makes each heap resident before its reservation ends, and a burst of
-creations with no work between them is refused at B
+creations with no work between them is refused at the ceiling
 (`gpu-host-gl-allocation-burst`). A reservation that does not fit first frees
 the buffers the host GL driver caches, and the command storage it has left
 unused for a while, and is decided again. Memory the host frees leaves Metal's
@@ -282,7 +285,7 @@ that reached its bound is not repeated until Metal's counter falls again.
   the bytes it imports and the pool leaves them out. Command, descriptor and
   query pools, pipelines, the driver's command storage, presentation, the VNC
   surface and decoder surfaces are counted and never refused, and they, with
-  the geometry heap floor below, are the only way usage passes B.
+  the geometry heap floor below, are the only way usage passes the ceiling.
 - OpenGL: a refused texture or buffer makes the renderer give back what it holds
   for finished work and create the resource once more: it finishes and trims
   every context, frees the deferred shared-memory segments and the buffers the
@@ -317,7 +320,8 @@ that reached its bound is not repeated until Metal's counter falls again.
   synchronously, so there the application gets `VK_ERROR_OUT_OF_DEVICE_MEMORY`
   and keeps its device. A refused Venus allocation is not retried.
 - A device's first geometry heap is made at its floor size even when the pool
-  refuses it, so a full pool can leave the process one floor per device past B.
+  refuses it, so a full pool can leave the process one floor per device past
+  the ceiling.
 
 The counter includes memory the guest has freed while its blob resource is still
 referenced, so a loop that reallocates large images can be refused while its
@@ -334,8 +338,7 @@ registers.
 
 The same reading carries B and the pool's usage, the count the budget refuses
 by (`gpu_memory_budget_bytes` and `gpu_memory_used_bytes`, runtime API 27): the
-larger of Metal's allocation less the imported host memory and the graphics
-footprint, plus the reservations in flight, memory the drivers keep for reuse
+count above, plus the reservations in flight, memory the drivers keep for reuse
 included. The macOS launchers print them as `gpu-memory <used>/<B> MiB`.
 
 The display also keeps who holds the budget (`context_memory_ledger.*`): a
@@ -363,10 +366,10 @@ subscribes also makes the device raise a config-change event (`events_read`
 bit 1) when the pool goes under or out of pressure, and at most once a second
 when a refusal was counted; the guest then asks again.
 
-- Pressure is `usage + 96 MiB >= B` on the pool's own usage, the figure a
-  reservation is refused by, so it means "within the margin of what the pool
-  refuses at". The usage holds memory the host frees itself, so when the
-  condition first holds the transport runs the pool's reclaim hook, the one
+- Pressure is `usage + 96 MiB >= B - 16 MiB` on the pool's own usage, the
+  figure a reservation is refused by, so it means "within the margin of what
+  the pool refuses at". The usage holds memory the host frees itself, so when
+  the condition first holds the transport runs the pool's reclaim hook, the one
   that runs before a refusal (at most once a second, from the transport
   thread), the figure is given 300 ms to show what it freed, and pressure is
   declared only if the condition still holds after that and has held for 1 s.

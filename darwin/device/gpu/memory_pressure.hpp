@@ -11,9 +11,10 @@ namespace uml::gpu {
  * subscribed to hear of it (the Virtio-GPU memory report, kernel/common/gpu).
  *
  * The figure is the pool's own usage, the one a reservation is refused by, so
- * pressure is "within the margin of what the pool will refuse at":
+ * pressure is "within the margin of what the pool will refuse at", its
+ * ceiling C, which is B less the pool's reserve:
  *
- *   usage + margin >= B
+ *   usage + margin >= C
  *
  * The usage also holds memory the host can free itself, the caches of its
  * drivers, and the pool frees those before it refuses. Pressure is therefore
@@ -53,6 +54,8 @@ public:
         std::uint64_t usageBytes {};
         /* Allocations refused so far. */
         std::uint64_t refusals {};
+        /* C, the usage the pool refuses above; B when 0. */
+        std::uint64_t ceilingBytes {};
     };
 
     /* What a reply reports. */

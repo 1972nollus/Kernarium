@@ -237,6 +237,36 @@ void checkTheFigureSettlesAfterAReclaim()
         "a reclaim that freed nothing was given time to settle");
 }
 
+/* A pool that keeps a reserve refuses at its ceiling, C, below B; the
+ * condition holds the margin ahead of C, not of B. A ceiling of 0 or one
+ * above B reads as B. */
+void checkTheMarginIsAheadOfTheCeiling()
+{
+    constexpr std::uint64_t ceiling = budget - 16 * mebibyte;
+    const auto at = [&](std::uint64_t usage, std::uint64_t ceilingBytes) {
+        return Reading {.budgetBytes = budget, .usageBytes = usage,
+            .ceilingBytes = ceilingBytes};
+    };
+    auto pressure = subscribed();
+    require(!tick(pressure, origin, at(ceiling - 96 * mebibyte - 1, ceiling)),
+        "one byte under the margin of the ceiling was not calm");
+    require(!pressure.deadline().has_value(),
+        "one byte under the margin of the ceiling named a deadline");
+    (void)tick(pressure, origin + 1s, at(ceiling - 96 * mebibyte, ceiling));
+    require(pressure.deadline() == origin + 2s,
+        "the margin of the ceiling did not start the sustain time");
+    require(tick(pressure, origin + 2s, at(ceiling - 96 * mebibyte, ceiling)),
+        "the margin ahead of the ceiling was no pressure");
+
+    auto unset = subscribed();
+    (void)tick(unset, origin, at(threshold - 1, 0));
+    require(!unset.deadline().has_value(), "a ceiling of 0 did not read as B");
+    auto above = subscribed();
+    (void)tick(above, origin, at(threshold - 1, budget + 64 * mebibyte));
+    require(!above.deadline().has_value(),
+        "a ceiling above B did not read as B");
+}
+
 void checkBudgetEdges()
 {
     /* No budget, no pressure. */
@@ -366,6 +396,7 @@ int main()
     checkCachesThatAreNotEnoughArePressure();
     checkTheReclaimComesBeforeThePressure();
     checkTheFigureSettlesAfterAReclaim();
+    checkTheMarginIsAheadOfTheCeiling();
     checkBudgetEdges();
     checkRefusalEdges();
     checkEventsOfOneEvaluationAreOne();
