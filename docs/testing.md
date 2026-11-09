@@ -508,6 +508,12 @@ and check the setup wizard's flow and end state, and the product's adb
 defaults; `tests/integration/android/run_guest_android_adb_vsock.py` is the
 opt-in ADB-over-vsock counterpart of `guest-vsock-stream`.
 
+Every first-party script that reaches a guest over adb uses the one shared adb
+server, names the guest with `-s 127.0.0.1:<port>` and at the end only
+disconnects its own serial; the stranger-key step of `android-adb-debugging` is
+the only private server, and `repository-adb-shared-server` fails any other
+script that selects a server or runs `kill-server`.
+
 ## x86 instruction conformance
 
 The x86 gadget engine's external campaign is the pinned FEX `x86-conformance`

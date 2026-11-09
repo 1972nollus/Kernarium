@@ -6,7 +6,9 @@ Android guests on a device run through Andarium; Kernarium keeps Linux
 (``run_ios_device_workload.py``). The runner installs an automation build of
 Andarium, launches the guest (the system the application carries) with
 ``ANDARIUM_START`` and a loopback forward,
-reaches the guest's adbd over USB with ``iproxy`` and a private adb server,
+reaches the guest's adbd over USB with ``iproxy`` and the shared adb server
+(the guest is always named with ``-s``; the runner ends with ``adb disconnect``
+and never stops a server),
 waits for ``sys.boot_completed``, runs the workload (a guest shell script
 and/or cold launches and scenarios from ``android_launch_suite.py``'s
 formats, after any ``--push`` files such as a CTS APK reach the guest),
@@ -52,9 +54,6 @@ DEFAULT_APPS_MANIFEST = Path(__file__).resolve().parent / (
 )
 SCRIPT_GUEST_PATH = "/data/local/tmp/andarium-harness-script.sh"
 SCRIPT_EXIT = re.compile(r"ANDARIUM_SCRIPT_EXIT:([0-9]+)")
-# The private adb server sits this far above the forward's port, still
-# inside a guest slot's range.
-ADB_SERVER_PORT_OFFSET = 10
 IPROXY_LISTEN_SECONDS = 10
 
 
@@ -101,11 +100,6 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         "--host-port", type=int,
         help="the forward's port on the device and on this Mac; defaults to "
         f"{andarium.SLOT_PORT_VARIABLE}",
-    )
-    parser.add_argument(
-        "--adb-server-port", type=int,
-        help="the private adb server's port; defaults to the host port + "
-        f"{ADB_SERVER_PORT_OFFSET}",
     )
     parser.add_argument("--adb", help="adb; defaults to the one on PATH")
     parser.add_argument("--iproxy", help="iproxy; defaults to PATH")
@@ -292,13 +286,11 @@ class Iproxy:
 
 
 class Adb:
-    """One guest, reached through a private adb server."""
+    """One guest, reached through the shared adb server and named by serial."""
 
-    def __init__(self, program: str, server_port: int, port: int) -> None:
+    def __init__(self, program: str, port: int) -> None:
         self.program = program
         self.serial = f"127.0.0.1:{port}"
-        self.environment = dict(os.environ)
-        self.environment["ANDROID_ADB_SERVER_PORT"] = str(server_port)
 
     def run(self, *arguments: str, timeout: int = 60,
             device: bool = True) -> subprocess.CompletedProcess[str]:
@@ -310,7 +302,6 @@ class Adb:
             return subprocess.run(
                 command, capture_output=True, text=True, errors="replace",
                 stdin=subprocess.DEVNULL, timeout=timeout,
-                env=self.environment,
             )
         except subprocess.TimeoutExpired as error:
             return subprocess.CompletedProcess(
@@ -328,8 +319,9 @@ class Adb:
         result = self.run("get-state", timeout=20)
         return (result.stdout or result.stderr).strip() or "unreachable"
 
-    def kill_server(self) -> None:
-        self.run("kill-server", timeout=20, device=False)
+    def disconnect(self) -> None:
+        """Drop this guest's transport; the shared server stays up."""
+        self.run("disconnect", self.serial, timeout=20, device=False)
 
 
 def last_line(transcript: str) -> str:
@@ -612,12 +604,7 @@ class Run:
                 options.device, app, options.install_timeout
             )
         self.check_unlocked()
-        adb = Adb(
-            self.adb_program,
-            options.adb_server_port or self.host_port
-            + ADB_SERVER_PORT_OFFSET,
-            self.host_port,
-        )
+        adb = Adb(self.adb_program, self.host_port)
         log = self.artifact / "console.log"
         self.summary["console"] = log.name
         started = time.monotonic()
@@ -635,7 +622,7 @@ class Run:
                     self.problems.append(str(error))
         finally:
             self.summary["seconds"] = round(time.monotonic() - started, 1)
-            adb.kill_server()
+            adb.disconnect()
             transcript = (
                 log.read_text(errors="replace") if log.exists() else ""
             )
