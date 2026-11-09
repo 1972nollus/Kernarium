@@ -105,6 +105,9 @@ struct SystemInfoTests {
         let info = try SystemInfo(manifest: Data(manifest.utf8), appVersion: "1.0 (1)")
         #expect(info.version == "17")
         #expect(info.release == "20261031-los24-r4")
+        // The family "lineage-24-mainline-6.18-4k" names the LineageOS version the Build row says.
+        #expect(info.lineageMajor == 24)
+        #expect(info.buildLabel == "r4 (2026-10-31), based on LineageOS 24")
         #expect(info.buildID == "CP2A.260605.016")
         #expect(info.kernel == "Linux 6.18.54")
         #expect(info.architecture == "arm64, 4 KiB pages")

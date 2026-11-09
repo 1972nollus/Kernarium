@@ -6,12 +6,14 @@ import UIKit
 /// Mock devices, system and guests for the Simulator preview and its
 /// screenshots. Nothing here is read from a real device or runtime.
 enum PreviewData {
-    /// The release the mock system carries, and the one before it.
+    /// The mock guest's own build, which its recovery screen shows.
     static let release = "20261024"
-    static let previousRelease = "20261002"
+    /// The release the mock system carries, and the one before it.
+    static let systemRelease = "20261109-los24-r20"
+    static let previousSystemRelease = "20261108-los24-r18"
 
     static let system = SystemInfo(
-        version: "17", release: release,
+        version: "17", release: systemRelease, lineageMajor: 24,
         securityPatch: "5 October 2026", kernel: "Linux 6.18.54",
         architecture: "arm64, 4 KiB pages", abis: ["arm64-v8a", "armeabi-v7a", "armeabi"],
         appVersion: "1.0 (1)"

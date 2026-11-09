@@ -220,14 +220,14 @@ struct BootView: View {
         case .firstStart:
             "The first-run setup may take a few minutes."
         case .upgrade:
-            "Updating \(from.map { "from \($0) " } ?? "")to \(system.release). Apps and files are kept."
+            "Updating \(from.map { "from \(ReleaseLabel.revision(of: $0)) " } ?? "")to \(system.releaseRevision). Apps and files are kept."
         case .normal, .restart, .recovery:
             nil
         }
     }
 
     static func steps(_ kind: BootKind, guest: Guest, system info: SystemInfo) -> [Step] {
-        let system = Step(title: "System image", detail: "\(info.release) · read-only", seconds: 0.7)
+        let system = Step(title: "System image", detail: "\(info.releaseRevision) · read-only", seconds: 0.7)
         let kernel = Step(title: "Linux kernel", detail: "\(info.kernel.replacingOccurrences(of: "Linux ", with: "")) · \(Formats.vcpus(guest.cores)) · \(Formats.size(mib: guest.memoryMiB)) RAM", seconds: 0.9)
         let used = "\(Formats.size(bytes: guest.usedBytes)) of \(Formats.size(gib: guest.capacityGiB))"
         switch kind {
@@ -242,7 +242,7 @@ struct BootView: View {
         case .upgrade:
             return [system, kernel,
                     Step(title: "Storage", detail: used, seconds: 0.7),
-                    Step(title: "Startup", detail: "Updating apps for \(info.release)", seconds: 3.6)]
+                    Step(title: "Startup", detail: "Updating apps for \(info.releaseRevision)", seconds: 3.6)]
         case .normal, .restart:
             let storage = guest.pendingCapacityGiB.map { "Growing from \(Formats.size(gib: guest.capacityGiB)) to \(Formats.size(gib: $0))" } ?? used
             return [system, kernel,

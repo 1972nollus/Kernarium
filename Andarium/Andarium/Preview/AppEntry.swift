@@ -123,13 +123,13 @@ struct AppEntry {
         case "home-max":
             model.guest?.capacityGiB = Limits.capacityRangeGiB.upperBound
         case "home-update":
-            model.plan = .update(from: PreviewData.previousRelease, to: PreviewData.release)
+            model.plan = .update(from: PreviewData.previousSystemRelease, to: PreviewData.systemRelease)
         case "home-update-failed":
-            model.plan = .unfinishedUpdate(to: PreviewData.release, canRetry: true, canRestore: true)
-            model.planAfterRestore = .update(from: PreviewData.previousRelease, to: PreviewData.release)
+            model.plan = .unfinishedUpdate(to: PreviewData.systemRelease, canRetry: true, canRestore: true)
+            model.planAfterRestore = .update(from: PreviewData.previousSystemRelease, to: PreviewData.systemRelease)
         case "home-update-failed-restore":
-            model.plan = .unfinishedUpdate(to: PreviewData.release, canRetry: false, canRestore: true)
-            model.planAfterRestore = .update(from: PreviewData.previousRelease, to: PreviewData.release)
+            model.plan = .unfinishedUpdate(to: PreviewData.systemRelease, canRetry: false, canRestore: true)
+            model.planAfterRestore = .update(from: PreviewData.previousSystemRelease, to: PreviewData.systemRelease)
         case "home-blocked":
             model.plan = .blocked(.olderAndroid)
         case "home-closed":
@@ -164,7 +164,7 @@ struct AppEntry {
             model.plan = .firstStart
             boot(.firstStart, stage: 3, seconds: 74)
         case "boot-upgrade":
-            model.bootFrom = PreviewData.previousRelease
+            model.bootFrom = PreviewData.previousSystemRelease
             boot(.upgrade, stage: 3, seconds: 51)
         case "boot-recovery":
             boot(.recovery, stage: 3, seconds: 7)

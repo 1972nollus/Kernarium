@@ -168,7 +168,7 @@ struct HomeView: View {
             NoticeCard(
                 symbol: "arrow.down.circle.fill", color: .accentColor,
                 title: "System image updated",
-                text: "Andarium system image is updated to \(release). The next start finishes the update and takes a little longer."
+                text: "Andarium system image is updated to \(ReleaseLabel.revision(of: release)). The next start finishes the update and takes a little longer."
             )
         case .unfinishedUpdate(let release, let canRetry, let canRestore):
             UnfinishedUpdateCard(release: release, canRetry: canRetry, canRestore: canRestore)
@@ -418,15 +418,16 @@ struct UnfinishedUpdateCard: View {
     }
 
     private var text: String {
-        switch (canRetry, canRestore) {
+        let revision = ReleaseLabel.revision(of: release)
+        return switch (canRetry, canRestore) {
         case (true, true):
-            "The start that updates to \(release) did not reach its end. Start tries it again, or Restore puts back your data from before the update."
+            "The start that updates to \(revision) did not reach its end. Start tries it again, or Restore puts back your data from before the update."
         case (true, false):
-            "The start that updates to \(release) did not reach its end. Start tries it again, or erase the guest to start over."
+            "The start that updates to \(revision) did not reach its end. Start tries it again, or erase the guest to start over."
         case (false, true):
             "This app version carries a different release than the update that did not finish. Restore puts back your data from before it, or erase the guest to start over."
         case (false, false):
-            "The start that updates to \(release) did not reach its end, and nothing from before it is left to put back. Erase the guest to start over."
+            "The start that updates to \(revision) did not reach its end, and nothing from before it is left to put back. Erase the guest to start over."
         }
     }
 }
