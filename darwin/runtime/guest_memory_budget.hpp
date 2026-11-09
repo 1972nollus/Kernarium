@@ -351,23 +351,35 @@ namespace detail {
 	return 0;
 }
 
-/* The RAM a new guest gets, never above default_guest_memory_maximum_mib
- * however much the host offers. On a device whose limit lets a guest have that
- * much (G_max(1) under maximum_memory_set is 4096 MiB when the range ends
- * there), a guest of that size runs the host GPU short long before it runs the
- * process short, so at every vCPU count the default is also held to what keeps
- * B at default_gpu_budget_minimum_mib: the lesser of
- * conservative_guest_memory_mib and graphics_guest_memory_mib. Both fall with
- * the vCPU count, so the default does too. That bound is never under 2048 MiB
- * with the launch set, since every limit that offers 4096 MiB at one vCPU
- * leaves a guest of 2048 more than 1024 for the GPU at every count the
- * applications offer; for a set that leaves none, or for a limit that offers
- * less than 4096 MiB or none at all, the default is the conservative one. A
- * guest above the conservative one is likely to be ended by the system; one
- * between the two is likely to run out of graphics memory. The rules read the
- * range as ending at 4096 MiB, so a larger ceiling changes none of the
- * defaults. */
-[[nodiscard]] constexpr std::uint32_t default_guest_memory_mib(
+/* The RAM a new guest gets, and whether the GPU budget rule below is what set
+ * it. Never above default_guest_memory_maximum_mib however much the host
+ * offers. On a device whose limit lets a guest have that much (G_max(1) under
+ * maximum_memory_set is 4096 MiB when the range ends there), a guest of that
+ * size runs the host GPU short long before it runs the process short, so at
+ * every vCPU count the default is also held to what keeps B at
+ * default_gpu_budget_minimum_mib: the lesser of conservative_guest_memory_mib
+ * and graphics_guest_memory_mib. Both fall with the vCPU count, so the default
+ * does too. That bound is never under 2048 MiB with the launch set, since
+ * every limit that offers 4096 MiB at one vCPU leaves a guest of 2048 more
+ * than 1024 for the GPU at every count the applications offer; for a set that
+ * leaves none, or for a limit that offers less than 4096 MiB or none at all,
+ * the default is the conservative one. A guest above the conservative one is
+ * likely to be ended by the system; one between the two is likely to run out
+ * of graphics memory. The rules read the range as ending at 4096 MiB, so a
+ * larger ceiling changes none of the defaults.
+ *
+ * holds_gpu_budget is true where the graphics rule is what lowered the
+ * default, below the conservative size the default would be otherwise. Above
+ * such a default B is under default_gpu_budget_minimum_mib from the next
+ * multiple of 512 MiB, which is what the applications warn about. Where the
+ * default is the conservative size (a ceiling of 4096 MiB held it, or the
+ * limit lets no guest have that much) it says nothing of B. */
+struct DefaultGuestMemory {
+	std::uint32_t mib;
+	bool holds_gpu_budget;
+};
+
+[[nodiscard]] constexpr DefaultGuestMemory default_guest_memory(
 	std::uint64_t memory_limit, unsigned executors,
 	const LaunchMemorySet &set = launch_memory_set) noexcept
 {
@@ -377,10 +389,19 @@ namespace detail {
 	const auto reach = maximum_guest_memory_mib(
 		memory_limit, 1, maximum_memory_set, top);
 	if (memory_limit == 0 || reach != top)
-		return conservative;
+		return {conservative, false};
 	const auto graphics =
 		graphics_guest_memory_mib(memory_limit, executors, set);
-	return graphics == 0 ? conservative : std::min(conservative, graphics);
+	if (graphics == 0 || graphics >= conservative)
+		return {conservative, false};
+	return {graphics, true};
+}
+
+[[nodiscard]] constexpr std::uint32_t default_guest_memory_mib(
+	std::uint64_t memory_limit, unsigned executors,
+	const LaunchMemorySet &set = launch_memory_set) noexcept
+{
+	return default_guest_memory(memory_limit, executors, set).mib;
 }
 
 } // namespace uml::runtime::guest_memory

@@ -537,17 +537,18 @@ struct MemoryPolicyTests {
         min(memory / 2, max(384, 4300 - memory - 64 * count))
     }
 
-    /// A 4 GiB-bound device: a new guest is 3 GiB, the most that keeps a
-    /// gibibyte for the GPU, and iOS is likely to end the application above
-    /// 3.5 GiB.
+    /// A device whose default the runtime did not lower for the GPU (the
+    /// size is the conservative one, or the cap of 4 GiB held it): a new guest
+    /// is 3 GiB and iOS is likely to end the application above 3.5 GiB.
     private let fourGiB = MemoryPolicy(
         processorCount: 2,
         bound: { _ in 4096 }, defaultMemory: { _ in 3072 }, safeMemory: { _ in 3584 },
         graphicsMemory: { memory, count in MemoryPolicyTests.fallingGraphics(memory, count) }
     )
 
-    /// The sheet warns about graphics memory only where the chosen RAM leaves
-    /// B under a gibibyte, and above what a new guest gets.
+    /// Where the default was not lowered for the GPU, the sheet warns about
+    /// graphics memory only where the chosen RAM leaves B under a gibibyte,
+    /// and above what a new guest gets.
     @Test func theGraphicsWarningIsShownOnlyWhereBFallsUnderAGibibyte() {
         // At one vCPU B is 1164 at 3072, 1100 at 3136, 1036 at 3200, then 972.
         #expect(fourGiB.graphicsMemoryMiB(forMemory: 3072, vCPUs: 1) == 1164)
@@ -584,6 +585,83 @@ struct MemoryPolicyTests {
                     "\(mib) MiB at \(count) vCPUs")
             }
         }
+    }
+
+    /// B as the runtime's formula gives it under a process limit, the launch
+    /// set's terms and the gadget cache at its cap per vCPU count
+    /// (`runtime/guest_memory_budget.hpp`; the `LiveTests` hold it to the
+    /// loader).
+    private static func runtimeB(limit: Int, memory: Int, count: Int) -> Int {
+        let caps = [128, 160, 192, 224, 240, 240, 272, 272]
+        let engine = 320 + caps[min(max(count, 1), caps.count) - 1] + 4 * count
+        return min(max(limit - 64 - memory - engine - 149, 384), memory / 2)
+    }
+
+    /// A limit of 5120 MiB: 4544 to 4416 offered, a new guest of 3 GiB because
+    /// the runtime lowered it to keep the GPU a gibibyte (it would be 3.5 GiB
+    /// otherwise), and iOS likely to end the application above 3.5 GiB.
+    private let lowered = MemoryPolicy(
+        maximumsMiB: [4544, 4544, 4480, 4480, 4416, 4416, 4416, 4416],
+        defaultsMiB: Array(repeating: 3072, count: 8), safeMiB: Array(repeating: 3584, count: 8),
+        defaultHoldsGraphics: Array(repeating: true, count: 8),
+        graphicsMiB: { memory, count in MemoryPolicyTests.runtimeB(limit: 5120, memory: memory, count: count) }
+    )
+
+    /// A limit of 6144 MiB: the cap of 4 GiB, not the GPU, holds the default
+    /// (B is still over a gibibyte at 4096 and above it), and the range above
+    /// the cap is on offer up to 5568.
+    private let capped = MemoryPolicy(
+        maximumsMiB: [5568, 5568, 5504, 5504, 5440, 5440, 5440, 5440],
+        defaultsMiB: Array(repeating: 4096, count: 8), safeMiB: Array(repeating: 4608, count: 8),
+        graphicsMiB: { memory, count in MemoryPolicyTests.runtimeB(limit: 6144, memory: memory, count: count) }
+    )
+
+    /// Where the runtime lowered the default to keep B a gibibyte, the sheet
+    /// warns from the default as it always has, though B is a gibibyte or more
+    /// for a few sizes above it. Elsewhere, even with the range above 4 GiB,
+    /// the line is where B falls under a gibibyte.
+    @Test func theGraphicsLineIsTheDefaultWhereTheRuntimeLoweredItAndWhereBFallsElsewhere() {
+        for count in 1...8 {
+            #expect(lowered.graphicsLineMiB(vCPUs: count) == 3072)
+            #expect(lowered.risk(3072, vCPUs: count) == .none)
+            #expect(lowered.risk(3136, vCPUs: count) == .graphics)
+            #expect(lowered.risk(3584, vCPUs: count) == .graphics)
+            #expect(lowered.risk(3648, vCPUs: count) == .closing)
+        }
+        // B is still a gibibyte or more where it warns, which is fine.
+        #expect((lowered.graphicsMemoryMiB(forMemory: 3136, vCPUs: 1) ?? 0) >= 1024)
+        // Capped: the line follows B (the 6144 case of `DefaultGuestTests`).
+        #expect((1...8).map { capped.graphicsLineMiB(vCPUs: $0) } == [4416, 4416, 4352, 4288, 4288, 4288, 4224, 4224])
+        #expect(capped.risk(4096, vCPUs: 1) == .none)
+        #expect(capped.risk(4416, vCPUs: 1) == .none)
+        #expect(capped.risk(4480, vCPUs: 1) == .graphics)
+        #expect(capped.risk(4608, vCPUs: 1) == .graphics)
+        #expect(capped.risk(4672, vCPUs: 1) == .closing)
+        // A policy that is not told the default was lowered is not pinned.
+        let unflagged = MemoryPolicy(
+            maximumsMiB: [4544], defaultsMiB: [3072], safeMiB: [3584],
+            graphicsMiB: { memory, count in MemoryPolicyTests.runtimeB(limit: 5120, memory: memory, count: count) }
+        )
+        #expect(unflagged.graphicsLineMiB(vCPUs: 1) == 3392)
+        // A count the flags do not reach is not pinned either, and a policy
+        // without estimates has the default for a line whatever it is told.
+        let partial = MemoryPolicy(
+            maximumsMiB: [4544, 4544], defaultsMiB: [3072, 3072], safeMiB: [3584, 3584],
+            defaultHoldsGraphics: [true],
+            graphicsMiB: { memory, count in MemoryPolicyTests.runtimeB(limit: 5120, memory: memory, count: count) }
+        )
+        #expect(partial.graphicsLineMiB(vCPUs: 1) == 3072 && partial.graphicsLineMiB(vCPUs: 2) == 3392)
+        let blind = MemoryPolicy(
+            maximumsMiB: [4544], defaultsMiB: [3072], safeMiB: [3584], defaultHoldsGraphics: [true]
+        )
+        #expect(blind.graphicsLineMiB(vCPUs: 1) == 3072)
+        // The loader's flags are read once per count.
+        var asked: [Int] = []
+        _ = MemoryPolicy(
+            processorCount: 3, bound: { _ in 4096 }, defaultMemory: { _ in 3072 },
+            defaultHoldsGraphics: { asked.append($0); return $0 == 2 }
+        )
+        #expect(asked == [1, 2, 3])
     }
 
     /// A device with little room, whose B is under a gibibyte at the default

@@ -551,6 +551,30 @@ extern "C" uint32_t kernarium_runtime_loader_default_guest_memory_mib(
 }
 
 extern "C" uint32_t
+kernarium_runtime_loader_default_guest_memory_holds_gpu_budget_for_limit(
+    uint64_t limitBytes,
+    uint32_t guestProcessorCount,
+    kernarium_launch_memory_set parameters)
+{
+    return uml::runtime::guest_memory::default_guest_memory(
+               limitBytes, guestProcessorCount, launchMemorySet(parameters))
+                   .holds_gpu_budget
+        ? 1
+        : 0;
+}
+
+extern "C" uint32_t
+kernarium_runtime_loader_default_guest_memory_holds_gpu_budget(
+    uint32_t guestProcessorCount,
+    kernarium_launch_memory_set parameters)
+{
+    return kernarium_runtime_loader_default_guest_memory_holds_gpu_budget_for_limit(
+        uml::platform::os_memory_limit_bytes(),
+        guestProcessorCount,
+        parameters);
+}
+
+extern "C" uint32_t
 kernarium_runtime_loader_conservative_guest_memory_mib_for_limit(
     uint64_t limitBytes,
     uint32_t guestProcessorCount,

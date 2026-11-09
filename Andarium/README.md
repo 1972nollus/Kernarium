@@ -191,14 +191,17 @@ control out.
   runtime's conservative size for its vCPU count (`safeMemoryMiB`) is likely
   to be closed by iOS: Home shows a notice and the memory ruler a line and red
   ticks, both following the guest's memory and vCPU count (`MemoryWarning`).
-  A guest with more than the default and an estimate of graphics memory (VRAM,
-  the host GPU's budget) under 1 GiB (`Limits.minimumDefaultGraphicsMemoryMiB`)
-  may run out of it: the System sheet turns the ticks past
-  `MemoryPolicy.graphicsLineMiB` orange and warns that games may
-  (`GraphicsMemoryWarning`), and Home says nothing. Where more memory leaves
-  the estimate at 1 GiB or more, the sheet does not warn. The sheet also shows
-  the loader's estimate of VRAM for the chosen memory and vCPUs and says it is
-  separate from the guest's RAM.
+  A guest above the graphics line (`MemoryPolicy.graphicsLineMiB`) may run out
+  of graphics memory (VRAM, the host GPU's budget): the System sheet turns the
+  ticks past it orange and warns that games may (`GraphicsMemoryWarning`), and
+  Home says nothing. The line is the default where the runtime lowered the
+  default to keep the GPU 1 GiB
+  (`kernarium_runtime_loader_default_guest_memory_holds_gpu_budget`), and
+  elsewhere the largest size whose estimate of VRAM is still 1 GiB or more
+  (`Limits.minimumDefaultGraphicsMemoryMiB`), so a range above 4 GiB warns
+  only where the estimate falls. The sheet also shows the loader's estimate of
+  VRAM for the chosen memory and vCPUs and says it is separate from the
+  guest's RAM.
   The memory ruler follows the range, which on a Mac with much RAM has about
   a thousand positions: it labels only the round numbers of gibibytes that do
   not touch and draws the ticks that have room (`RulerThinning`).

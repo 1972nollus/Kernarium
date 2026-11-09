@@ -19,10 +19,11 @@ import Foundation
 ///   GPU a gibibyte, so it is never above the safe size;
 /// - the graphics memory is the host GPU's budget, B, a guest of a size and
 ///   vCPU count would launch with;
-/// - the graphics line is the size above which a guest's B is under
-///   `Limits.minimumDefaultGraphicsMemoryMiB` and so games may run out of it:
-///   never under the default, and the default itself where B does not fall
-///   (or the host gives no estimate).
+/// - the graphics line is the size above which games may run out of graphics
+///   memory: the default itself where the runtime lowered the default to keep
+///   B at `Limits.minimumDefaultGraphicsMemoryMiB` (and where the host gives
+///   no estimate), and elsewhere the largest size that keeps that much B,
+///   never under the default or over the safe size.
 ///
 /// Each added vCPU holds more of the process's memory, so neither bound,
 /// safe size nor default rises with the count. The limit is fixed for the
@@ -44,17 +45,19 @@ public struct MemoryPolicy: Equatable, Sendable {
     /// runtime's memory steps from the bottom of its range; empty where the
     /// host does not say.
     private let graphics: [[Int]]
-    /// The size above which a guest's graphics memory is under
-    /// `Limits.minimumDefaultGraphicsMemoryMiB`, at the same counts.
+    /// The size above which games may run out of graphics memory, at the same
+    /// counts.
     private let graphicsLines: [Int]
 
     /// The bounds, the defaults and the safe sizes as they are: each is taken
     /// down to the runtime's steps and into its range. A count without a
     /// default takes its bound, and one without a safe size its default.
-    /// `graphicsMiB` answers the graphics memory of a size at a count, which
-    /// is asked once for every size of every count.
+    /// `defaultHoldsGraphics` says per count whether the runtime lowered the
+    /// default to keep the host GPU its budget (a count without an entry says
+    /// no). `graphicsMiB` answers the graphics memory of a size at a count,
+    /// which is asked once for every size of every count.
     public init(
-        maximumsMiB: [Int], defaultsMiB: [Int], safeMiB: [Int] = [],
+        maximumsMiB: [Int], defaultsMiB: [Int], safeMiB: [Int] = [], defaultHoldsGraphics: [Bool] = [],
         graphicsMiB: ((_ memoryMiB: Int, _ vCPUs: Int) -> Int)? = nil
     ) {
         let values = maximumsMiB.isEmpty ? [Limits.defaultMemoryRangeMiB.upperBound] : maximumsMiB
@@ -79,15 +82,18 @@ public struct MemoryPolicy: Equatable, Sendable {
             }
         }
         graphics = table
-        // The largest size a person may choose that still keeps the graphics
-        // memory the default keeps on a device with room: no lower than the
-        // default (a new guest is never warned about) and no higher than the
-        // safe size (above it the warning is the worse one). The default
-        // itself where B falls below that figure just above it, and where the
-        // host gives no estimate.
+        // Where the runtime lowered the default to keep B at a gibibyte, the
+        // default itself is the line, as it was before the range passed
+        // 4 GiB. Elsewhere the largest size a person may choose that still
+        // keeps that much: no lower than the default (a new guest is never
+        // warned about) and no higher than the safe size (above it the
+        // warning is the worse one). The default itself where B falls below
+        // that figure just above it, and where the host gives no estimate.
         graphicsLines = bounds.indices.map { index in
             let atLeast = steppedDefaults[index]
-            guard !table.isEmpty else { return atLeast }
+            guard !table.isEmpty, !(index < defaultHoldsGraphics.count && defaultHoldsGraphics[index]) else {
+                return atLeast
+            }
             let row = table[index]
             let first = Limits.runtimeMemoryRangeMiB.lowerBound
             let top = (bounds[index] - first) / Limits.runtimeMemoryStepMiB
@@ -113,17 +119,21 @@ public struct MemoryPolicy: Equatable, Sendable {
 
     /// The bounds, defaults, safe sizes and graphics memory of
     /// 1...`processorCount` vCPUs from the loader's answers for a count: a
-    /// safe size defaults to the default, and without `graphicsMemory` the
-    /// host gives no estimate.
+    /// safe size defaults to the default, a default is not one the runtime
+    /// lowered for the GPU without `defaultHoldsGraphics`, and without
+    /// `graphicsMemory` the host gives no estimate.
     public init(
         processorCount: Int, bound: (Int) -> Int, defaultMemory: (Int) -> Int,
         safeMemory: ((Int) -> Int)? = nil,
+        defaultHoldsGraphics: ((Int) -> Bool)? = nil,
         graphicsMemory: ((_ memoryMiB: Int, _ vCPUs: Int) -> Int)? = nil
     ) {
         let counts = 1...max(processorCount, 1)
         self.init(
             maximumsMiB: counts.map(bound), defaultsMiB: counts.map(defaultMemory),
-            safeMiB: safeMemory.map { rule in counts.map(rule) } ?? [], graphicsMiB: graphicsMemory
+            safeMiB: safeMemory.map { rule in counts.map(rule) } ?? [],
+            defaultHoldsGraphics: defaultHoldsGraphics.map { rule in counts.map(rule) } ?? [],
+            graphicsMiB: graphicsMemory
         )
     }
 
@@ -176,22 +186,24 @@ public struct MemoryPolicy: Equatable, Sendable {
     }
 
     /// The size above which a guest with `vCPUs` vCPUs is short of graphics
-    /// memory: the largest size that leaves its B at
-    /// `Limits.minimumDefaultGraphicsMemoryMiB` or more, and at least the
+    /// memory. Where the runtime lowered the default to keep B at
+    /// `Limits.minimumDefaultGraphicsMemoryMiB` it is the default itself, so
+    /// the warning may show while B still has that much. Elsewhere it is the
+    /// largest size that leaves B at that figure or more, at least the
     /// default, since a new guest is never warned about, and at most the safe
-    /// size, above which the closing warning is the one shown. It is the
-    /// default itself where B is already under that figure above it, as on a
-    /// device with little room, and where the host gives no estimate. A count
-    /// above the host's takes the last one.
+    /// size, above which the closing warning is the one shown: the default
+    /// itself where B is already under it above the default, as on a device
+    /// with little room, and where the host gives no estimate. A count above
+    /// the host's takes the last one.
     public func graphicsLineMiB(vCPUs: Int) -> Int {
         graphicsLines[min(max(vCPUs, 1), graphicsLines.count) - 1]
     }
 
-    /// Whether a guest with `mib` of memory and `vCPUs` vCPUs has a B under
-    /// `Limits.minimumDefaultGraphicsMemoryMiB` as well as more than a new
-    /// guest gets: graphics-hungry apps are then likely to run out of
-    /// graphics memory, though iOS need not end the application. Where more
-    /// memory leaves B as it is, the sheet does not warn.
+    /// Whether a guest with `mib` of memory and `vCPUs` vCPUs has more than
+    /// `graphicsLineMiB`: graphics-hungry apps are then likely to run out of
+    /// graphics memory, though iOS need not end the application. Where the
+    /// default was not lowered for the GPU and more memory leaves B at a
+    /// gibibyte or more, the sheet does not warn.
     public func isShortOfGraphicsMemory(_ mib: Int, vCPUs: Int) -> Bool {
         mib > graphicsLineMiB(vCPUs: vCPUs)
     }

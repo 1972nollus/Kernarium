@@ -533,6 +533,56 @@ void onADeviceThatOffers4GiBTheDefaultKeepsAGibibyteForTheGpu()
 	require(limited > 0, "some limits are lowered");
 }
 
+/* The applications warn about graphics memory above a default the GPU budget
+ * rule lowered: default_guest_memory says so from the same choice that makes
+ * the default, so no second definition of the rule exists. It holds where the
+ * rule picked a size below the conservative one, and is false where the
+ * default is the conservative size, the cap of 4096 MiB held it included. */
+void theGpuBudgetRuleIsFlaggedOnlyWhereItLowersTheDefault()
+{
+	unsigned flagged = 0;
+	unsigned unflagged = 0;
+	for (std::uint64_t limit_mib = 0; limit_mib <= 20480; limit_mib += 16)
+		for (unsigned executors = 1; executors <= 8; ++executors) {
+			const std::uint64_t limit = limit_mib * mib;
+			const auto choice = budget::default_guest_memory(limit, executors);
+			require(choice.mib ==
+				budget::default_guest_memory_mib(limit, executors));
+			const auto conservative = budget::conservative_guest_memory_mib(
+				limit, executors, budget::launch_memory_set, 4096);
+			if (!choice.holds_gpu_budget) {
+				require(choice.mib == conservative);
+				++unflagged;
+				continue;
+			}
+			++flagged;
+			require(limit != 0 && choice.mib < conservative);
+			require(choice.mib ==
+				budget::graphics_guest_memory_mib(limit, executors));
+			require(budget::gpu_budget(limit, choice.mib, executors).bytes >=
+				1024 * mib);
+			require(budget::gpu_budget(limit, choice.mib + 512U, executors)
+					.bytes < 1024 * mib,
+				"B is under a gibibyte from the next step above the default");
+		}
+	require(flagged > 0 && unflagged > 0);
+	/* The limits the applications know. Where the cap of 4096 MiB holds the
+	 * default (6144 and above) or none lets 4096 be offered (4096 and
+	 * below), nothing is said of B. */
+	for (unsigned executors = 1; executors <= 8; ++executors) {
+		for (const std::uint64_t limit_mib : {4700U, 5120U})
+			require(budget::default_guest_memory(limit_mib * mib, executors)
+					.holds_gpu_budget,
+				"a limit that offers 4096 and a default under it");
+		for (const std::uint64_t limit_mib :
+			{0U, 2867U, 3584U, 4096U, 6144U, 8192U, 12288U})
+			require(!budget::default_guest_memory(limit_mib * mib, executors)
+					 .holds_gpu_budget);
+	}
+	static_assert(budget::default_guest_memory(5120 * mib, 6).mib == 3072);
+	static_assert(budget::default_guest_memory(6144 * mib, 6).mib == 4096);
+}
+
 /* A set that leaves no guest a gibibyte for the GPU cannot lower the default
  * further, since B is at most half of a guest under 2048 MiB: the second bound
  * is then left out and the default is the conservative line. */
@@ -857,6 +907,8 @@ int main()
 			theDefaultKeepsAGibibyteForTheGpuAtTheTopOfTheRange},
 		{"on-a-device-that-offers-4-gib-the-default-keeps-a-gibibyte-for-the-gpu",
 			onADeviceThatOffers4GiBTheDefaultKeepsAGibibyteForTheGpu},
+		{"the-gpu-budget-rule-is-flagged-only-where-it-lowers-the-default",
+			theGpuBudgetRuleIsFlaggedOnlyWhereItLowersTheDefault},
 		{"a-set-that-leaves-no-gibibyte-leaves-the-conservative-default",
 			aSetThatLeavesNoGibibyteLeavesTheConservativeDefault},
 		{"the-budget-is-the-evaluation-the-run-makes",

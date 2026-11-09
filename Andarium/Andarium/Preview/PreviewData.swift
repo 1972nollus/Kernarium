@@ -82,7 +82,7 @@ enum PreviewData {
     /// application.
     static let iPhone18ProMaxMemory = MemoryPolicy(
         maximumsMiB: Array(repeating: 4096, count: 6), defaultsMiB: Array(repeating: 3072, count: 6),
-        safeMiB: Array(repeating: 3584, count: 6),
+        safeMiB: Array(repeating: 3584, count: 6), defaultHoldsGraphics: Array(repeating: true, count: 6),
         graphicsMiB: { memory, count in budget(limitMiB: 5120, memoryMiB: memory, vCPUs: count) }
     )
 

@@ -157,6 +157,19 @@ uint32_t kernarium_runtime_loader_default_guest_memory_mib_for_limit(
     uint64_t limit_bytes,
     uint32_t guest_processor_count,
     kernarium_launch_memory_set parameters);
+/* Nonzero where the default above is the size the host GPU's 1024 MiB budget
+ * rule lowered, below the conservative size: a guest with more has less than
+ * that for the GPU from the next multiple of 512, which the applications warn
+ * about. Zero where the default is the conservative size, and then it says
+ * nothing of the GPU's budget. The same choice makes the default. */
+uint32_t kernarium_runtime_loader_default_guest_memory_holds_gpu_budget(
+    uint32_t guest_processor_count,
+    kernarium_launch_memory_set parameters);
+/* The same for a memory limit the caller states in bytes, zero for none. */
+uint32_t kernarium_runtime_loader_default_guest_memory_holds_gpu_budget_for_limit(
+    uint64_t limit_bytes,
+    uint32_t guest_processor_count,
+    kernarium_launch_memory_set parameters);
 /* The most guest RAM, in MiB, before the system is likely to end the process
  * at `guest_processor_count` vCPUs: the most guest RAM with `parameters`, the
  * launch set, taken down to a multiple of 512, at least 1536, and never above
