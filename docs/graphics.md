@@ -354,7 +354,12 @@ the renderer's per-context report (the pool's `account` callback). The guest
 kernel names a context's creating process in the context's debug name
 (`<name>|pid=<tgid>|comm=<comm>`, the
 [kernel contract](../kernel/common/README.md#devices)); a kernel that does not
-leaves the holders unnamed and nothing acts on them. `read_graphics_memory`
+leaves the holders unnamed and nothing acts on them. A holder is quiet while
+none of its contexts has run a command; freeing memory is not activity: a
+command whose effect on the context's memory is to release it (a resource goes,
+a Venus allocation is freed, a resource shrinks) does not reset the holder's
+idle time unless it also allocated, so a cached application that trims itself
+stays eligible, and one that draws or allocates does not. `read_graphics_memory`
 (runtime API 28) lists the quiet holders by process, and the macOS launchers
 print them with `--stats`. Andarium ends the cached background app that holds
 the most when the budget is nearly full (`GraphicsReclaim`).

@@ -1509,6 +1509,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             if (virglResources_.contains(contextResource->resourceId) ||
                 blobResources_.contains(contextResource->resourceId)) {
                 bool credited = false;
+                UML_GPU_LEDGER.contextActive(
+                    header->contextId, ContextMemoryLedger::Clock::now());
                 try {
                     credited = UML_GPU_LEDGER.resourceAttached(
                         header->contextId, contextResource->resourceId);
@@ -1630,6 +1632,10 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             .flags = create->flags,
         };
         auto success = response(*header, protocol::GpuResponse::okNoData);
+        /* A resource made for a context is the context's activity once it
+         * holds the bytes. */
+        UML_GPU_LEDGER.contextActive(
+            header->contextId, ContextMemoryLedger::Clock::now());
         try {
             UML_GPU_LEDGER.reserveResource(create->resourceId);
             virglResources_.emplace(
@@ -1719,6 +1725,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         }
 
+        UML_GPU_LEDGER.contextActive(
+            header->contextId, ContextMemoryLedger::Clock::now());
         try {
             auto success = response(*header, protocol::GpuResponse::okNoData);
             LedgerReservation reservation(UML_GPU_LEDGER, create->resourceId);
