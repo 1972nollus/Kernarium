@@ -7,11 +7,14 @@ import Foundation
 nonisolated enum AdbActivity {
     case installApp
     case bugReport
+    /// Browsing the guest's files, importing and exporting.
+    case files
 
     fileprivate var notReady: String {
         switch self {
         case .installApp: "install apps"
         case .bugReport: "make a bug report"
+        case .files: "open its files"
         }
     }
 
@@ -19,6 +22,7 @@ nonisolated enum AdbActivity {
         switch self {
         case .installApp: "the app was installed"
         case .bugReport: "the bug report was finished"
+        case .files: "the transfer finished"
         }
     }
 
@@ -26,6 +30,7 @@ nonisolated enum AdbActivity {
         switch self {
         case .installApp: "installing the app"
         case .bugReport: "making the bug report"
+        case .files: "copying the files"
         }
     }
 
@@ -33,6 +38,7 @@ nonisolated enum AdbActivity {
         switch self {
         case .installApp: "install the app"
         case .bugReport: "make the bug report"
+        case .files: "copy the file"
         }
     }
 }
@@ -58,7 +64,11 @@ nonisolated struct AdbFailure: LocalizedError, Equatable {
         case .guestGone, .streamClosed:
             // adbd restarts when the guest's USB debugging turns off, which
             // ends a connection in use; the next try reaches the new one.
-            message = "The guest\u{2019}s debugging service restarted before \(activity.stoppedBefore). Try again."
+            if activity == .files {
+                message = "The guest\u{2019}s debugging service stopped. Check that USB debugging is still on, then try again."
+            } else {
+                message = "The guest\u{2019}s debugging service restarted before \(activity.stoppedBefore). Try again."
+            }
         case .timedOut:
             message = "The guest stopped responding while \(activity.whileDoing)."
         case let .remote(text):
@@ -72,8 +82,15 @@ nonisolated struct AdbFailure: LocalizedError, Equatable {
     /// report under way in plain words.
     private static func remote(_ text: String, activity: AdbActivity) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if activity == .bugReport, trimmed.lowercased().contains("in progress") {
+        let lower = trimmed.lowercased()
+        if activity == .bugReport, lower.contains("in progress") {
             return "The guest is already making a bug report."
+        }
+        if activity == .files {
+            if lower.contains("no space left") { return "Not enough space in the guest." }
+            if lower.contains("permission denied") || lower.contains("read-only") {
+                return "Android doesn\u{2019}t allow changes to this folder."
+            }
         }
         return trimmed.isEmpty ? "The guest couldn\u{2019}t \(activity.couldNot)." : trimmed
     }

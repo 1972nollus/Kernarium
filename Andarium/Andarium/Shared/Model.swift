@@ -58,6 +58,10 @@ final class SessionState {
     /// The guest's USB debugging setting as last read; nil until it has
     /// been. ADB over network needs it on.
     var usbDebugging: Bool?
+    /// Whether the guest's internal storage is up, as last read; nil until it
+    /// has been. Android ends its boot some seconds before it, and the Files
+    /// browser waits for it.
+    var storageReady: Bool?
     var showStats = false
     var readout = Readout()
     /// The side keys are open. The session owns it because a touch on the
@@ -90,6 +94,10 @@ final class AppModel {
         }
     }
     var host: HostDevice
+    /// The guest's files, when the runtime behind the screens can reach them.
+    var fileBrowser: FileBrowserModel? {
+        didSet { fileBrowser?.isAvailable = { [weak self] in self?.filesAvailable ?? false } }
+    }
     /// The system this build of Andarium carries.
     var system: SystemInfo
     /// What the runtime behind the screens can do; a screen shows only the
@@ -249,6 +257,7 @@ final class AppModel {
     /// Looks after ADB over network while it is on.
     private var adbWatcher: Task<Void, Never>?
     private var readingUsbDebugging = false
+    private var readingStorage = false
     /// How often the watcher looks while ADB over network is on: the address
     /// every time, the USB debugging setting every fifth. A test shortens it.
     var adbWatchInterval = Duration.seconds(2)
@@ -477,6 +486,7 @@ final class AppModel {
     func guestPausingForSpace(freeBytes: UInt64) {
         host.freeStorageBytes = freeBytes
         abandonOperation()
+        fileBrowser?.reset()
         stopAdbOverNetwork()
         spacePause = SpacePause(freeBytes: freeBytes, stage: .pausing)
     }
@@ -575,6 +585,14 @@ final class AppModel {
         driver == nil ? session.usbDebugging != false : session.usbDebugging == true
     }
 
+    /// The Files browser may list and move files: USB debugging is on, as
+    /// Settings shows it, and Android has its storage up. The preview has no
+    /// guest to ask and says yes unless a screen says no.
+    var filesAvailable: Bool {
+        guard adbOverNetworkAvailable else { return false }
+        return driver == nil ? session.storageReady != false : session.storageReady == true
+    }
+
     /// The toggle in Settings. Turning it on opens the listener on the
     /// device's network addresses, which the guest's USB debugging being on
     /// allows; turning it off, USB debugging going off, or the run ending
@@ -617,6 +635,7 @@ final class AppModel {
     private func endAdbOverNetwork() {
         stopAdbOverNetwork()
         session.usbDebugging = nil
+        session.storageReady = nil
         session.adbProblem = nil
     }
 
@@ -643,12 +662,26 @@ final class AppModel {
         if !value, current.adb { stopAdbOverNetwork() }
     }
 
-    /// While Settings is open: the address and the setting, read again every
+    /// Reads whether Android has its internal storage up, until it has: once
+    /// it is, it stays up for the run.
+    func refreshStorage() async {
+        guard let driver, case .running(.normal) = phase, spacePause == nil, !readingStorage,
+              session.storageReady != true else { return }
+        readingStorage = true
+        defer { readingStorage = false }
+        let current = session
+        let value = await driver.storageReady()
+        guard session === current, case .running(.normal) = phase, let value else { return }
+        if current.storageReady != value { current.storageReady = value }
+    }
+
+    /// While Settings is open: the address and the settings, read again every
     /// few seconds until the sheet goes and the task is cancelled.
     func watchSettings() async {
         while !Task.isCancelled {
             refreshAdbAddress()
             await refreshUsbDebugging()
+            await refreshStorage()
             try? await Task.sleep(for: .seconds(3))
         }
     }
@@ -774,7 +807,7 @@ final class AppModel {
     /// (minutes, under emulation) and the finished zip goes to the share
     /// sheet, where Save to Files is one of the actions.
     func createBugReport() {
-        guard capabilities.bugReport, case .running(.normal) = phase else { return }
+        guard capabilities.bugReport, case .running(.normal) = phase, fileBrowser?.busy != true else { return }
         runOperation(
             BusyState(
                 title: "Creating bug report",
@@ -838,6 +871,11 @@ final class AppModel {
     /// scope is held to the end of the install.
     func installPicked(_ url: URL) {
         guard busy == nil else { return }
+        guard fileBrowser?.busy != true else {
+            alert = AppAlert(
+                title: Self.installFailure, message: "Wait for the file transfer to finish, then install the app.")
+            return
+        }
         let name = url.lastPathComponent
         if let refusal = InstallRefusal(fileName: name) {
             busy = ended(title: Self.installFailure, detail: refusal.message, failed: true)
@@ -940,6 +978,7 @@ final class AppModel {
     /// reason the failure screen reports.
     func runEnded(_ end: RunEnd, uptimeSeconds: Int?) {
         abandonOperation()
+        fileBrowser?.reset()
         endAdbOverNetwork()
         spacePause = nil
         graphicsNotice = GraphicsNotice()
@@ -965,6 +1004,7 @@ final class AppModel {
     /// install list belong to the run that ended.
     func restart() {
         abandonOperation()
+        fileBrowser?.reset()
         endAdbOverNetwork()
         spacePause = nil
         graphicsNotice = GraphicsNotice()

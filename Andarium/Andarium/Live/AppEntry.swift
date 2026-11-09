@@ -163,6 +163,7 @@ struct AppEntry {
                 model: model, storage: storage, marker: marker, keyStore: adbKeyStore,
                 sessionRecord: sessionRecord, freeSpace: watched)
             model.driver = runtime
+            model.fileBrowser = FileBrowserModel(backend: runtime.makeGuestFiles(hostFree: watched))
             model.refreshPlan()
             // Access the person took away while Andarium was closed takes the
             // Microphone choice with it.

@@ -352,6 +352,19 @@ is on. `AndariumCore/Adb` speaks the protocol.
   MetricKit reports added under `andarium/`, the application's container paths
   taken out (`BugReportAttachments`); a zip that cannot be amended safely is
   shared as Android made it.
+- **Files** in Settings browses the guest's internal storage
+  (`/storage/emulated/0/`, the guest Files app's root) and imports and exports
+  files over the same channel, in a normal session and while USB debugging is
+  on (`Live/LiveGuestFiles.swift`, `AdbSync`, `GuestFiles`). One transfer runs
+  at a time; Install APK and Create bug report wait for it. An import is
+  written to a hidden `.andarium-*.part` name beside its destination and moved
+  into place, so a stopped or failed one leaves nothing and a Replace keeps the
+  original until the new file is whole; the guest's media index is then told.
+  A transfer stops when the application leaves the foreground, and its files
+  say so. Android reports its boot done before internal storage is mounted, so
+  the browser is unavailable, as it is with USB debugging off, until a check in
+  the guest finds the storage mounted, writable and holding a standard folder
+  (`InternalStorage`); nothing is imported or exported before then.
 - **ADB over network** is off at every run and never persisted, and is
   available only while the guest's USB debugging is on. `AdbNetworkBridge`
   listens on TCP 5555 and relays each computer to a fresh vsock stream, serving
@@ -360,7 +373,10 @@ is on. `AndariumCore/Adb` speaks the protocol.
   `NSLocalNetworkUsageDescription`. Nothing listens before the toggle.
 - **Privacy.** The adb features add no required-reason API beyond the
   disk-space API with reason E174.1 (the start's own space check already uses
-  it).
+  it) and, for Files, the file-timestamp API: an import reads the date of a
+  file the person picked (3B52.1) and an export sets the date of its staged
+  copy inside the application's container (C617.1), so both keep the file's
+  own date.
 
 ## Acknowledgements
 

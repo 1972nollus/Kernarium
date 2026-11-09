@@ -419,6 +419,12 @@ final class LiveRuntime: RuntimeDriver {
         AdbGuestOperations(identity: adbIdentity, clock: clock, device: model?.host.name ?? "device")
     }
 
+    /// The file browser's backend: it reads the operations for each call, as
+    /// the key changes with each boot.
+    func makeGuestFiles(hostFree: @escaping @Sendable () -> UInt64) -> LiveGuestFiles {
+        LiveGuestFiles(operations: { [unowned self] in operations }, hostFree: hostFree)
+    }
+
     func createBugReport(update: @escaping @Sendable (BusyUpdate) -> Void) async throws -> URL {
         try await operations.createBugReport(update: update)
     }
@@ -429,6 +435,10 @@ final class LiveRuntime: RuntimeDriver {
 
     func usbDebugging() async -> Bool? {
         await operations.usbDebugging()
+    }
+
+    func storageReady() async -> Bool? {
+        await operations.storageReady()
     }
 
     // MARK: ADB over network
