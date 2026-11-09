@@ -31,8 +31,13 @@ space, the shared tier opens only while two executors live and is keyed by
 guest PC, and the guest's ASLR moves every image anyway. Each exec'd process
 therefore compiles its whole startup path again, several times what it costs
 the gadget engine, and the LTP runner scales its case bounds for it
-([testing](../../../../docs/testing.md#ltp)). The JIT's products are macOS and
-development builds, so the cold path is not optimized
+([testing](../../../../docs/testing.md#ltp)). An Android guest never stops
+translating: its processes' working sets together outgrow the cache at any
+budget a device can afford, so the arena is emptied every few seconds and the
+guest's boot, launches and background work run several times slower than on
+gadgets, while a long single-process computation runs faster in CPU time. The
+JIT's products are macOS and development builds, so the cold path is not
+optimized
 ([history](../../../../docs/optimization-history.md#jit-cold-code-per-process)).
 
 ## Top-byte ignore

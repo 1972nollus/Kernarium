@@ -269,11 +269,12 @@ requires reopening Andarium.
   request only when the launch says a servicing debugger is attached
   (`ANDARIUM_JIT_DEBUGGER=1`). `ANDARIUM_JIT` (`1` or `0`) states the row for a
   harness launch, which keeps nothing; a launch with another setting starts it
-  off. The JIT compiles every process's code cold
-  ([cold code](../darwin/cpu/arm64/jit/README.md#cold-code)), so a boot and an
-  application launch take several times longer than on gadgets, and it suits
-  long-running compute. An App Store build carries none of this: its runtime has
-  no JIT and the application has no row, preference, entries or sentences.
+  off. The JIT compiles every process's code again for itself
+  ([cold code](../darwin/cpu/arm64/jit/README.md#cold-code)), so an Android
+  guest's boot, application launches and background work run several times
+  slower than on gadgets, and a long single-process computation runs faster. An
+  App Store build carries none of this: its runtime has no JIT and the
+  application has no row, preference, entries or sentences.
 - **Motion.** Gyroscope needs no permission. The host reads a sensor only while
   a guest application uses it and sends samples over private vsock port 5556;
   the system image must include the
