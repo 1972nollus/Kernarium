@@ -17,8 +17,8 @@ disk, in the application's container as --bundle NAME. The host refuses a
 disk whose partition layout is not the one it expects ("fixed GPT partition
 layout differs", android_boot.cpp), so a release built before a layout change
 needs a bundle of the current layout copied there first; an existing bundle
-is reused. The adb server this script starts is its own and is stopped at the
-end.
+is reused. The script uses the shared adb server, names its guest with -s and
+disconnects it at the end; it never stops a server.
 
   repro-android-hold-mac.py [--no-build] [--background-seconds N]
                             [--expect {pass,fail}] [--output DIR]
@@ -45,8 +45,8 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 RUN_SCRIPT = ROOT / "Kernarium/scripts/run-ios-mac.sh"
 BUNDLE_ID = "com.imxieyi.Kernarium"
-ADB_SERVER_PORT = "5389"
 FORWARD_PORT = 5589
+SERIAL = f"127.0.0.1:{FORWARD_PORT}"
 CHANNEL = "hold-repro"
 # The processes whose survival says the framework itself did not fall over.
 SURVIVORS = "system_server surfaceflinger"
@@ -69,7 +69,7 @@ def say(message: str) -> None:
 
 
 def adb(*arguments: str, timeout: float = 60.0) -> tuple[int, str]:
-    command = ["adb", "-P", ADB_SERVER_PORT, "-s", f"127.0.0.1:{FORWARD_PORT}"]
+    command = ["adb", "-s", SERIAL]
     try:
         completed = subprocess.run(
             [*command, *arguments],
@@ -93,10 +93,7 @@ def guest(command: str, timeout: float = 60.0) -> tuple[int, str]:
 def connect() -> bool:
     try:
         completed = subprocess.run(
-            [
-                "adb", "-P", ADB_SERVER_PORT, "connect",
-                f"127.0.0.1:{FORWARD_PORT}",
-            ],
+            ["adb", "connect", SERIAL],
             capture_output=True,
             text=True,
             timeout=20,
@@ -392,7 +389,7 @@ def main() -> int:
                         pass
         launcher_log.close()
         subprocess.run(
-            ["adb", "-P", ADB_SERVER_PORT, "kill-server"],
+            ["adb", "disconnect", SERIAL],
             capture_output=True,
             timeout=20,
             stdin=subprocess.DEVNULL,

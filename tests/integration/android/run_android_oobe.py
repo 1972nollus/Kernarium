@@ -57,7 +57,6 @@ import pathlib
 import re
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import tempfile
@@ -392,7 +391,7 @@ def disabled_components(dumpsys_package: str) -> set[str]:
 
 
 class Device:
-    """The guest as the host's adb sees it, over one server and one key."""
+    """The guest as the host's adb sees it: the shared server, always named by serial."""
 
     def __init__(self, adb: str, serial: str, environment: dict[str, str]) -> None:
         self.adb = adb
@@ -497,12 +496,6 @@ def wait_booted(device: Device, seconds: int, guest: subprocess.Popen | None) ->
     size_log_buffers(device)
     wait_for("the guest to be booted", lambda: device.shell("getprop sys.boot_completed") == "1",
              max(1, int(deadline - time.monotonic())), guest)
-
-
-def free_loopback_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
 
 
 def stop_launcher(guest: subprocess.Popen) -> None:
@@ -832,7 +825,6 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="android-oobe-") as scratch_name:
         scratch = pathlib.Path(scratch_name)
         environment = dict(os.environ)
-        environment["ANDROID_ADB_SERVER_PORT"] = str(free_loopback_port())
         try:
             if options.only != "helper":
                 run_guest(options, scratch, "wizard", adb, environment, [], wizard_guest)
@@ -844,8 +836,10 @@ def main() -> int:
             print(f"FAIL: {problem}", file=sys.stderr)
             return 1
         finally:
-            subprocess.run([adb, "kill-server"], env=environment, stdin=subprocess.DEVNULL,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=False)
+            # The shared server stays up; only this run's guest transport goes.
+            subprocess.run([adb, "disconnect", f"127.0.0.1:{options.adb_port}"], env=environment,
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=30, check=False)
 
 
 if __name__ == "__main__":

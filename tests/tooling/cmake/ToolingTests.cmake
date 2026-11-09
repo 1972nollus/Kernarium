@@ -131,6 +131,21 @@ uml_add_tooling_test(
     LABELS audit
     TIMEOUT 90)
 
+# One shared adb server serves every first-party script, which names its guest
+# with -s: a private server outlives a killed script and keeps retrying the
+# host's USB devices. The fixtures show the checker finds each of the three
+# ways to pick or stop a server, honours the allowlist rule by rule, and
+# rejects an entry that matches nothing; the tree must then be clean.
+uml_add_tooling_test(
+    NAME repository-adb-shared-server
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_adb_server_policy.py
+        --checker
+            ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/check_adb_server_policy.py
+        --source-root ${PROJECT_SOURCE_DIR}
+    LABELS audit
+    TIMEOUT 120)
+
 uml_add_tooling_test(
     NAME engine-kind-link-audit
     COMMAND ${Python3_EXECUTABLE}
