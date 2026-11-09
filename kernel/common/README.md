@@ -52,8 +52,10 @@ it. The bridge fields used below are defined by the comments in
 
 - Console output never discards unread terminal input, because input and output
   may share one host PTY, and a console write allocates no memory. Closing a
-  serial line never closes a host descriptor. The console PTY assertion and
-  `guest-console-write-memory` check the first two.
+  serial line never closes a host descriptor, and opening one never waits for
+  the host to read what its terminal holds. The console PTY assertion and
+  `guest-console-write-memory` check the first two, `guest-console-late-reader`
+  the last.
 - Output a serial line has queued for a host channel that took less than a
   write offered goes out before the line's console text, and before the
   exitcalls close the line at power-off, halt or restart. The console waits up

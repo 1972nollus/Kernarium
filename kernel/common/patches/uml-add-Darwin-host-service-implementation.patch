@@ -35,8 +35,8 @@ without upstream's <umid>/ level, because Darwin's sun_path holds 104 bytes.
  arch/um/os-Darwin/time.c         | 335 ++++++++++++++++
  arch/um/os-Darwin/tty.c          |  22 ++
  arch/um/os-Darwin/umid.c         |  93 +++++
- arch/um/os-Darwin/util.c         | 126 ++++++
- 23 files changed, 3650 insertions(+), 2 deletions(-)
+ arch/um/os-Darwin/util.c         | 135 +++++++
+ 23 files changed, 3659 insertions(+), 2 deletions(-)
  create mode 100644 arch/um/os-Darwin/Makefile
  create mode 100644 arch/um/os-Darwin/bridge.h
  create mode 100644 arch/um/os-Darwin/compat.c
@@ -3730,10 +3730,10 @@ index 0000000000000000000000000000000000000000..ed24b37fa7f66dc49d6245b2d1fad57e
 +);
 diff --git a/arch/um/os-Darwin/util.c b/arch/um/os-Darwin/util.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..d988ee7fb619b8c9c67315536db8eeb7378a56f7
+index 0000000000000000000000000000000000000000..e12528a48f14503a7e36dbaf112ba9c15f0c45b1
 --- /dev/null
 +++ b/arch/um/os-Darwin/util.c
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,135 @@
 +// SPDX-License-Identifier: GPL-2.0
 +
 +#include <errno.h>
@@ -3765,14 +3765,23 @@ index 0000000000000000000000000000000000000000..d988ee7fb619b8c9c67315536db8eeb7
 +	return (unsigned long)pthread_get_stackaddr_np(pthread_self());
 +}
 +
++/*
++ * A terminal applies output processing as each byte is written, so the mode
++ * changes at once.  Draining first would hold the open of a line until its
++ * host reader had read everything queued, and a signal without SA_RESTART,
++ * such as an IPI, would end that wait with EINTR and fail the open.
++ */
 +int raw(int fd)
 +{
 +	struct termios terminal;
++	int err;
 +
-+	if (tcgetattr(fd, &terminal) < 0)
++	CATCH_EINTR(err = tcgetattr(fd, &terminal));
++	if (err < 0)
 +		return -errno;
 +	cfmakeraw(&terminal);
-+	if (tcsetattr(fd, TCSADRAIN, &terminal) < 0)
++	CATCH_EINTR(err = tcsetattr(fd, TCSANOW, &terminal));
++	if (err < 0)
 +		return -errno;
 +	return 0;
 +}
