@@ -153,6 +153,10 @@ protocol RuntimeDriver: AnyObject {
     /// a guest that sleeps. The caller keeps the last figures then. It may
     /// wait up to half a second, and never on the main thread.
     func readGuestMemory() async -> GuestMemorySample?
+    #if !APP_STORE
+    /// Whether a debugger that serves the JIT is attached to Andarium now.
+    func jitDebuggerAttached() -> Bool
+    #endif
 }
 
 /// What a screen needs from its launch arguments to open a state directly.

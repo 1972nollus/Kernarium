@@ -15,6 +15,8 @@
 #include <mutex>
 #include <pthread.h>
 #include <signal.h>
+#include <sys/proc.h>
+#include <sys/sysctl.h>
 #include <unistd.h>
 
 namespace {
@@ -238,7 +240,8 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
         api->read_guest_memory == nullptr ||
         api->cancel_touch == nullptr ||
         api->quiesce_resident == nullptr ||
-        api->read_graphics_memory == nullptr) {
+        api->read_graphics_memory == nullptr ||
+        api->prepare_jit == nullptr) {
         std::fputs("Kernarium: runtime API validation failed\n", stderr);
         return false;
     }
@@ -697,6 +700,29 @@ extern "C" int kernarium_runtime_loader_automation_hold_delay_ms(void)
     return api() != nullptr && automationHoldDelayMs != nullptr
         ? automationHoldDelayMs()
         : 0;
+}
+#endif
+
+#ifndef UML_APP_STORE_APPLICATION
+extern "C" int kernarium_runtime_loader_prepare_jit(
+    int enable,
+    uint32_t guestMemoryMiB,
+    uint32_t guestProcessorCount)
+{
+    const kernarium_runtime_api* runtime = api();
+    return runtime == nullptr
+        ? KERNARIUM_RUNTIME_JIT_UNSUPPORTED
+        : runtime->prepare_jit(enable, guestMemoryMiB, guestProcessorCount);
+}
+
+extern "C" int kernarium_runtime_loader_debugger_attached(void)
+{
+    struct kinfo_proc information {};
+    std::size_t length = sizeof(information);
+    int name[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()};
+    if (sysctl(name, 4, &information, &length, nullptr, 0) != 0)
+        return 0;
+    return (information.kp_proc.p_flag & P_TRACED) != 0 ? 1 : 0;
 }
 #endif
 

@@ -160,8 +160,9 @@ none of the settings below.
   `TMPDIR` stays). It also carries none of the debugging support, so a shipped
   application cannot capture its screen, inject input, profile itself or log
   its memory: the frame mirror, console input (the console output relay stays),
-  the guest sampler, the footprint log, the virtual Jetsam, the activity logs
-  and the frame statistics reports. Configuring it with
+  the guest sampler, the footprint log, the virtual Jetsam, the activity logs,
+  the frame statistics reports and the JIT (no engine, no executable-memory
+  owner; `prepare_jit` answers unsupported and `use_jit` is ignored). Configuring it with
   `UML_GADGET_CACHE_CENSUS` or `UML_GADGET_EXECUTION_HISTOGRAM` fails. The
   runtime API table keeps its layout and version, so `set_frame_sink` and
   `send_console_input` answer `-ENOTSUP`; touch and key input, adb over vsock,
