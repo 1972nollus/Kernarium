@@ -123,6 +123,11 @@ What the guest is told must be what the host can do.
   their rows to 16 bytes, the pitch Metal reads a texture over a buffer at, and
   a padded buffer is locked by one `VIRGL_CCMD_TRANSFER3D`. Emulated YUV
   layouts are the layouts Android defines.
+- **ETC and ASTC.** The renderer offers ETC1, ETC2, EAC and ASTC LDR as host
+  formats, which KosmicKrisp samples natively, so a guest texture in one of
+  them keeps its compressed size rather than being decoded to RGBA8 by guest
+  Mesa. The host's desktop context copies them by OpenGL ES's copy classes,
+  as the guest's `glCopyImageSubData` expects.
 - **Compressed formats on iOS.** An Apple GPU on iOS aborts the process when
   given a BC, RGTC, or BPTC texture, so KosmicKrisp asks
   `MTLDevice.supportsBCTextureCompression` and reports those formats, and

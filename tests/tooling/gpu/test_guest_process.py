@@ -5,6 +5,8 @@ from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -45,6 +47,20 @@ def wait_for(path: Path) -> str:
             return value
         time.sleep(0.01)
     raise TimeoutError(f"test-owned process did not publish {path.name}")
+
+
+def wait_for_exit(process_id: int) -> None:
+    """Wait for a process to exit without reaping it."""
+    queue = select.kqueue()
+    try:
+        queue.control([select.kevent(process_id, select.KQ_FILTER_PROC,
+                                     select.KQ_EV_ADD, select.KQ_NOTE_EXIT)], 0)
+        if not queue.control(None, 1, WAIT_SECONDS):
+            raise TimeoutError(f"test-owned process {process_id} did not exit")
+    except ProcessLookupError:
+        pass  # it has exited already
+    finally:
+        queue.close()
 
 
 class GuestProcessTests(unittest.TestCase):
@@ -307,6 +323,40 @@ class GuestProcessTests(unittest.TestCase):
                                 root / "console.log", 0.05, False, root / "serial.sock")
             self.assertIsNotNone(spawned[0].poll())
             self.assertFalse((root / "serial.sock").exists())
+
+    def test_a_late_console_read_keeps_the_guest_verdict(self) -> None:
+        # The runner reads nothing until the emulator has exited, as one on a
+        # loaded host can, and the emulator's console is non-blocking, as the
+        # guest kernel's console makes it.
+        emulator = (
+            "import fcntl, os, sys\n"
+            "flags = fcntl.fcntl(1, fcntl.F_GETFL)\n"
+            "fcntl.fcntl(1, fcntl.F_SETFL, flags | os.O_NONBLOCK)\n"
+            "os.write(1, sys.argv[1].encode() + b'\\n')\n"
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            spawned = []
+            real_spawn = subprocess.Popen
+            real_select = select.select
+
+            def spawn(*args, **kwargs):
+                process = real_spawn(*args, **kwargs)
+                spawned.append(process)
+                return process
+
+            def select_after_exit(*args, **kwargs):
+                wait_for_exit(spawned[0].pid)
+                return real_select(*args, **kwargs)
+
+            with mock.patch.object(owned.subprocess, "Popen", side_effect=spawn), mock.patch.object(
+                guest.select, "select", side_effect=select_after_exit
+            ), contextlib.redirect_stdout(io.TextIOWrapper(io.BytesIO())):
+                result = guest.run_guest(
+                    [sys.executable, "-I", "-S", "-c", emulator, guest.PASS_MARKER],
+                    root / "console.log", WAIT_SECONDS, False)
+            self.assertEqual(result, (0, True, False))
+            self.assertIn(guest.PASS_MARKER, (root / "console.log").read_text())
 
     def test_a_killed_emulator_leaves_no_run_directories(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
