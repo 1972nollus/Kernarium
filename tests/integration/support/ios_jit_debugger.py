@@ -150,8 +150,6 @@ def _packet(interpreter: object, text: str) -> tuple[str, bool]:
 def serve(debugger, command, _context, _result, _internal) -> None:  # noqa: ANN001
     """``jit_serve [--log FILE] [--timeout SECONDS]``: continue the attached
     process and serve its requests until it detaches, exits or the time is up."""
-    import lldb
-
     options = argparse.ArgumentParser(prog="jit_serve")
     options.add_argument("--log", type=pathlib.Path)
     options.add_argument("--timeout", type=float, default=900)
@@ -165,9 +163,21 @@ def serve(debugger, command, _context, _result, _internal) -> None:  # noqa: ANN
             log_file.write(line + "\n")
             log_file.flush()
 
+    try:
+        _serve(debugger, parsed.timeout, log)
+    except Exception:  # noqa: BLE001 - lldb would swallow it silently
+        import traceback
+
+        log("the debugger script failed:\n" + traceback.format_exc())
+        raise
+
+
+def _serve(debugger, timeout: float, log: Callable[[str], None]) -> None:  # noqa: ANN001
+    import lldb
+
     interpreter = debugger.GetCommandInterpreter()
     process = debugger.GetSelectedTarget().GetProcess()
-    deadline = time.monotonic() + parsed.timeout
+    deadline = time.monotonic() + timeout
     while (process.GetState() not in (lldb.eStateStopped, lldb.eStateExited,
                                       lldb.eStateDetached)
            and time.monotonic() < deadline):
