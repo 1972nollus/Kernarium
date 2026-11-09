@@ -196,8 +196,8 @@ struct FolderPage: View {
     }
 }
 
-/// A row of a folder. The tile is what selection shows on: it turns into a
-/// check, on a file and on a folder alike. A tap on a folder's tile selects
+/// A row of a folder. The icon is what selection shows on: it turns into a
+/// check, on a file and on a folder alike. A tap on a folder's icon selects
 /// it, since a tap anywhere else goes into it.
 struct FileRow: View {
     static let tileSize: CGFloat = 32
@@ -267,25 +267,16 @@ struct FileRow: View {
 
     @ViewBuilder private var tileControl: some View {
         if file.isFolder {
-            Button(action: toggle) { tile }
+            Button(action: toggle) { glyph }
                 .buttonStyle(.borderless)
                 .accessibilityLabel(selected ? "Deselect \(file.name)" : "Select \(file.name)")
         } else {
-            tile
+            glyph
         }
     }
 
-    private var tile: some View {
-        let filled = selected || file.isFolder
-        return Image(systemName: selected ? "checkmark" : FileKind.symbol(for: file))
-            .font(.system(size: 14, weight: .semibold))
-            .contentTransition(.symbolEffect(.replace))
-            .foregroundStyle(filled ? Color.white : Color(.secondaryLabel))
-            .frame(width: Self.tileSize, height: Self.tileSize)
-            .background {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(filled ? AnyShapeStyle(Color.accentColor.gradient) : AnyShapeStyle(Color(.tertiarySystemFill)))
-            }
+    private var glyph: some View {
+        FileGlyph(file: file, size: Self.tileSize, selected: selected)
     }
 
     /// A row the size of a real one, for the folder that has not answered.
@@ -331,10 +322,7 @@ struct SelectionReview: View {
 
     private func row(_ file: GuestFile) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: FileKind.symbol(for: file))
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Color(.secondaryLabel))
-                .frame(width: 28, height: 28)
+            FileGlyph(file: file, size: 28)
             VStack(alignment: .leading, spacing: 1) {
                 Text(file.name)
                     .font(.subheadline)

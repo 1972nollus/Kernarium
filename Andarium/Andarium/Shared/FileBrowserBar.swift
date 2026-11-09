@@ -384,10 +384,7 @@ struct TransferCapsule: View {
 
     private func row(_ item: FileTransfer.Item) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: item.isFolder ? "folder" : FileKind.symbol(forName: item.name))
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Color(.secondaryLabel))
-                .frame(width: 24, height: 24)
+            FileGlyph(name: item.name, isFolder: item.isFolder, size: 26)
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.name)
                     .font(.subheadline)

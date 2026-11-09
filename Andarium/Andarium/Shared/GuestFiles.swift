@@ -75,39 +75,3 @@ protocol GuestFilesBackend: AnyObject {
     /// Simulator has no documents to pick. Nil on a device.
     func importPickerStandIn(deliver: @escaping ([FilePick]) -> Void) -> AnyView?
 }
-
-/// A file's symbol, from its name: the browser pulls nothing to show a list,
-/// so there are no thumbnails.
-nonisolated enum FileKind {
-    private static let symbols: [(symbol: String, extensions: Set<String>)] = [
-        ("photo", ["jpg", "jpeg", "png", "heic", "heif", "webp", "gif", "bmp", "dng", "avif"]),
-        ("film", ["mp4", "mov", "mkv", "webm", "3gp", "avi", "m4v"]),
-        ("waveform", ["mp3", "m4a", "m4b", "flac", "ogg", "opus", "wav", "aac", "amr"]),
-        ("doc.richtext", ["pdf", "epub"]),
-        ("doc.text", ["txt", "md", "csv", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "rtf", "json", "xml", "log"]),
-        ("doc.zipper", ["zip", "7z", "rar", "tar", "gz", "xz", "bz2", "zst"]),
-        ("app.badge", ["apk", "apks", "xapk"]),
-    ]
-
-    /// The folders every Android has, by their name at the top of internal
-    /// storage, and the plain folder for the rest.
-    private static let folders: [String: String] = [
-        "Alarms": "alarm.fill", "Android": "gearshape.fill", "Audiobooks": "headphones",
-        "DCIM": "camera.fill", "Documents": "doc.text.fill", "Download": "arrow.down",
-        "Movies": "film.fill", "Music": "music.note", "Notifications": "bell.fill",
-        "Pictures": "photo.fill", "Podcasts": "mic.fill", "Recordings": "waveform",
-        "Ringtones": "phone.fill",
-    ]
-
-    static func symbol(for file: GuestFile) -> String {
-        if file.isFolder {
-            return GuestPath.parent(of: file.path) == GuestPath.root ? folders[file.name] ?? "folder.fill" : "folder.fill"
-        }
-        return symbol(forName: file.name)
-    }
-
-    static func symbol(forName name: String) -> String {
-        let suffix = (name as NSString).pathExtension.lowercased()
-        return symbols.first { $0.extensions.contains(suffix) }?.symbol ?? "doc"
-    }
-}
