@@ -199,6 +199,9 @@ control out.
   the estimate at 1 GiB or more, the sheet does not warn. The sheet also shows
   the loader's estimate of VRAM for the chosen memory and vCPUs and says it is
   separate from the guest's RAM.
+  The memory ruler follows the range, which on a Mac with much RAM has about
+  a thousand positions: it labels only the round numbers of gibibytes that do
+  not touch and draws the ticks that have room (`RulerThinning`).
 - **Storage.** A guest's files live in `Library/Guest/` of the application's
   container behind `GuestStorage`. The system disk is Android's, read-only, and
   stays in the release directory; the runtime creates the data disk `data.img`

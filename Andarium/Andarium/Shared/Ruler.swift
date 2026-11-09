@@ -17,6 +17,12 @@ struct Ruler: View {
     var majorOffset: Int = 0
     /// Draw a short tick only every this many positions.
     var minorEvery: Int = 1
+    /// The whole number a long tick stands for (the gibibytes of a memory
+    /// ruler), where the ruler may have more positions than room. Its labels
+    /// then thin out to the round numbers (multiples of 1, 2, 5, 10 ...) that
+    /// do not touch, and so do its ticks (`RulerThinning`). Without it every
+    /// long tick is labelled.
+    var majorNumber: ((Int) -> Int)?
     let label: (Int) -> String
     /// What VoiceOver reads for a position, where its label leaves out a unit.
     var valueText: ((Int) -> String)?
@@ -37,6 +43,8 @@ struct Ruler: View {
         GeometryReader { geo in
             let step = (geo.size.width - inset * 2) / CGFloat(max(count - 1, 1))
             let x = { (i: Int) -> CGFloat in inset + CGFloat(i) * step }
+            let thinning = makeThinning(positionWidth: step)
+            let shortEvery: Int? = if let thinning { thinning.shortEvery } else { minorEvery }
             ZStack(alignment: .topLeading) {
                 Capsule()
                     .fill(Color.primary.opacity(0.06))
@@ -71,16 +79,21 @@ struct Ruler: View {
                 }
                 ForEach(0..<count, id: \.self) { i in
                     let major = (i - majorOffset) % majorEvery == 0
+                    // A long tick is drawn and labelled unless the ruler is
+                    // crowded and its number is not one of the round ones.
+                    let long = major && (thinning.map { $0.drawsLong(number(i)) } ?? true)
+                    let labelled = major && (thinning.map { $0.labels(number(i)) } ?? true)
+                    let short = !major && (shortEvery.map { (i - majorOffset) % $0 == 0 } ?? false)
                     let warn = warnFrom.map { i >= $0 } ?? false
                     let severe = severeFrom.map { i >= $0 } ?? false
                     let below = i < floor
-                    if major || (i - majorOffset) % minorEvery == 0 {
+                    if long || short {
                         Capsule()
-                            .fill(tickColor(major: major, warn: warn, severe: severe, below: below))
-                            .frame(width: 2, height: major ? 14 : 8)
+                            .fill(tickColor(major: long, warn: warn, severe: severe, below: below))
+                            .frame(width: 2, height: long ? 14 : 8)
                             .position(x: x(i), y: track / 2)
                     }
-                    if major {
+                    if labelled {
                         Text(label(i))
                             .font(.system(size: 12, weight: i == index ? .bold : .medium, design: .rounded).monospacedDigit())
                             .foregroundStyle(labelStyle(selected: i == index, warn: warn, severe: severe, below: below))
@@ -129,6 +142,21 @@ struct Ruler: View {
             }
         }
     }
+
+    /// How much of a crowded ruler is drawn; nil where the ruler states no
+    /// numbers to thin by, and then all of it is. A label is about 7.5 points
+    /// to a character.
+    private func makeThinning(positionWidth: CGFloat) -> RulerThinning? {
+        guard majorNumber != nil, count > 1 else { return nil }
+        let longest = stride(from: max(majorOffset, 0), to: count, by: majorEvery)
+            .map { label($0).count }.max() ?? 1
+        return RulerThinning(
+            positionWidth: Double(positionWidth), longEvery: majorEvery, shortEvery: minorEvery,
+            labelWidth: Double(longest) * 7.5
+        )
+    }
+
+    private func number(_ i: Int) -> Int { majorNumber?(i) ?? 0 }
 
     private func set(at x: CGFloat, step: CGFloat) {
         let raw = Int(((x - inset) / step).rounded())
@@ -237,6 +265,7 @@ struct SystemControls: View {
                 majorEvery: 1024 / Limits.memoryStepMiB,
                 majorOffset: steps,
                 minorEvery: 256 / Limits.memoryStepMiB,
+                majorNumber: { stops[$0] / 1024 },
                 label: { Formats.gibibytes(mib: stops[$0]) },
                 valueText: { Formats.size(mib: stops[$0]) },
                 warnFrom: stops.firstIndex { $0 > graphicsLineMiB },
