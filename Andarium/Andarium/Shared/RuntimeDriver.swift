@@ -119,6 +119,9 @@ protocol RuntimeDriver: AnyObject {
     /// Whether the guest's USB debugging setting is on; nil when it cannot be
     /// read now.
     func usbDebugging() async -> Bool?
+    /// Whether Android has mounted its internal storage (`InternalStorage`);
+    /// nil when it cannot be read now. Android's boot ends before it does.
+    func storageReady() async -> Bool?
     /// Opens the listener of ADB over the network on the device's network
     /// addresses. Throws when it cannot (`AdbError.io(EADDRINUSE)` for a
     /// port in use).
@@ -153,6 +156,10 @@ protocol RuntimeDriver: AnyObject {
     /// a guest that sleeps. The caller keeps the last figures then. It may
     /// wait up to half a second, and never on the main thread.
     func readGuestMemory() async -> GuestMemorySample?
+    #if !APP_STORE
+    /// Whether a debugger that serves the JIT is attached to Andarium now.
+    func jitDebuggerAttached() -> Bool
+    #endif
 }
 
 /// What a screen needs from its launch arguments to open a state directly.

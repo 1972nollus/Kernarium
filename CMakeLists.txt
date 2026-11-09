@@ -111,6 +111,22 @@ if(UML_APP_STORE_RUNTIME)
     add_compile_definitions(UML_APP_STORE_RUNTIME)
 endif()
 
+# JIT. Every product but the App Store runtime builds the arm64 JIT engine. An
+# iOS device reaches JIT memory only through a region a debugger prepares
+# (darwin/cpu/jit_memory), which the App Store runtime refuses: it carries no
+# JIT code, no executable-memory owner and no debugger protocol.
+if(UML_APP_STORE_RUNTIME)
+    set(UML_ARM64_JIT_ENGINE OFF)
+    set(UML_IOS_DEBUGGER_JIT OFF)
+else()
+    set(UML_ARM64_JIT_ENGINE ON)
+    if(UML_APPLE_PLATFORM STREQUAL "ios")
+        set(UML_IOS_DEBUGGER_JIT ON)
+    else()
+        set(UML_IOS_DEBUGGER_JIT OFF)
+    endif()
+endif()
+
 # darwin/platform compiles Objective-C++ in every configuration. Without the
 # language its .mm sources fall to the C++ rule, which drops their
 # OBJCXX-only options, among them the -fobjc-arc set above.

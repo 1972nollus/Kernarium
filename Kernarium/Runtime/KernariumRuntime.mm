@@ -43,6 +43,7 @@
 #include "block/ubd_path.hpp"
 #include "gpu_budget_plan.hpp"
 #include "options.hpp"
+#include "runtime/execution_engine.hpp"
 #include "uml/emulator.h"
 #include "uml_slirp_net.h"
 
@@ -1073,6 +1074,10 @@ struct GuestRequest final {
     std::string timeZone;
     /* Where the run records how the session ended, empty for nowhere. */
     std::string sessionRecordPath;
+    /* The JIT cache budget of a run on the JIT engine, in bytes, or zero for
+     * the gadget engine. Only a request that asked for the JIT, on a runtime
+     * that has one and found its executable memory ready, sets it. */
+    std::size_t jitCacheBudget {};
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
     /* The guest's two disks: the release's system disk and the instance's
      * data disk. */
@@ -1332,6 +1337,16 @@ private:
         if (!request_.sessionRecordPath.empty())
             arguments.emplace_back(
                 "--session-record=" + request_.sessionRecordPath);
+#ifndef UML_APP_STORE_RUNTIME
+        if (request_.jitCacheBudget != 0) {
+            /* The later engine argument wins, and the budget is the one the
+             * executable memory was prepared for. */
+            arguments.emplace_back("--execution-engine=jit");
+            arguments.emplace_back(
+                "--jit-cache-budget=" +
+                std::to_string(request_.jitCacheBudget));
+        }
+#endif
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
         /* Android tags heap pointers, so the guest must run with the top byte
          * ignored exactly as it does on the macOS Android product. */
@@ -1557,6 +1572,47 @@ constexpr std::size_t bootSizeBeforeTimeZone =
 constexpr std::size_t bootSizeBeforeSessionRecord =
     offsetof(kernarium_runtime_boot, session_record_path);
 
+/* What a request states before the JIT choice was added to it: everything but
+ * use_jit, the session record included. */
+constexpr std::size_t bootSizeBeforeJit =
+    offsetof(kernarium_runtime_boot, use_jit);
+
+#ifndef UML_APP_STORE_RUNTIME
+/* The JIT cache budget a boot that asks for the JIT runs with, or zero when it
+ * runs on gadgets. Preparing again is cheap when an earlier prepare_jit
+ * succeeded, and it is what prepares the memory for a caller that never called
+ * prepare_jit. */
+std::size_t readyJitCacheBudget(
+    std::uint32_t guestMemoryMiB, std::uint32_t guestProcessorCount)
+{
+    const std::size_t memory =
+        static_cast<std::size_t>(guestMemoryMiB) * mebibyte;
+    const char* reason = nullptr;
+    switch (uml::runtime::prepare_jit_memory(
+        memory, guestProcessorCount,
+        uml::emulator::default_jit_executor_cache_budget)) {
+    case uml::runtime::JitMemoryStatus::ready:
+        return uml::runtime::jit_cache_budget_for(
+            memory, guestProcessorCount);
+    case uml::runtime::JitMemoryStatus::unsupported:
+        reason = "this runtime cannot make executable memory";
+        break;
+    case uml::runtime::JitMemoryStatus::no_debugger:
+        reason = "no debugger is attached";
+        break;
+    case uml::runtime::JitMemoryStatus::failed:
+        reason = "the executable memory could not be prepared";
+        break;
+    case uml::runtime::JitMemoryStatus::other_settings:
+        reason = "the executable memory was prepared for other settings";
+        break;
+    }
+    std::printf(
+        "Kernarium: running on gadgets, not the JIT: %s\n", reason);
+    return 0;
+}
+#endif
+
 int runtimeRun(
     KernariumMetalView view,
     const kernarium_runtime_boot* boot)
@@ -1637,7 +1693,7 @@ int runtimeRun(
         GuestRequest request;
         request.adbPublicKey = std::move(adbPublicKey);
         request.timeZone = std::move(timeZone);
-        if (boot->struct_size >= sizeof(kernarium_runtime_boot) &&
+        if (boot->struct_size >= bootSizeBeforeJit &&
             boot->session_record_path != nullptr) {
             const std::size_t length =
                 ::strnlen(boot->session_record_path, PATH_MAX);
@@ -1652,6 +1708,13 @@ int runtimeRun(
         request.dotsPerInch = dotsPerInch;
         request.guestMemoryMiB = guestMemoryMiB;
         request.guestProcessorCount = guestProcessorCount;
+#ifndef UML_APP_STORE_RUNTIME
+        if (boot->struct_size >=
+                bootSizeBeforeJit + sizeof(boot->use_jit) &&
+            boot->use_jit != 0)
+            request.jitCacheBudget =
+                readyJitCacheBudget(guestMemoryMiB, guestProcessorCount);
+#endif
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
         if (boot->android_data_disk_path == nullptr ||
             boot->android_release_path == nullptr) {
@@ -2324,6 +2387,42 @@ void runtimeSetRestartCallback(
     restartContext = context;
 }
 
+int runtimePrepareJit(
+    int enable,
+    std::uint32_t guestMemoryMiB,
+    std::uint32_t guestProcessorCount)
+{
+#ifdef UML_APP_STORE_RUNTIME
+    (void)enable;
+    (void)guestMemoryMiB;
+    (void)guestProcessorCount;
+    return KERNARIUM_RUNTIME_JIT_UNSUPPORTED;
+#else
+    if (enable == 0) {
+        uml::runtime::release_jit_debugger();
+        return KERNARIUM_RUNTIME_JIT_DISABLED;
+    }
+    if (guestMemoryMiB == 0 || guestProcessorCount == 0)
+        return KERNARIUM_RUNTIME_JIT_FAILED;
+    switch (uml::runtime::prepare_jit_memory(
+        static_cast<std::size_t>(guestMemoryMiB) * mebibyte,
+        guestProcessorCount,
+        uml::emulator::default_jit_executor_cache_budget)) {
+    case uml::runtime::JitMemoryStatus::ready:
+        return KERNARIUM_RUNTIME_JIT_READY;
+    case uml::runtime::JitMemoryStatus::unsupported:
+        return KERNARIUM_RUNTIME_JIT_UNSUPPORTED;
+    case uml::runtime::JitMemoryStatus::no_debugger:
+        return KERNARIUM_RUNTIME_JIT_NO_DEBUGGER;
+    case uml::runtime::JitMemoryStatus::other_settings:
+        return KERNARIUM_RUNTIME_JIT_OTHER_SETTINGS;
+    case uml::runtime::JitMemoryStatus::failed:
+        break;
+    }
+    return KERNARIUM_RUNTIME_JIT_FAILED;
+#endif
+}
+
 const kernarium_runtime_api runtimeApi {
     .abi_version = KERNARIUM_RUNTIME_API_VERSION,
     .struct_size = sizeof(kernarium_runtime_api),
@@ -2352,6 +2451,7 @@ const kernarium_runtime_api runtimeApi {
     .cancel_touch = runtimeCancelTouch,
     .quiesce_resident = runtimeQuiesceResident,
     .read_graphics_memory = runtimeReadGraphicsMemory,
+    .prepare_jit = runtimePrepareJit,
 };
 
 } // namespace

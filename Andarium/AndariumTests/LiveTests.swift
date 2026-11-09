@@ -127,8 +127,12 @@ struct HostDeviceTests {
         #expect(bounds.allSatisfy { Limits.runtimeMemoryRangeMiB.contains($0) && $0 <= ceiling })
         #expect(bounds == bounds.sorted(by: >))
         #expect(ceiling >= Limits.defaultMemoryRangeMiB.upperBound)
+        // A Mac that sets no limit on the application (the memory limit reads
+        // as zero); a Mac that does, as this one's hosted runs can, is bounded
+        // by the runtime's formula for that limit like a device.
+        let unlimitedMac = ProcessInfo.processInfo.isiOSAppOnMac && MemoryLimit.bytes() == 0
         if ProcessInfo.processInfo.isiOSAppOnMac {
-            #expect(bounds.allSatisfy { $0 == ceiling })
+            if unlimitedMac { #expect(bounds.allSatisfy { $0 == ceiling }) }
             // The Mac's window is a macOS one: the host's RAM, taken down to the steps, is the ceiling.
             let physical = Int(ProcessInfo.processInfo.physicalMemory >> 20)
             #expect(ceiling <= physical)
@@ -167,7 +171,7 @@ struct HostDeviceTests {
             #expect(host.memory.isAboveSafe(host.memory.maximumMiB(vCPUs: count), vCPUs: count)
                 == (host.memory.maximumMiB(vCPUs: count) > host.memory.safeMemoryMiB(vCPUs: count)))
         }
-        if ProcessInfo.processInfo.isiOSAppOnMac {
+        if unlimitedMac {
             // A Mac sets no limit: a new guest gets the default's top, the
             // whole range is on offer, and nothing is likely to end the
             // application.

@@ -187,6 +187,30 @@ JIT memory from a window near the host image, because generated code calls into
 it and a far buffer made x87-heavy FEXCore code about a third slower; memory
 served again may hold its old bytes.
 
+An iOS device has no `MAP_JIT` for a process that no debugger launched, so the
+owner makes executable memory there from one region that a debugger the user
+attached blesses once per process (`prepare_debugger_region`). The owner maps
+the region read-execute below 1 TiB near the image, makes a writable alias of
+it, and executes `brk #0xf00d` with `x16` 1, `x0` the address and `x1` the
+length; the debugger writes one byte into each 16 KiB page of it, and a second
+request (`x16` 0) makes it detach. The pages stay executable with no debugger,
+the owner proves them by running a stub in the first and the last granule under
+a fault guard, and wires the region through the alias. It serves allocations
+from the region in 16 KiB granules; the JIT arena writes through
+`writable_alias` and publishes the instruction cache at the executable address.
+The region is sized from the process's JIT cache budget, which is the gadget
+cache's term of the guest memory budget (executors times the arena, the tracked
+store and the single-instruction arena), so the GPU budget and the memory limit
+do not move; a process prepares it once, for the guest memory and vCPU count of
+its first run. Only the development configurations compile it
+(`UML_IOS_DEBUGGER_JIT`): the App Store runtime has no JIT engine, no owner and
+no entry, Andarium's JIT row and the loader's preparation entries are compiled
+out of its application, and `check-app-store-bundle.py` refuses the symbols,
+text and the `brk` instruction. A start that cannot have the JIT runs on
+gadgets and says why; it never fails. Andarium asks for the preparation through
+runtime API 30 (`prepare_jit`, `use_jit`), with StikDebug as the debugger and
+`tests/integration/support/ios_jit_debugger.py` as the harness's.
+
 Every product that embeds a kernel carries its ELF as a host-page-aligned
 Mach-O `__TEXT,__uml_elf` section, which the emulator runs in place: the loader
 aliases the immutable executable pages, copies only data and BSS, and rejects
