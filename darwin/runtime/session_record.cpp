@@ -10,6 +10,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <mach/mach.h>
+#include <os/lock.h>
 #include <pthread.h>
 #include <signal.h>
 #include <string>
@@ -52,8 +53,36 @@ char tail_text[output_size];
 /* The record's first bytes are a fixed slot that only the checkpoints write
  * and the rest is the session's state that only its begin and its end write,
  * so neither ever overwrites the other's bytes, whichever finishes last. */
-constexpr std::size_t memory_slot_size = 256;
+constexpr std::size_t memory_slot_size = session_memory_slot_bytes;
 std::atomic<bool> checkpoint_thread_started{false};
+
+std::atomic<MemoryTermsReader> terms_reader{nullptr};
+
+/* One checkpoint's figures in MiB, as the history keeps them. */
+struct HistoryEntry final {
+	std::int64_t seconds;
+	std::uint64_t footprint;
+	std::uint64_t available;
+	std::uint64_t guest;
+	std::uint64_t gpu;
+	std::uint64_t graphics;
+	std::uint64_t cache;
+	std::uint64_t heaps;
+	std::uint64_t malloc;
+};
+
+/* Under history_lock: the checkpoints of the session that began last. The
+ * thread is the only writer but for tests, which call the checkpoint
+ * directly. */
+os_unfair_lock history_lock = OS_UNFAIR_LOCK_INIT;
+HistoryEntry recent[memory_history_recent];
+HistoryEntry older[memory_history_older];
+std::uint64_t checkpoints_taken{};
+std::size_t older_kept{};
+/* The highest footprint a checkpoint read, and the terms beside it. */
+std::uint64_t peak_footprint{};
+std::int64_t peak_at{};
+MemoryTerms peak_terms{};
 
 bool kept(int descriptor) noexcept
 {
@@ -134,28 +163,138 @@ std::int64_t now() noexcept
 	return static_cast<std::int64_t>(time.tv_sec);
 }
 
+constexpr std::uint64_t mebibytes(std::uint64_t bytes) noexcept
+{
+	return bytes >> 20;
+}
+
+Text &history_line(Text &text, const HistoryEntry &entry) noexcept
+{
+	return text.text("h ").number(entry.seconds)
+		.text(" ").number(static_cast<std::int64_t>(entry.footprint))
+		.text(" ").number(static_cast<std::int64_t>(entry.available))
+		.text(" ").number(static_cast<std::int64_t>(entry.guest))
+		.text(" ").number(static_cast<std::int64_t>(entry.gpu))
+		.text(" ").number(static_cast<std::int64_t>(entry.graphics))
+		.text(" ").number(static_cast<std::int64_t>(entry.cache))
+		.text(" ").number(static_cast<std::int64_t>(entry.heaps))
+		.text(" ").number(static_cast<std::int64_t>(entry.malloc))
+		.text("\n");
+}
+
+Text &mib(Text &text, std::string_view name, std::uint64_t bytes) noexcept
+{
+	return text.text(" ").text(name).text(" ")
+		.number(static_cast<std::int64_t>(mebibytes(bytes)));
+}
+
+/* "guest G gpu H/B [age S] ... compressed K", in MiB. */
+Text &terms_words(Text &text, const MemoryTerms &terms) noexcept
+{
+	mib(text, "guest", terms.guest_held);
+	if (terms.gpu_budget != 0) {
+		mib(text, "gpu", terms.gpu_held).text("/").number(
+			static_cast<std::int64_t>(mebibytes(terms.gpu_budget)));
+		if (terms.gpu_age_ms >= 0)
+			text.text(" age ").number(terms.gpu_age_ms / 1000);
+	}
+	mib(text, "graphics", terms.graphics);
+	mib(text, "media", terms.media);
+	mib(text, "cache", terms.cache);
+	mib(text, "heaps", terms.heaps);
+	mib(text, "malloc", terms.malloc_allocated).text("/").number(
+		static_cast<std::int64_t>(mebibytes(terms.malloc_in_use)));
+	mib(text, "internal", terms.internal);
+	return mib(text, "compressed", terms.compressed);
+}
+
+void forget_history() noexcept
+{
+	os_unfair_lock_lock(&history_lock);
+	checkpoints_taken = 0;
+	older_kept = 0;
+	peak_footprint = 0;
+	peak_at = 0;
+	peak_terms = {};
+	os_unfair_lock_unlock(&history_lock);
+}
+
 /* The memory slot: the format line, then the process's footprint, its peak
- * and what its limit leaves, padded to the slot's size. */
+ * and what its limit leaves, in bytes; with a terms reader, the terms now and
+ * at the highest checkpoint and the history, in MiB; padded to the slot's
+ * size. */
 void write_memory_slot(int descriptor) noexcept
 {
-	char slot[memory_slot_size];
+	static char slot[memory_slot_size];
+	os_unfair_lock_lock(&history_lock);
 	Text text{slot, sizeof(slot) - 1};
-	text.text("uml-session 2\nmemory at ").number(now());
+	const std::int64_t at = now();
+	text.text("uml-session 3\nmemory at ").number(at);
 	task_vm_info_data_t info{};
 	mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+	std::uint64_t footprint = 0;
+	std::uint64_t available = 0;
 	if (task_info(mach_task_self(), TASK_VM_INFO,
 		    reinterpret_cast<task_info_t>(&info), &count) == KERN_SUCCESS) {
+		footprint = info.phys_footprint;
 		text.text(" footprint ")
 			.number(static_cast<std::int64_t>(info.phys_footprint))
 			.text(" peak ")
 			.number(static_cast<std::int64_t>(
 				info.ledger_phys_footprint_peak));
 		/* Zero where the host sets no limit, as on a Mac. */
-		if (count >= TASK_VM_INFO_COUNT && info.limit_bytes_remaining != 0)
+		if (count >= TASK_VM_INFO_COUNT && info.limit_bytes_remaining != 0) {
+			available = info.limit_bytes_remaining;
 			text.text(" available ").number(static_cast<std::int64_t>(
 				info.limit_bytes_remaining));
+		}
 	}
 	text.text("\n");
+	if (const auto reader = terms_reader.load(std::memory_order_acquire)) {
+		const MemoryTerms terms = reader();
+		const HistoryEntry entry{
+			.seconds = at - session_started.load(std::memory_order_relaxed),
+			.footprint = mebibytes(footprint),
+			.available = mebibytes(available),
+			.guest = mebibytes(terms.guest_held),
+			.gpu = mebibytes(terms.gpu_held),
+			.graphics = mebibytes(terms.graphics),
+			.cache = mebibytes(terms.cache),
+			.heaps = mebibytes(terms.heaps),
+			.malloc = mebibytes(terms.malloc_allocated),
+		};
+		/* A recent entry about to be overwritten moves to the older
+		 * history when its turn in the stride comes. */
+		const std::uint64_t index = checkpoints_taken++;
+		if (index >= memory_history_recent) {
+			const std::uint64_t leaving = index - memory_history_recent;
+			if (leaving % memory_history_older_stride == 0)
+				older[older_kept++ % memory_history_older] =
+					recent[leaving % memory_history_recent];
+		}
+		recent[index % memory_history_recent] = entry;
+		if (footprint >= peak_footprint) {
+			peak_footprint = footprint;
+			peak_at = at;
+			peak_terms = terms;
+		}
+		terms_words(text.text("terms"), terms).text("\n");
+		text.text("peak-terms at ").number(peak_at).text(" footprint ")
+			.number(static_cast<std::int64_t>(mebibytes(peak_footprint)));
+		terms_words(text, peak_terms).text("\n");
+		text.text("history seconds footprint available guest gpu graphics "
+			"cache heaps malloc\n");
+		const std::size_t olders = std::min<std::size_t>(older_kept,
+			memory_history_older);
+		for (std::size_t n = 0; n < olders; ++n)
+			history_line(text, older[(older_kept - olders + n) %
+				memory_history_older]);
+		const std::uint64_t recents = std::min<std::uint64_t>(
+			checkpoints_taken, memory_history_recent);
+		for (std::uint64_t n = 0; n < recents; ++n)
+			history_line(text, recent[(checkpoints_taken - recents + n) %
+				memory_history_recent]);
+	}
 	const std::size_t used = text.size();
 	std::memset(slot + used, ' ', sizeof(slot) - 1 - used);
 	slot[sizeof(slot) - 1] = '\n';
@@ -163,6 +302,7 @@ void write_memory_slot(int descriptor) noexcept
 	do {
 		written = pwrite(descriptor, slot, sizeof(slot), 0);
 	} while (written < 0 && errno == EINTR);
+	os_unfair_lock_unlock(&history_lock);
 }
 
 void *checkpoint_memory(void *) noexcept
@@ -405,11 +545,17 @@ bool begin_session_record(std::string_view path,
 	if (!exit_hook_installed.exchange(true))
 		(void)atexit(record_process_exit);
 	session_started.store(now(), std::memory_order_relaxed);
+	forget_history();
 	write_memory_slot(descriptor);
 	session_open.store(true, std::memory_order_release);
 	write_record(SessionEnd::running, 0, {}, {});
 	start_checkpoints();
 	return true;
+}
+
+void set_memory_terms_reader(MemoryTermsReader reader) noexcept
+{
+	terms_reader.store(reader, std::memory_order_release);
 }
 
 void checkpoint_session_memory() noexcept

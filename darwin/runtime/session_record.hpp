@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "guest_statistics.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -34,13 +36,30 @@ namespace uml::runtime {
  * Every memory_checkpoint_interval_ms while a session runs, a thread of the
  * record's own writes the process's footprint, its peak and what its memory
  * limit leaves into a fixed slot at the start of the file, so a record that
- * is still "running" says how close to its limit the process was.
+ * is still "running" says how close to its limit the process was. With a
+ * terms reader (set_memory_terms_reader) the slot also holds the footprint's
+ * large terms (MemoryTerms) now and at the session's highest checkpoint, and
+ * their history: every checkpoint of the last memory_history_recent, and one
+ * in memory_history_older_stride before those, memory_history_older of them.
  *
  * Everything that runs at an end only formats into static storage and makes
  * system calls: it takes no lock and allocates nothing, so a panic, a signal
  * handler or a process whose other threads are suspended can run it.
  */
 inline constexpr unsigned memory_checkpoint_interval_ms = 2000;
+/* The bytes of the memory slot at the start of the file; the session's state
+ * follows it. */
+inline constexpr std::size_t session_memory_slot_bytes = 4096;
+inline constexpr unsigned memory_history_recent = 24;
+inline constexpr unsigned memory_history_older = 24;
+inline constexpr unsigned memory_history_older_stride = 15;
+
+/* What the checkpoint asks for the footprint's terms; any thread. */
+using MemoryTermsReader = MemoryTerms (*)() noexcept;
+
+/* The reader the memory checkpoints use from now on; null for none, which
+ * leaves the slot with the footprint alone. */
+void set_memory_terms_reader(MemoryTermsReader reader) noexcept;
 
 enum class SessionEnd : std::uint8_t {
 	running,
