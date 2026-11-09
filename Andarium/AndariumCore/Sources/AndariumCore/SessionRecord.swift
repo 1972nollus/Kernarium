@@ -38,6 +38,11 @@ public struct SessionRecord: Equatable, Sendable {
     /// The guest kernel's last output before a crash, oldest line first.
     public var kernelOutput: String?
     public var memory: Memory?
+    /// The footprint's large terms at the last checkpoint and at the
+    /// session's highest one, in MiB, as the runtime words them ("guest G gpu
+    /// H/B ..."); nil in a record that has none.
+    public var terms: String?
+    public var peakTerms: String?
 
     /// Reads a record's text; nil when it is not one.
     public init?(text: String) {
@@ -45,7 +50,8 @@ public struct SessionRecord: Equatable, Sendable {
         var fields: [String: String] = [:]
         let lines = parts[0].split(separator: "\n", omittingEmptySubsequences: true)
             .filter { !$0.allSatisfy { $0 == " " } }
-        guard let format = lines.first, format == "uml-session 1" || format == "uml-session 2" else { return nil }
+        guard let format = lines.first, ["uml-session 1", "uml-session 2", "uml-session 3"].contains(format)
+        else { return nil }
         for line in lines.dropFirst() {
             guard let space = line.firstIndex(of: " ") else { continue }
             fields[String(line[..<space])] = String(line[line.index(after: space)...])
@@ -60,6 +66,8 @@ public struct SessionRecord: Equatable, Sendable {
         message = fields["message"]
         kernelOutput = parts.count > 1 ? parts[1] : nil
         memory = fields["memory"].flatMap(Self.memory(from:))
+        terms = fields["terms"]
+        peakTerms = fields["peak-terms"]
     }
 
     /// "at T footprint F peak P [available A]".

@@ -2,11 +2,16 @@
 
 #include "guest_statistics.hpp"
 
+#include "cpu/gadget_cache_budget.hpp"
+#include "memory/domain_heap.hpp"
 #include "memory/guest_ram_commitment.hpp"
+#include "platform/gpu_memory_figures.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstring>
 #include <mach/mach.h>
+#include <malloc/malloc.h>
 #include <mutex>
 
 namespace uml::runtime {
@@ -88,6 +93,48 @@ GuestRamRetirementScope::GuestRamRetirementScope() noexcept
 GuestRamRetirementScope::~GuestRamRetirementScope()
 {
 	ram_retirement_mutex.unlock();
+}
+
+MemoryTerms memory_terms(bool read_malloc) noexcept
+{
+	MemoryTerms terms;
+	if (const auto ram = guest_ram_usage())
+		terms.guest_held = ram->held_bytes;
+	if (const auto gpu = ::uml::platform::publishedGpuMemory();
+	    gpu.budgetBytes != 0) {
+		terms.gpu_budget = gpu.budgetBytes;
+		terms.gpu_held = gpu.heldBytes;
+		if (gpu.heldAtMs != 0)
+			terms.gpu_age_ms = std::max<std::int64_t>(
+				::uml::platform::gpuMemoryClockMs() - gpu.heldAtMs, 0);
+	}
+	const auto &cache = ::uml::cpu::gadget_cache::ledger();
+	terms.cache = cache.open.load(std::memory_order_relaxed) +
+		cache.shedding.load(std::memory_order_relaxed);
+	terms.heaps = ::uml::memory::HeapRegion::instance().committed();
+	if (read_malloc) {
+		malloc_statistics_t zones{};
+		malloc_zone_statistics(nullptr, &zones);
+		terms.malloc_allocated = zones.size_allocated;
+		terms.malloc_in_use = zones.size_in_use;
+	}
+	task_vm_info_data_t info{};
+	mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+	if (task_info(mach_task_self(), TASK_VM_INFO,
+		    reinterpret_cast<task_info_t>(&info), &count) == KERN_SUCCESS) {
+		const auto positive = [](std::int64_t value) {
+			return static_cast<std::uint64_t>(std::max<std::int64_t>(value, 0));
+		};
+		terms.internal = info.internal;
+		terms.compressed = info.compressed;
+		if (count >= TASK_VM_INFO_REV3_COUNT) {
+			terms.graphics = positive(info.ledger_tag_graphics_footprint +
+				info.ledger_tag_graphics_footprint_compressed);
+			terms.media = positive(info.ledger_tag_media_footprint +
+				info.ledger_tag_media_footprint_compressed);
+		}
+	}
+	return terms;
 }
 
 } // namespace uml::runtime

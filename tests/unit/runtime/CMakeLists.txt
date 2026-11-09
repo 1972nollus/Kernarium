@@ -46,7 +46,8 @@ uml_add_unit_test(
 add_executable(uml_runtime_session_record_tests
     session_record_tests.cpp)
 target_link_libraries(uml_runtime_session_record_tests PRIVATE
-    UML::RuntimeSessionRecord)
+    UML::RuntimeSessionRecord
+    UML::RuntimeGuestStatistics)
 uml_add_unit_test(
     NAME runtime-session-record
     COMMAND uml_runtime_session_record_tests)

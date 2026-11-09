@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "guest_statistics.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -34,13 +36,54 @@ namespace uml::runtime {
  * Every memory_checkpoint_interval_ms while a session runs, a thread of the
  * record's own writes the process's footprint, its peak and what its memory
  * limit leaves into a fixed slot at the start of the file, so a record that
- * is still "running" says how close to its limit the process was.
+ * is still "running" says how close to its limit the process was. With a
+ * terms reader (set_memory_terms_reader) the slot also holds the footprint's
+ * large terms (MemoryTerms) now and at the session's highest checkpoint, and
+ * their history: every checkpoint of the last memory_history_recent, and one
+ * in memory_history_older_stride before those, memory_history_older of them.
+ * Reading malloc's term stalls every thread that allocates meanwhile, so a
+ * checkpoint asks for it only when memory_malloc_reading_due says so and
+ * otherwise repeats the last reading with its age. The other terms are read
+ * every time, and so is the footprint less them ("other"), which follows
+ * malloc and what no term names between readings.
  *
  * Everything that runs at an end only formats into static storage and makes
  * system calls: it takes no lock and allocates nothing, so a panic, a signal
  * handler or a process whose other threads are suspended can run it.
  */
 inline constexpr unsigned memory_checkpoint_interval_ms = 2000;
+/* The bytes of the memory slot at the start of the file; the session's state
+ * follows it. */
+inline constexpr std::size_t session_memory_slot_bytes = 4096;
+inline constexpr unsigned memory_history_recent = 24;
+inline constexpr unsigned memory_history_older = 24;
+inline constexpr unsigned memory_history_older_stride = 15;
+
+/* A checkpoint reads malloc's term at a session's first checkpoint and when
+ * the footprint passes the highest one a reading was taken at by
+ * memory_malloc_peak_step_bytes: readings gather where the footprint climbs,
+ * as at boot and while a game loads, a steady footprint takes none, and a
+ * footprint that climbs to the limit has a reading from at most one step
+ * below its top. */
+inline constexpr std::uint64_t memory_malloc_peak_step_bytes =
+	std::uint64_t{64} << 20;
+
+/* The rule above; `read_peak` is the highest footprint a reading was taken
+ * at. */
+[[nodiscard]] constexpr bool memory_malloc_reading_due(bool read_before,
+	std::uint64_t footprint, std::uint64_t read_peak) noexcept
+{
+	return !read_before ||
+		footprint >= read_peak + memory_malloc_peak_step_bytes;
+}
+
+/* What the checkpoint asks for the footprint's terms, malloc's included when
+ * `read_malloc`; any thread. */
+using MemoryTermsReader = MemoryTerms (*)(bool read_malloc) noexcept;
+
+/* The reader the memory checkpoints use from now on; null for none, which
+ * leaves the slot with the footprint alone. */
+void set_memory_terms_reader(MemoryTermsReader reader) noexcept;
 
 enum class SessionEnd : std::uint8_t {
 	running,
