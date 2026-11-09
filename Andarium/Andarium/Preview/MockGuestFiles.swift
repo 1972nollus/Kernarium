@@ -180,6 +180,13 @@ final class MockGuestFiles: GuestFilesBackend {
             route = folder("Android", "data")
         case "files-usb-off":
             model.session.usbDebugging = false
+        case "files-starting":
+            // Android's storage comes up a few seconds in, and the browser follows.
+            model.session.storageReady = false
+            Task {
+                try? await Task.sleep(for: .seconds(6))
+                model.session.storageReady = true
+            }
         case "files-select", "files-review":
             route = folder("DCIM", "Camera")
             let camera = route[2].path
@@ -265,7 +272,7 @@ final class MockGuestFiles: GuestFilesBackend {
         }
         browser.route = route
         model.sessionPreset = SessionPreset(
-            settings: true, settingsLarge: !["files-medium", "files-usb-off"].contains(screen)
+            settings: true, settingsLarge: !["files-medium", "files-usb-off", "files-starting"].contains(screen)
         )
         model.phase = .running(.normal)
     }

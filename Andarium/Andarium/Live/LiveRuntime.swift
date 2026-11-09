@@ -380,6 +380,10 @@ final class LiveRuntime: RuntimeDriver {
         await operations.usbDebugging()
     }
 
+    func storageReady() async -> Bool? {
+        await operations.storageReady()
+    }
+
     // MARK: ADB over network
 
     /// The listener on the network addresses, whose every connection is

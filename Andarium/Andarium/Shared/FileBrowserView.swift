@@ -24,24 +24,28 @@ struct FolderPage: View {
             .navigationSubtitle(subtitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbar }
-            .task(id: LoadKey(path: path, available: model.adbOverNetworkAvailable)) {
-                if model.adbOverNetworkAvailable { await browser.load(path) }
+            .task(id: LoadKey(path: path, available: model.filesAvailable)) {
+                if model.filesAvailable { await browser.load(path) }
             }
     }
 
     /// What a folder is read again for: another folder, or USB debugging
-    /// coming back on.
+    /// coming back on, or Android's storage coming up.
     private struct LoadKey: Hashable {
         var path: String
         var available: Bool
     }
 
-    /// USB debugging is not known yet: Settings reads it as it opens.
-    private var checking: Bool { model.driver != nil && model.session.usbDebugging == nil }
+    /// USB debugging, or Android's storage once USB debugging is on, is not
+    /// known yet: Settings reads them as it opens.
+    private var checking: Bool {
+        guard model.driver != nil else { return false }
+        return model.session.usbDebugging == nil || (model.adbOverNetworkAvailable && model.session.storageReady == nil)
+    }
 
     /// The selection when there is one, otherwise the folder.
     private var subtitle: String {
-        guard model.adbOverNetworkAvailable else { return "" }
+        guard model.filesAvailable else { return "" }
         if !browser.selection.isEmpty { return browser.selectionSummary }
         guard case let .loaded(files) = browser.listing(path) else { return "" }
         let items = "\(files.count) \(files.count == 1 ? "item" : "items")"
@@ -57,6 +61,12 @@ struct FolderPage: View {
                 Label("USB debugging is off", systemImage: "cable.connector")
             } description: {
                 Text("Turn on USB debugging in the guest\u{2019}s Developer options to browse its files.")
+            }
+        } else if !model.filesAvailable {
+            ContentUnavailableView {
+                Label("Android is still starting", systemImage: "hourglass")
+            } description: {
+                Text("Its storage isn\u{2019}t ready yet. The files appear here in a moment.")
             }
         } else {
             switch browser.listing(path) {
@@ -201,7 +211,7 @@ struct FolderPage: View {
             } label: {
                 Label("More", systemImage: "ellipsis")
             }
-            .disabled(!model.adbOverNetworkAvailable)
+            .disabled(!model.filesAvailable)
         }
         ToolbarSpacer(.fixed, placement: .topBarTrailing)
         ToolbarItem(placement: .confirmationAction) {

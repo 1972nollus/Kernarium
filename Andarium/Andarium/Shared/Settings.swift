@@ -57,8 +57,8 @@ struct SessionSettingsSheet: View {
         // The bar is outside the pages, so folders slide under it.
         .safeAreaBar(edge: .bottom) {
             if let browser = model.fileBrowser,
-               (model.adbOverNetworkAvailable && browser.browsing) || browser.transfer != nil || browser.conflict != nil {
-                FilesBar(browser: browser, usable: model.adbOverNetworkAvailable, bottomInset: filesBarInset)
+               (model.filesAvailable && browser.browsing) || browser.transfer != nil || browser.conflict != nil {
+                FilesBar(browser: browser, usable: model.filesAvailable, bottomInset: filesBarInset)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }

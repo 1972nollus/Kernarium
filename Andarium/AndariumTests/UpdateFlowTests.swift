@@ -137,6 +137,9 @@ final class StubDriver: RuntimeDriver {
     var connectedComputers = 0
     private(set) var closedComputers = 0
     func usbDebugging() async -> Bool? { debugging }
+    /// What Android's storage reads as; a test sets it as a boot would.
+    var storage: Bool? = true
+    func storageReady() async -> Bool? { storage }
     func startAdbOverNetwork() throws {
         if let startError { throw startError }
         listening = true

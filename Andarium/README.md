@@ -334,7 +334,10 @@ is on. `AndariumCore/Adb` speaks the protocol.
   into place, so a stopped or failed one leaves nothing and a Replace keeps the
   original until the new file is whole; the guest's media index is then told.
   A transfer stops when the application leaves the foreground, and its files
-  say so.
+  say so. Android reports its boot done before internal storage is mounted, so
+  the browser is unavailable, as it is with USB debugging off, until a check in
+  the guest finds the storage mounted, writable and holding the standard
+  folders (`InternalStorage`); nothing is imported or exported before then.
 - **ADB over network** is off at every run and never persisted, and is
   available only while the guest's USB debugging is on. `AdbNetworkBridge`
   listens on TCP 5555 and relays each computer to a fresh vsock stream, serving

@@ -165,6 +165,9 @@ final class FileBrowserModel {
     static let leftForegroundReason = "Stopped when Andarium left the foreground."
 
     @ObservationIgnored let backend: any GuestFilesBackend
+    /// Whether the guest can be browsed now (USB debugging on, its storage
+    /// up). Nothing is imported or exported while it cannot.
+    @ObservationIgnored var isAvailable: () -> Bool = { true }
 
     /// The Settings sheet's navigation path: empty on Settings itself, then
     /// internal storage and the folders below it.
@@ -261,7 +264,7 @@ final class FileBrowserModel {
     }
 
     func canImport(into folder: String) -> Bool {
-        if case .loaded = listings[folder] { return !busy }
+        if case .loaded = listings[folder] { return !busy && isAvailable() }
         return false
     }
 
@@ -324,7 +327,7 @@ final class FileBrowserModel {
     /// different places are told apart first, as the guest's Files app does.
     func received(_ picks: [FilePick]) {
         picking = false
-        guard !picks.isEmpty, !busy else { return }
+        guard !picks.isEmpty, !busy, isAvailable() else { return }
         let folder = current
         let names = GuestFileNames.distinct(picks.map(\.name))
         let renamed = zip(picks, names).map { pick, name -> FilePick in
@@ -465,7 +468,7 @@ final class FileBrowserModel {
 
     /// The long-press's Export: this one item, whatever is selected.
     func export(_ files: [GuestFile]) {
-        guard !files.isEmpty, !busy else { return }
+        guard !files.isEmpty, !busy, isAvailable() else { return }
         let transfer = FileTransfer(
             direction: .exporting, folder: current,
             items: files.map { FileTransfer.Item(name: $0.name, size: $0.size, isFolder: $0.isFolder) }

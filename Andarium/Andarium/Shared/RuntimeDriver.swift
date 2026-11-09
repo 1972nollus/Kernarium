@@ -119,6 +119,9 @@ protocol RuntimeDriver: AnyObject {
     /// Whether the guest's USB debugging setting is on; nil when it cannot be
     /// read now.
     func usbDebugging() async -> Bool?
+    /// Whether Android has mounted its internal storage (`InternalStorage`);
+    /// nil when it cannot be read now. Android's boot ends before it does.
+    func storageReady() async -> Bool?
     /// Opens the listener of ADB over the network on the device's network
     /// addresses. Throws when it cannot (`AdbError.io(EADDRINUSE)` for a
     /// port in use).

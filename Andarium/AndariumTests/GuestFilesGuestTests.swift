@@ -11,7 +11,9 @@ import Testing
 /// ANDARIUM_GUEST_INSTANCE=files, on a Mac (Designed for iPad: the Simulator
 /// has no Android guest). The large-file test also needs
 /// ANDARIUM_FILES_BIG=1 and a guest disk of 12 GiB or more
-/// (KERNARIUM_ANDROID_DISK_SIZE_GIB), and runs in a guest of its own.
+/// (KERNARIUM_ANDROID_DISK_SIZE_GIB), and runs in a guest of its own. The
+/// storage-readiness test runs alone with ANDARIUM_FILES_STORAGE=1 and
+/// ANDARIUM_GUEST_INSTANCE=filex-store (a first boot and a restart in place).
 ///
 /// Every file the tests make is in a folder of their own in Download, which the
 /// guest cleanup removes, and in the temporary directory of the host.
@@ -20,6 +22,7 @@ struct GuestFilesGuestTests {
     private static let environment = ProcessInfo.processInfo.environment
     private static let enabled = environment["ANDARIUM_FILES_TESTS"] == "1"
     private static let bigEnabled = enabled && environment["ANDARIUM_FILES_BIG"] == "1"
+    private static let storageEnabled = enabled && environment["ANDARIUM_FILES_STORAGE"] == "1"
     private static let folder = GuestPath.child("FilexTest", of: GuestPath.child("Download", of: GuestPath.root))
     private static let cleanup = "rm -rf '\(folder)' /storage/emulated/0/Pictures/fx_*; su 0 rm -rf /data/media/0/FilexRefused"
     private let mib = Limits.bytesPerMiB
@@ -28,7 +31,7 @@ struct GuestFilesGuestTests {
 
     @Test(.timeLimit(.minutes(40)))
     func browsingImportingAndExportingOnARealGuest() async throws {
-        guard Self.enabled, !Self.bigEnabled else { return }
+        guard Self.enabled, !Self.bigEnabled, !Self.storageEnabled else { return }
         try #require(Self.environment["ANDARIUM_GUEST_INSTANCE"] == "files")
         try await withAndroidGuest(cleanupCommand: Self.cleanup) { model, operations in
             let browser = try #require(model.fileBrowser)
@@ -315,6 +318,135 @@ struct GuestFilesGuestTests {
         }
     }
 
+    // MARK: Storage readiness across boots
+
+    /// Android reports its boot done before internal storage is mounted. The
+    /// application's readiness check must never say yes while a write still
+    /// fails or the standard folders are missing, must say yes soon after they
+    /// are there, and the browser must follow without being reopened, on a
+    /// first boot and on a boot Android restarts in place.
+    @Test(.timeLimit(.minutes(30)))
+    func theBrowserWaitsForStorageThroughABootAndARestart() async throws {
+        guard Self.storageEnabled else { return }
+        try #require(Self.environment["ANDARIUM_GUEST_INSTANCE"] == "filex-store")
+        try await withAndroidGuest(cleanupCommand: Self.cleanup) { model, operations in
+            let browser = try #require(model.fileBrowser)
+            let bench = try Bench()
+            defer { bench.remove() }
+            let guest = GuestSide(operations)
+            // The wizard would take the Files app's place; nothing else needs it.
+            _ = try? await guest.run("pm disable-user --user 0 org.lineageos.setupwizard")
+            // Settings is open: what it does while it is, every few seconds.
+            let watcher = Task { await model.watchSettings() }
+            defer { watcher.cancel() }
+
+            for boot in ["boot", "restart in place"] {
+                if boot == "restart in place" {
+                    let before = (try? await guest.run("cut -d' ' -f1 /proc/uptime").text) ?? "?"
+                    note("\(boot): rebooting at up=\(before.trimmingCharacters(in: .whitespacesAndNewlines))")
+                    _ = try? await guest.run("reboot", seconds: 20)
+                    var sawRestart = false
+                    try await waitUntil("Android restarts in place", seconds: 180) {
+                        if case .booting = model.phase { sawRestart = true }
+                        return sawRestart
+                    }
+                    #expect(model.session.storageReady == nil, "a restart forgets the storage was up")
+                    #expect(!model.filesAvailable)
+                    try await waitUntil("the restarted Android finishes booting", seconds: 600) {
+                        guard let up = try? await guest.run("cut -d' ' -f1 /proc/uptime", seconds: 15).text,
+                              let seconds = Double(up.trimmingCharacters(in: .whitespacesAndNewlines)),
+                              seconds < 150,
+                              let done = try? await guest.run("getprop sys.boot_completed", seconds: 15).text
+                        else { return false }
+                        return done.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
+                    }
+                }
+
+                let began = ContinuousClock.now
+                var firstReady: Duration?
+                var firstAvailable: Duration?
+                var firstWrite: Duration?
+                var early = 0
+                var readings: [Bool?] = []
+                var wasUp = false
+                var flippedBack = false
+                var unavailableTransfers = 0
+                // A fresh guest has USB debugging off, which keeps the browser
+                // unavailable too; it is turned on beside the first reading.
+                var turnOnUsbDebugging = true
+                while firstAvailable == nil, ContinuousClock.now - began < .seconds(240) {
+                    let at = ContinuousClock.now - began
+                    let reported = await operations.storageReady()
+                    readings.append(reported)
+                    let probe = try? await guest.run(
+                        """
+                        \(turnOnUsbDebugging ? "settings put global adb_enabled 1" : "true")
+                        w=no; mkdir /storage/emulated/0/.fxprobe 2>/dev/null && { rmdir /storage/emulated/0/.fxprobe; w=yes; }
+                        echo "up=$(cut -d' ' -f1 /proc/uptime) write=$w entries=$(ls -A /storage/emulated/0 2>/dev/null | wc -l) \
+                        folders=$(for d in Download DCIM Pictures; do [ -d /storage/emulated/0/$d ] && printf y || printf n; done)"
+                        """, seconds: 20).text
+                    if probe != nil { turnOnUsbDebugging = false }
+                    let wrote = probe?.contains("write=yes") == true
+                    let folders = probe?.contains("folders=yyy") == true
+                    if wrote, firstWrite == nil { firstWrite = at }
+                    if reported == true {
+                        if firstReady == nil { firstReady = at }
+                        wasUp = true
+                        // The guarantee: ready means a write works and the folders are there.
+                        if !(wrote && folders) { early += 1 }
+                    } else if reported == false, wasUp {
+                        flippedBack = true
+                    }
+                    note("\(boot): t=\(at) ready=\(String(describing: reported)) \(probe?.replacingOccurrences(of: "\n", with: " ") ?? "no answer") "
+                        + "model: usb=\(String(describing: model.session.usbDebugging)) "
+                        + "storage=\(String(describing: model.session.storageReady)) available=\(model.filesAvailable)")
+                    // Until the model says it is ready nothing is imported or exported.
+                    if !model.filesAvailable {
+                        browser.received([try bench.pick("fx_early.txt", bytes: 64, seed: 7, modified: .now)])
+                        if browser.transfer != nil || browser.conflict != nil { unavailableTransfers += 1 }
+                    } else {
+                        firstAvailable = at
+                    }
+                    try await Task.sleep(for: .seconds(1))
+                }
+                note("\(boot): first write ok at \(String(describing: firstWrite)), reported ready at \(String(describing: firstReady)), "
+                    + "model available at \(String(describing: firstAvailable))")
+                #expect(early == 0, "\(boot): the check said ready while a write failed or a folder was missing")
+                #expect(!flippedBack, "\(boot): once ready, always ready")
+                #expect(unavailableTransfers == 0, "\(boot): a transfer started while the storage was not up")
+                #expect(firstReady != nil && firstAvailable != nil, "\(boot): the storage never read as ready")
+                // A boot whose first reading comes after the mount has no window to see.
+                note("\(boot): the starting window was \(readings.contains { $0 == false } ? "observed" : "over before the first reading")")
+                if let firstReady, let firstAvailable {
+                    #expect(firstAvailable - firstReady < .seconds(10), "\(boot): the browser follows within a few seconds")
+                }
+                if let firstWrite, let firstReady {
+                    #expect(firstReady - firstWrite < .seconds(30), "\(boot): ready soon after writes work")
+                }
+
+                // The same browser, never reopened, now lists and takes a file.
+                let work = Self.folder
+                _ = try await guest.run("rm -rf '\(work)'; mkdir -p '\(work)'")
+                browser.route = [FolderRoute(path: GuestPath.root), FolderRoute(path: work)]
+                await browser.load(GuestPath.root)
+                guard case let .loaded(top)? = browser.listing(GuestPath.root) else {
+                    Issue.record("\(boot): internal storage did not list: \(String(describing: browser.listing(GuestPath.root)))")
+                    return
+                }
+                #expect(Set(top.map(\.name)).isSuperset(of: ["Download", "DCIM", "Pictures", "Music"]), "\(boot): \(top.map(\.name))")
+                await browser.load(work)
+                let pick = try bench.pick("fx_\(boot.prefix(5)).txt", bytes: 2_048, seed: 9, modified: Date(timeIntervalSince1970: 1_600_000_000))
+                browser.received([pick])
+                let transfer = try #require(browser.transfer, "\(boot): the import started")
+                try await settle(transfer, seconds: 120)
+                #expect(transfer.stage == .finished, "\(boot): \(transfer.title) \(transfer.detail)")
+                #expect(try await guest.sha256(GuestPath.child(pick.name, of: work)) == bench.sha256(pick))
+                browser.closeTransfer()
+                browser.sheetClosed()
+            }
+        }
+    }
+
     // MARK: A file over 4 GiB
 
     @Test(.timeLimit(.minutes(60)))
@@ -425,9 +557,15 @@ struct GuestFilesGuestTests {
         }
 
         /// Android has finished booting before its internal storage is mounted
-        /// and the media provider has made the standard folders.
+        /// and the media provider has made the standard folders: the
+        /// application's own readiness check says when they are.
         func waitForStorage(seconds: Int = 240) async -> Bool {
-            await waitFor("ls -A /storage/emulated/0", contains: "Download", seconds: seconds)
+            let deadline = ContinuousClock.now + .seconds(seconds)
+            while ContinuousClock.now < deadline {
+                if await operations.storageReady() == true { return true }
+                try? await Task.sleep(for: .seconds(2))
+            }
+            return false
         }
 
         func waitFor(_ command: String, contains needle: String, seconds: Int) async -> Bool {
