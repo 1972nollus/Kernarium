@@ -29,8 +29,8 @@ struct AppEntry {
     /// Graphics memory in use, in MiB, held with `statsReadings`: a figure
     /// near the budget turns its bar orange.
     var statsVramMiB: Int?
-    /// The mock device: "iphone-18-pro-max" or "ipad-mini-6"; absent, the
-    /// idiom's own mock.
+    /// The mock device: "iphone-18-pro-max", "ipad-mini-6" or "mac-64-gib"
+    /// (a ruler of about a thousand positions); absent, the idiom's own mock.
     var device: String?
     /// The guest's memory, in MiB, instead of the default a new guest gets.
     var memoryMiB: Int?
@@ -59,6 +59,7 @@ struct AppEntry {
         "home-capabilities": "capabilities", "home-mic-on": "capabilities", "home-mic-denied": "capabilities",
         "home-mic-alert": "capabilities", "home-gyroscope-unavailable": "capabilities",
         "home-backup": "backup",
+        "home-jit": "jit", "home-jit-no-debugger": "jit", "home-jit-fallback": "jit",
     ]
 
     /// Where Settings scrolls to for a screen that shows a lower section.
@@ -86,7 +87,8 @@ struct AppEntry {
         if resetTips { try? Tips.resetDatastore() }
         if screen == "session-tip" {
             Tips.showAllTipsForTesting()
-        } else if screen.hasPrefix("session") || screen.hasPrefix("settings") || screen.hasPrefix("recovery") || screen.hasPrefix("boot")
+        } else if screen.hasPrefix("session") || screen.hasPrefix("settings") || screen.hasPrefix("files")
+            || screen.hasPrefix("recovery") || screen.hasPrefix("boot")
             || screen.hasPrefix("space-pause") || Self.operationScreens.contains(screen) {
             Tips.hideAllTipsForTesting()
         }
@@ -104,7 +106,13 @@ struct AppEntry {
             guest: guest, host: host, system: PreviewData.system, capabilities: .preview,
             createRequirementBytes: PreviewData.createRequirementBytes
         )
+        let files = MockGuestFiles()
+        let browser = FileBrowserModel(backend: files)
+        files.setUsbDebugging = { [weak model] in model?.session.usbDebugging = $0 }
+        MockFolderProbe.browser = browser
+        model.fileBrowser = browser
         let freeze = !play
+        model.jitAvailable = true
 
         func boot(_ kind: BootKind, stage: Int, seconds: Int) {
             model.frozenBootStage = freeze ? (bootStage ?? stage) : nil
@@ -142,6 +150,15 @@ struct AppEntry {
             model.guest = PreviewData.highMemoryGuest(on: host)
         case "home-options", "home-display", "home-capabilities", "home-backup", "system-edit":
             break
+        case "home-jit":
+            model.jitOn = true
+        case "home-jit-no-debugger":
+            model.jitOn = true
+            model.previewJitDebugger = false
+        case "home-jit-fallback":
+            model.jitOn = true
+            model.previewJitDebugger = false
+            model.jitLastStart = .noDebugger
         case "home-mic-on":
             model.guest?.microphone = true
             model.microphoneState = .granted
@@ -170,6 +187,14 @@ struct AppEntry {
             boot(.recovery, stage: 3, seconds: 7)
         case "boot-restart":
             boot(.restart, stage: 3, seconds: 8)
+        case "boot-jit":
+            model.jitOn = true
+            model.preparingJit = true
+            boot(.normal, stage: 0, seconds: 3)
+        case "boot-jit-fallback":
+            model.jitOn = true
+            model.jitLastStart = .noDebugger
+            boot(.normal, stage: 1, seconds: 4)
         case "session", "session-tip", "session-open", "session-keyboard", "session-stats",
              "session-power", "session-setup", "session-off", "session-left", "session-volume",
              "session-graphics-notice":
@@ -230,6 +255,8 @@ struct AppEntry {
             case "space-pause-running": SpacePause(freeBytes: 820 * Limits.bytesPerMiB, stage: .notPaused)
             default: SpacePause(freeBytes: 820 * Limits.bytesPerMiB)
             }
+        case let name where name.hasPrefix("files"):
+            MockGuestFiles.present(name, browser: browser, files: files, model: model)
         case "recovery", "recovery-open":
             model.session.sideKeysOpen = screen == "recovery-open"
             model.phase = .running(.recovery)
@@ -332,6 +359,12 @@ struct AppEntry {
             model.sheet = .info
         case "start-low-space":
             model.start(.normal)
+        case "files-review":
+            try? await Task.sleep(for: .milliseconds(1100))
+            model.fileBrowser?.reviewingSelection = true
+        case "files-share":
+            try? await Task.sleep(for: .milliseconds(1100))
+            if let browser = model.fileBrowser, let transfer = browser.transfer { browser.share(transfer) }
         case "alert-error":
             model.alert = AppAlert(
                 title: "Settings not saved",

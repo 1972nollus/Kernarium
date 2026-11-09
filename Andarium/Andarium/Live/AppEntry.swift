@@ -100,6 +100,11 @@ struct AppEntry {
             guest: guest, host: host, system: system, capabilities: .device,
             createRequirementBytes: storage.createRequirementBytes
         )
+        #if !APP_STORE && !targetEnvironment(simulator)
+        // A development build on a device can run the guest on the JIT engine
+        // when a debugger prepares its memory.
+        model.jitAvailable = true
+        #endif
         // The rulers offer no size the carried system's data disk would refuse.
         model.releaseMaximumGiB = storage.release.maximumGiB
         // Retina mode is the person's choice where they made one, else on when
@@ -118,6 +123,13 @@ struct AppEntry {
         model.statsDecidedByLaunch = !stats.keepsChanges
         #if !APP_STORE
         model.printsStatistics = launch.statistics == true
+        // The JIT row follows the person's last choice, unless the launch is a
+        // harness's and decides for its run alone (`JitPreference.launch`).
+        let jit = JitPreference().launch(
+            stated: JitPreference.stated(in: ProcessInfo.processInfo.environment),
+            hasOtherSettings: !launch.isEmpty)
+        model.jitOn = jit.isOn
+        model.jitDecidedByLaunch = !jit.keepsChanges
         #endif
 
         #if APP_STORE
@@ -151,6 +163,7 @@ struct AppEntry {
                 model: model, storage: storage, marker: marker, keyStore: adbKeyStore,
                 sessionRecord: sessionRecord, freeSpace: watched)
             model.driver = runtime
+            model.fileBrowser = FileBrowserModel(backend: runtime.makeGuestFiles(hostFree: watched))
             model.refreshPlan()
             // Access the person took away while Andarium was closed takes the
             // Microphone choice with it.
@@ -300,6 +313,9 @@ struct AppEntry {
             },
             safeMemory: { count in
                 Int(kernarium_runtime_loader_conservative_guest_memory_mib(UInt32(count), launchSet))
+            },
+            defaultHoldsGraphics: { count in
+                kernarium_runtime_loader_default_guest_memory_holds_gpu_budget(UInt32(count), launchSet) != 0
             },
             graphicsMemory: { memoryMiB, count in
                 Int(kernarium_runtime_loader_gpu_budget_mib(UInt32(memoryMiB), UInt32(count), launchSet))

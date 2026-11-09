@@ -222,12 +222,54 @@ final class LiveRuntime: RuntimeDriver {
         }.value
         preparing = false
         model?.preparingDisk = false
+        #if APP_STORE
+        let extras = StartExtras()
+        #else
+        var extras = StartExtras()
+        extras.jit = await prepareJit(for: run)
+        #endif
         guard let view, let geometry else {
             end(startFailure: "the display is not ready")
             return
         }
-        launch(run, view: view, geometry: geometry)
+        launch(run, view: view, geometry: geometry, extras: extras)
     }
+
+    #if !APP_STORE
+    /// Prepares the JIT's executable memory when the person turned the JIT on
+    /// and a debugger is here to do it, or lets an attached debugger go when
+    /// the JIT is off, so that the guest does not run under it. Returns
+    /// whether the guest boots on the JIT. A start that cannot have it runs on
+    /// gadgets and says why; it never fails.
+    private func prepareJit(for run: PendingRun) async -> Bool {
+        guard let model, model.jitAvailable else { return false }
+        let wanted = model.jitOn
+        let shape = JitShape(memoryMiB: run.guest.memoryMiB, processorCount: run.guest.cores)
+        if wanted { model.preparingJit = true }
+        let answer = await JitDebugger.prepare(wanted: wanted, shape: shape, flavor: Self.androidFlavor)
+        model.preparingJit = false
+        model.refreshJit()
+        switch answer {
+        case .ready:
+            model.jitPrepared = shape
+            model.jitLastStart = nil
+            print("Andarium: JIT ready")
+            return true
+        case .disabled:
+            model.jitLastStart = nil
+            return false
+        case .noDebugger, .failed, .otherSettings, .unsupported:
+            // A fall-back is only worth a sentence to a person who asked for the JIT.
+            model.jitLastStart = wanted ? answer : nil
+            if wanted { print("Andarium: \(answer.fallbackSentence ?? "started without JIT")") }
+            return false
+        }
+    }
+
+    func jitDebuggerAttached() -> Bool {
+        JitDebugger.attached()
+    }
+    #endif
 
     private func preparingDisk(_ fraction: Double) {
         guard preparing, let model else { return }
@@ -240,7 +282,17 @@ final class LiveRuntime: RuntimeDriver {
         model?.runEnded(RunEnd(result: -1, startFailure: startFailure), uptimeSeconds: nil)
     }
 
-    private func launch(_ run: PendingRun, view: GuestMetalView, geometry: GuestDisplayGeometry) {
+    /// What a start decides before the runtime runs, beyond the guest: in a
+    /// development build, whether the guest boots on the JIT engine.
+    private struct StartExtras: Sendable {
+        #if !APP_STORE
+        var jit = false
+        #endif
+    }
+
+    private func launch(
+        _ run: PendingRun, view: GuestMetalView, geometry: GuestDisplayGeometry, extras: StartExtras
+    ) {
         guard kernarium_runtime_loader_select(Self.androidFlavor) == 0 else {
             end(startFailure: "the runtime could not be loaded")
             return
@@ -297,7 +349,7 @@ final class LiveRuntime: RuntimeDriver {
                 view: view, dataDiskPath: dataDiskPath, releasePath: releasePath, dataGiB: dataGiB, bootMode: bootMode,
                 width: width, height: height, dotsPerInch: dotsPerInch, memoryMiB: memoryMiB,
                 processorCount: processorCount, adbKeyLine: adbKeyLine, timeZone: timeZone,
-                sessionRecordPath: sessionRecordPath
+                sessionRecordPath: sessionRecordPath, extras: extras
             )
             Task { @MainActor in self.finished(result: result) }
         }
@@ -308,7 +360,8 @@ final class LiveRuntime: RuntimeDriver {
     private nonisolated static func runGuest(
         view: GuestMetalView, dataDiskPath: String, releasePath: String, dataGiB: UInt32, bootMode: UInt32,
         width: UInt32, height: UInt32, dotsPerInch: UInt32, memoryMiB: UInt32,
-        processorCount: UInt32, adbKeyLine: String?, timeZone: String?, sessionRecordPath: String?
+        processorCount: UInt32, adbKeyLine: String?, timeZone: String?, sessionRecordPath: String?,
+        extras: StartExtras
     ) -> Int32 {
         dataDiskPath.withCString { dataDisk in
             releasePath.withCString { release in
@@ -340,6 +393,10 @@ final class LiveRuntime: RuntimeDriver {
                             request.android_time_zone = zone
                             // Where the runtime records how the session ends.
                             request.session_record_path = record
+                            #if !APP_STORE
+                            // The JIT engine, once its memory is prepared; gadgets otherwise.
+                            request.use_jit = extras.jit ? 1 : 0
+                            #endif
                             return withUnsafePointer(to: &request) { kernarium_runtime_loader_run(view, $0) }
                         }
                     }
@@ -362,6 +419,12 @@ final class LiveRuntime: RuntimeDriver {
         AdbGuestOperations(identity: adbIdentity, clock: clock, device: model?.host.name ?? "device")
     }
 
+    /// The file browser's backend: it reads the operations for each call, as
+    /// the key changes with each boot.
+    func makeGuestFiles(hostFree: @escaping @Sendable () -> UInt64) -> LiveGuestFiles {
+        LiveGuestFiles(operations: { [unowned self] in operations }, hostFree: hostFree)
+    }
+
     func createBugReport(update: @escaping @Sendable (BusyUpdate) -> Void) async throws -> URL {
         try await operations.createBugReport(update: update)
     }
@@ -372,6 +435,10 @@ final class LiveRuntime: RuntimeDriver {
 
     func usbDebugging() async -> Bool? {
         await operations.usbDebugging()
+    }
+
+    func storageReady() async -> Bool? {
+        await operations.storageReady()
     }
 
     // MARK: ADB over network

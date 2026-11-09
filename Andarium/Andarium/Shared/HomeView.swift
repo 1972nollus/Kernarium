@@ -127,11 +127,14 @@ struct HomeView: View {
         .frame(maxWidth: .infinity)
     }
 
-    /// Display, Capabilities and Backup: what the guest shows and may use.
+    /// Display, Capabilities, JIT and Backup: what the guest shows and may use.
     @ViewBuilder
     private var guestSections: some View {
         DisplaySection()
         CapabilitiesSection()
+        #if !APP_STORE
+        JitSection()
+        #endif
         BackupSection()
     }
 
