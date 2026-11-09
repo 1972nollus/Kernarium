@@ -93,7 +93,9 @@ def make_fixture(root: Path) -> None:
         root,
         "flag_list.py",
         'command = ["adb", "-P", port, "-s", serial]\n'
-        'run([adb_program, "-P", port, "devices"])\n',
+        'run([adb_program, "-P", port, "devices"])\n'
+        'run([ADB, "-P", port, "devices"])\n'
+        'run([ADB, "-p", "devices"])\n',  # a lowercase -p is another flag
     )
     write(
         root,
@@ -157,6 +159,7 @@ EXPECTED = {
     ("flag.sh", 1, "port-flag"),
     ("flag_list.py", 1, "port-flag"),
     ("flag_list.py", 2, "port-flag"),
+    ("flag_list.py", 3, "port-flag"),
     ("stop.sh", 1, "kill-server"),
     ("bin/tool", 3, "kill-server"),
     ("stranger/runner.py", 3, "port-flag"),

@@ -34,7 +34,7 @@ RULES = {
     "server-variable": re.compile(
         r"ANDROID_ADB_SERVER_(?:PORT|ADDRESS)|ADB_SERVER_SOCKET"
     ),
-    "port-flag": re.compile(r"\badb.*(?<![\w-])-P(?![\w-])"),
+    "port-flag": re.compile(r"(?i:\badb).*(?<![\w-])-P(?![\w-])"),
     "kill-server": re.compile(r"(?<![\w-])kill-server(?![\w-])"),
 }
 SCRIPT_SUFFIXES = frozenset({".py", ".sh", ".bash", ".zsh"})
