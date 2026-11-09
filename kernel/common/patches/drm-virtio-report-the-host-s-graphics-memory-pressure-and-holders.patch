@@ -100,7 +100,7 @@ index 7fcf4b6d85fca96f7d624c68a8a426230c9a9569..5c406874ea73ac63a7788254169a6cdb
  static struct virtio_driver virtio_gpu_driver = {
  	.feature_table = features,
 diff --git a/drivers/gpu/drm/virtio/virtgpu_drv.h b/drivers/gpu/drm/virtio/virtgpu_drv.h
-index 81cfae58b4f7b7dfc1031457e645f58c68112761..6327897ec4e48067640d79e6fcde5bebc42f8622 100644
+index 81cfae58b4f7b7dfc1031457e645f58c68112761..a5a4646259fc437767bf1e518689af039ebd8300 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_drv.h
 +++ b/drivers/gpu/drm/virtio/virtgpu_drv.h
 @@ -45,6 +45,8 @@
@@ -130,8 +130,6 @@ index 81cfae58b4f7b7dfc1031457e645f58c68112761..6327897ec4e48067640d79e6fcde5beb
 +
 +struct virtio_gpu_memory_report {
 +	struct work_struct work;
-+	/* Protects everything below, and is never held across a wait. */
-+	spinlock_t lock;
 +	/*
 +	 * Serializes sysfs_notify() with virtio_gpu_memory_report_stop(); never
 +	 * held with lock.
@@ -139,6 +137,8 @@ index 81cfae58b4f7b7dfc1031457e645f58c68112761..6327897ec4e48067640d79e6fcde5beb
 +	struct mutex notify_lock;
 +	/* The primary minor's device from the file's creation to the stop. */
 +	struct device *kdev;
++	/* Protects everything below, and is never held across a wait. */
++	spinlock_t lock;
 +	/* What the last reply said: seq counts the replies stored. */
 +	u64 seq;
 +	u64 stored_ns;
