@@ -74,6 +74,14 @@ if(TARGET uml_gpu_memory_pressure)
         LIBRARIES UML::GpuMemoryPressure)
 endif()
 
+# Whether a refused Venus allocation waits for the guest's reclaimer: the
+# policy needs no GPU device either.
+if(TARGET uml_gpu_reclaim_wait)
+    uml_add_gpu_unit_test(gpu-reclaim-wait
+        uml_gpu_reclaim_wait_tests reclaim_wait_tests.cpp
+        LIBRARIES UML::GpuReclaimWait Threads::Threads)
+endif()
+
 uml_add_gpu_unit_test(gpu-metal-submit-timing-collector
     uml_gpu_metal_submit_timing_tests metal_submit_timing_tests.cpp
     LIBRARIES Threads::Threads

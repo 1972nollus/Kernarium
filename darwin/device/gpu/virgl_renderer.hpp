@@ -107,6 +107,18 @@ public:
     static void setMemoryAccountObserver(
         MemoryAccountObserver observer, void* data) noexcept;
 
+    /* Called, from the render server's thread that runs a Venus allocation
+     * the pool refused, before the guest is answered: returns whether to try
+     * the allocation again, after waiting as long as the observer chooses.
+     * `waited` follows, on the same thread, for each allocation the observer
+     * returned true for, with whether it was made. Cleared when the renderer
+     * goes. */
+    using MemoryWaitObserver = bool (*)(void* data, std::uint32_t contextId,
+        std::uint64_t bytes, std::uint32_t attempt) noexcept;
+    using MemoryWaitedObserver = void (*)(void* data, bool admitted) noexcept;
+    static void setMemoryWaitObserver(MemoryWaitObserver wait,
+        MemoryWaitedObserver waited, void* data) noexcept;
+
     /* The device memory budget and what the process holds against it, while
      * a renderer with a budget exists; any thread. Nothing without one. The
      * usage is the pool's own, which is what the budget refuses by
