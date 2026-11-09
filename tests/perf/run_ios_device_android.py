@@ -95,11 +95,14 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
                         "runs on the JIT only where a debugger prepares its "
                         "memory (--jit-debugger), on gadgets otherwise")
     parser.add_argument(
-        "--jit-debugger", choices=("stand-in", "none"), default="stand-in",
-        help="with --engine jit, stand-in launches the application stopped "
-        "and serves its request for executable memory with lldb "
+        "--jit-debugger", choices=("stand-in", "none"),
+        help="stand-in launches the application stopped and serves its "
+        "request for executable memory with lldb "
         "(tests/integration/support/ios_jit_debugger.py); none attaches "
-        "nothing, which shows the fall back to gadgets",
+        "nothing, which with --engine jit shows the fall back to gadgets. "
+        "The default is stand-in with --engine jit and none otherwise; "
+        "stand-in with --engine gadgets shows the application letting an "
+        "attached debugger go when the JIT is off",
     )
     parser.add_argument("--disk-size-gib", type=int,
                         help="the guest storage capacity")
@@ -159,6 +162,8 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--artifact-root", type=Path,
                         default=DEFAULT_ARTIFACT_ROOT)
     options = parser.parse_args(argv)
+    if options.jit_debugger is None:
+        options.jit_debugger = "stand-in" if options.engine == "jit" else "none"
     if min(options.timeout, options.boot_timeout, options.launch_timeout,
            options.script_timeout, options.push_timeout,
            options.poweroff_timeout, options.install_timeout) < 1 or options.poll_interval <= 0:
@@ -624,8 +629,7 @@ class Run:
 
     @property
     def serves_jit(self) -> bool:
-        return (self.options.engine == "jit"
-                and self.options.jit_debugger == "stand-in")
+        return self.options.jit_debugger == "stand-in"
 
     def check_unlocked(self) -> None:
         if ios_device.device_lock_state(self.options.device) == "locked":
@@ -680,7 +684,7 @@ class Run:
                 log.read_text(errors="replace") if log.exists() else ""
             )
             self.summary["thermal"] = andarium.thermal_record(transcript)
-            if self.options.engine == "jit":
+            if self.options.engine == "jit" or self.serves_jit:
                 self.summary["jit"] = jit_record(
                     transcript, self.artifact / "jit-debugger.log")
             if "boot_seconds" in self.summary and not (
