@@ -204,11 +204,11 @@ class PrivateServerTests(unittest.TestCase):
             probe.bind(("127.0.0.1", 0))
             probe.listen(1)
             taken = probe.getsockname()[1]
-            base = taken - runner.SLOT_PORTS + 1
+            base = taken - runner.slot_ports.SLOT_PORTS + 1
             # The top of the range is taken; the answer is below it, in the upper half.
             with mock.patch.dict(os.environ, {"GUEST_SLOT_PORT_BASE": str(base)}):
                 port = runner.private_server_port()
-        self.assertGreaterEqual(port, base + runner.PRIVATE_PORT_FLOOR)
+        self.assertGreaterEqual(port, base + runner.slot_ports.PRIVATE_SERVER_FLOOR)
         self.assertLess(port, taken)
 
     def test_without_a_slot_any_free_port_does(self) -> None:
