@@ -8,15 +8,13 @@
 // a request that the guest never overcommitted, and the guest sees an out of
 // memory error that browsers answer by losing every WebGL context.
 //
-// The renderer therefore reclaims before it fails a creation: it finishes and
-// trims the contexts that have been quiet for an idle interval, empties the
-// deferred frees and what the drivers have cached unused for a while, and
+// The renderer therefore reclaims before it fails a creation: it trims every
+// context it has, whether or not it has just worked, so the driver drops what
+// completed batches still reference, empties the driver's buffer cache, and
 // creates the resource once more. The contract under test:
 //
-//  - while the producer is still active, a creation that needs its storage is
-//    refused: a reclaim gives back nothing a context may be using;
 //  - the creations that fit the budget once the guest's deleted textures are
-//    gone succeed, round after round, although the quiet producer holds those
+//    gone succeed, round after round, although another context holds those
 //    textures' memory when each round starts;
 //  - a request that does not fit even then is still refused with ENOMEM, in
 //    bounded time (repeated refusals do not each pay for a full reclaim), and
@@ -37,7 +35,6 @@
 #include <cstdio>
 #include <exception>
 #include <memory>
-#include <thread>
 #include <vector>
 
 namespace {
@@ -61,14 +58,6 @@ constexpr std::uint32_t overcommitAttempts = 40;
 constexpr double refusalSecondsAllowed = 1.5;
 // What the budget does not bound: the driver's own small allocations.
 constexpr std::uint64_t slackBytes = 8 * mebibyte;
-// The renderer's idle interval, which the test leaves at its default, and how
-// long the producer waits to be quiet. The renderer's own idle trim is off, so
-// only a reclaim can take what the producer holds.
-constexpr auto idleInterval = std::chrono::milliseconds(1000);
-constexpr auto quietWait = idleInterval + std::chrono::milliseconds(250);
-// How soon after the producer's last work the active check must run for its
-// refusal to be expected; a slower host has let the producer go quiet.
-constexpr auto activeWindow = std::chrono::milliseconds(500);
 
 constexpr std::uint32_t commandClear = 7;
 constexpr std::uint32_t commandDestroyObject = 3;
@@ -261,8 +250,6 @@ private:
 
 int main()
 {
-    // Only a reclaim may give back what the quiet producer holds.
-    setenv("UML_GPU_IDLE_TRIM_MS", "0", 1);
     // The pool takes its limit when the renderer starts, and counts everything
     // the process holds, so the limit is what is held now plus the room.
     const std::uint64_t before = used();
@@ -282,37 +269,11 @@ int main()
     // Rounds of a near miss: the producer's deleted textures still hold the
     // room when the consumer asks for it.
     std::uint32_t refused = 0;
-    std::uint32_t activeChecks = 0;
     for (std::uint32_t round = 0; round < rounds; ++round) {
         producer.paint(producerTextures);
-        const auto paintedAt = std::chrono::steady_clock::now();
         const std::uint64_t painted = used();
         producer.release();
         const std::uint64_t held = used();
-        {
-            // The producer has just worked: what it holds stays with it, and
-            // the consumer's textures past the room are refused.
-            std::vector<std::unique_ptr<Texture>> early;
-            bool earlyRefused = false;
-            for (std::uint32_t index = 0;
-                 index < consumerTextures && !earlyRefused; ++index) {
-                early.push_back(
-                    std::make_unique<Texture>(*renderer, nextResourceId++));
-                earlyRefused = early.back()->result() != 0;
-                if (earlyRefused) {
-                    require(isOutOfMemory(early.back()->result()),
-                        "a texture was refused for a reason other than "
-                        "memory");
-                }
-            }
-            if (std::chrono::steady_clock::now() - paintedAt < activeWindow) {
-                require(earlyRefused,
-                    "a reclaim took storage from a context that had just "
-                    "worked");
-                ++activeChecks;
-            }
-        }
-        std::this_thread::sleep_for(quietWait);
         std::vector<std::unique_ptr<Texture>> consumer;
         for (std::uint32_t index = 0; index < consumerTextures; ++index) {
             consumer.push_back(
@@ -346,8 +307,6 @@ int main()
             "writes");
     }
     require(refused == 0, "a creation was refused although the room fit it");
-    require(activeChecks > 0,
-        "the host was too slow to check a context that had just worked");
     require(peak <= limit + slackBytes,
         "the host GPU held more than its budget");
 

@@ -5,15 +5,11 @@
 // process charges. The driver frees the cache only when one of its own
 // allocations fails, so a Venus guest whose allocation the pool refused could
 // not make the room. eglReleaseCachedMemoryMESA frees what every screen of the
-// process has cached and left unused for a while, from any thread and with no
-// context current, and the pool's reclaim hook calls it before it refuses. A
-// buffer that was just freed stays: a context that is still drawing would
-// allocate it again at once. The cache frees a buffer itself once it has been
-// unused for as long as the cache keeps one.
+// process caches, from any thread and with no context current, and the pool's
+// reclaim hook calls it before it refuses.
 //
 // Metal's allocation counter is the observable: buffers a context wrote and
-// deleted stay allocated, held by the driver's cache, through a release made
-// at once, and are gone once they have gone unused.
+// deleted stay allocated, held by the driver's cache, until the release.
 
 #include "host_gl_test_support.hpp"
 #include "host_gpu_memory.hpp"
@@ -37,8 +33,6 @@ using namespace std::chrono_literals;
 constexpr std::uint64_t mebibyte = 1U << 20U;
 constexpr GLsizeiptr bufferBytes = static_cast<GLsizeiptr>(4U * mebibyte);
 constexpr int bufferCount = 5;
-// Longer than the driver keeps a cached buffer before it counts as unused.
-constexpr auto unusedFor = 800ms;
 
 typedef EGLint (*ReleaseCachedMemory)();
 
@@ -100,49 +94,36 @@ int main()
     /* A first round warms the driver up and fills its cache, which the first
      * release then empties, so that the baseline holds nothing cached. */
     fillAndDeleteBuffers(bytes);
-    std::this_thread::sleep_for(unusedFor);
     (void)release();
     std::this_thread::sleep_for(300ms);
     const std::uint64_t baseline = allocated();
 
-    /* From a thread that has no context current, as the pool's refused thread
-     * may be. A release right after the buffers were deleted keeps them. */
-    const auto releaseElsewhere = [&] {
-        EGLint count = 0;
-        std::thread other([&] { count = release(); });
-        other.join();
-        return count;
-    };
     fillAndDeleteBuffers(bytes);
-    (void)releaseElsewhere();
     std::this_thread::sleep_for(300ms);
     const std::uint64_t cached = allocated();
-    std::printf("%llu MiB cached after the buffers were deleted and a "
-                "release at once\n",
+    std::printf("%llu MiB cached after the buffers were deleted\n",
         static_cast<unsigned long long>(
             (cached > baseline ? cached - baseline : 0) / mebibyte));
     require(cached >= baseline + 2 * bufferBytes,
-        "the just deleted buffers are gone: the driver cached nothing, or a "
-        "release took what was just used");
+        "the driver cached nothing, so the release has nothing to prove");
 
-    std::this_thread::sleep_for(unusedFor);
-    const EGLint released = releaseElsewhere();
-    std::printf("released %d cached allocations once they went unused\n",
-        released);
-    require(released >= 0, "the release failed");
+    /* From a thread that has no context current, as the pool's refused thread
+     * may be. */
+    EGLint released = 0;
+    std::thread other([&] { released = release(); });
+    other.join();
+    std::printf("released %d cached allocations\n", released);
+    require(released > 0, "the release freed nothing");
     require(fallsBelow(baseline + 2U * bufferBytes, 5s),
-        "the cached memory was still allocated after it went unused");
+        "the cached memory was still allocated after the release");
 
-    /* The context goes on working, and its driver caches again. */
+    /* Nothing is left to release, and the context goes on working. */
+    require(release() >= 0, "a second release failed");
     fillAndDeleteBuffers(bytes);
-    require(release() >= 0, "a release after the first failed");
-    std::this_thread::sleep_for(300ms);
-    require(allocated() >= baseline + 2 * bufferBytes,
-        "the driver did not cache again after a release");
+    require(release() > 0, "the driver did not cache again after a release");
     require(glGetError() == GL_NO_ERROR, "GL reported an error after release");
 
-    std::printf("PASS cached memory release: a release from another thread "
-                "keeps what was just used, and the cache frees it once "
-                "unused\n");
+    std::printf("PASS cached memory release: freed from another thread, "
+                "cache refilled afterwards\n");
     return EXIT_SUCCESS;
 }

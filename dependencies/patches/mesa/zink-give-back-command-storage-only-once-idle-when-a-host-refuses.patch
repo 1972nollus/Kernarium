@@ -1,38 +1,33 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 9 Nov 2026 11:11:30 +0900
-Subject: [PATCH] zink: give back only idle storage when a host is about to
- refuse
+Subject: [PATCH] zink: give back command storage only once idle when a host
+ refuses
 
 A host that bounds the GPU memory of its process asks the screen for
-the memory it caches before it refuses an allocation, and Zink frees
-the same caches itself when an allocation fails. Both gave back
-everything: the command storage of every free batch state and every
-cached buffer. A context that is still drawing frees its batch states
-and buffers at every submission and takes them again for the next
-frame, so what the refusal freed was storage it allocated again at
-once. The room went to the allocation that had been refused, and an
-Android guest drawing WebGL at the full budget then went past it by
-about 100 MiB.
+the memory it caches before it refuses an allocation. That gave back the
+command storage of every free batch state. A context that is still
+drawing frees its batch states at every submission and takes them
+again for the next frame, so the command storage the refusal freed was
+allocated again at once, outside the host's bound: the room went to the
+allocation that had been refused, and an Android guest drawing WebGL
+at the full budget went past it by about 100 MiB.
 
 A batch state now records when a submission made it one of the
 screen's free states, and the host's request releases the storage of
 the states that have been free for a second; a context's destruction
-still releases them all. Cached buffers go only once they have
-expired, unused for as long as the cache keeps a buffer, whether the
-host asks or an allocation failed; slabs that nothing uses are
-reclaimed as before.
+still releases them all. Cached buffers still go at any age: taking
+one again allocates through the host, which refuses past its bound.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/gallium/drivers/zink/zink_batch.c   | 16 +++++++++++++---
  src/gallium/drivers/zink/zink_batch.h   |  3 ++-
- src/gallium/drivers/zink/zink_bo.c      | 12 ++++++++----
  src/gallium/drivers/zink/zink_context.c |  2 +-
  src/gallium/drivers/zink/zink_screen.c  |  7 ++++++-
  src/gallium/drivers/zink/zink_types.h   |  2 ++
- src/gallium/include/pipe/p_screen.h     | 10 ++++++----
- 7 files changed, 38 insertions(+), 14 deletions(-)
+ src/gallium/include/pipe/p_screen.h     | 10 +++++++---
+ 6 files changed, 31 insertions(+), 9 deletions(-)
 
 diff --git a/src/gallium/drivers/zink/zink_batch.c b/src/gallium/drivers/zink/zink_batch.c
 index 4285bae83e310511426833e8334af69899110d98..f10f60c8ff39e8dd361587afbd8a24463ea0f9d1 100644
@@ -98,40 +93,6 @@ index 19a2f45353480f679439538101afcacc2b9acd52..a81c13396d5df1954d9f1d503560cd0b
  
  void
  zink_batch_state_destroy(struct zink_screen *screen, struct zink_batch_state *bs);
-diff --git a/src/gallium/drivers/zink/zink_bo.c b/src/gallium/drivers/zink/zink_bo.c
-index fa06199bb212150b1cb64015907bc882929a6a04..17b1c0536dadefcbabaab425735dff2c4627df29 100644
---- a/src/gallium/drivers/zink/zink_bo.c
-+++ b/src/gallium/drivers/zink/zink_bo.c
-@@ -183,11 +183,15 @@ bo_slab_destroy(struct zink_screen *screen, struct zink_bo *bo)
-    pb_slab_free(&screen->pb.bo_slabs, &bo->u.slab.entry);
- }
- 
-+/* Frees the slabs nothing uses any more and the cached buffers that have
-+ * expired, the ones unused for as long as the cache keeps a buffer: an
-+ * allocation fails only when the host's memory pool refuses it, and a buffer
-+ * cached a moment ago belongs to a workload that is about to take it again. */
- static unsigned
- release_cached_buffers(struct zink_screen *screen)
- {
-    unsigned num_reclaims = pb_slabs_reclaim(&screen->pb.bo_slabs);
--   num_reclaims += pb_cache_release_all_buffers(&screen->pb.bo_cache);
-+   num_reclaims += pb_cache_release_expired(&screen->pb.bo_cache);
-    return num_reclaims;
- }
- 
-@@ -197,9 +201,9 @@ clean_up_buffer_managers(struct zink_screen *screen)
-    return !!release_cached_buffers(screen);
- }
- 
--/* Frees what the screen's buffer managers keep for reuse. It takes only the
-- * locks that zink_bo_create takes when an allocation fails, and runs on
-- * whatever thread asks. */
-+/* Frees what the screen's buffer managers keep for reuse and nothing will
-+ * take again soon. It takes only the locks that zink_bo_create takes when an
-+ * allocation fails, and runs on whatever thread asks. */
- unsigned
- zink_bo_release_cached(struct zink_screen *screen)
- {
 diff --git a/src/gallium/drivers/zink/zink_context.c b/src/gallium/drivers/zink/zink_context.c
 index 512b3f82eb922b14fbe4587b1015d9403966d1df..a11491f942bef612ccf9e9591ec3f749fe1c7d71 100644
 --- a/src/gallium/drivers/zink/zink_context.c
@@ -182,28 +143,23 @@ index e432c0059a6ece36150814cb56e51ffac0d1e97c..30150fbf20e8214ebe6ff31fbdd76d1a
     struct zink_batch_usage usage;
     struct zink_context *ctx;
 diff --git a/src/gallium/include/pipe/p_screen.h b/src/gallium/include/pipe/p_screen.h
-index 3d9571d71484a11361dcf3b348ec6fbd7c23801a..3cc3b1c00c8bf61d23701d8ca2bff85cb28640ab 100644
+index 3d9571d71484a11361dcf3b348ec6fbd7c23801a..0645f26e5b1168a7fb57199e5c0acb689b0eb580 100644
 --- a/src/gallium/include/pipe/p_screen.h
 +++ b/src/gallium/include/pipe/p_screen.h
-@@ -641,15 +641,17 @@ struct pipe_screen {
-                              const struct pipe_box *rects);
- 
-    /**
--    * Free the memory the driver keeps for reuse and nothing uses.
-+    * Free the memory the driver keeps for reuse and nothing has used for a
-+    * while.
-     *
-     * A driver caches what its clients freed (buffers, slab backing) so that
+@@ -647,9 +647,13 @@ struct pipe_screen {
      * the next allocation is cheap, and holds on to it until a client frees
      * enough or the cache expires. A host that bounds the memory it gives out
      * calls this for a screen that is not the one asking, when another's
 -    * allocation was refused. Optional. May be called from any thread, with
 -    * no context current, while the screen allocates and frees; it never
 -    * waits for the device.
-+    * allocation was refused. What a client freed a moment ago stays: a client
-+    * that is still drawing takes it again at once. Optional. May be called
-+    * from any thread, with no context current, while the screen allocates and
-+    * frees; it never waits for the device.
++    * allocation was refused. Memory the device allocates through the host
++    * (buffers) goes at any age, since taking it again asks the host once more;
++    * storage the host does not bound (command storage) goes only once it has
++    * been unused for a while, since a client that is still drawing takes it
++    * again at once. Optional. May be called from any thread, with no context
++    * current, while the screen allocates and frees; it never waits for the
++    * device.
      *
      * \return the number of cached allocations released.
      */

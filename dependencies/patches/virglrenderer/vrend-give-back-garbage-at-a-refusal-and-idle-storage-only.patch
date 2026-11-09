@@ -1,36 +1,43 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 9 Nov 2026 11:12:32 +0900
-Subject: [PATCH] vrend: reclaim only what nothing is using before a refusal
+Subject: [PATCH] vrend: give back garbage at a refusal, and idle storage only
 
-When the host driver refuses a resource's storage, the renderer gave
+When the host driver refused a resource's storage, the renderer gave
 back what every context held for completed work and everything the host
 drivers cached, then made the resource once more. A context that is
-still drawing frees its batch states and buffers at every submission
-and takes them again for the next frame, so the reclaim freed storage
-that context allocated again at once: the retried resource took the
-room, the context's storage came back, and an Android guest drawing
-WebGL at the full budget went past it by about 100 MiB.
+still drawing frees its batch states and command storage at every
+submission and takes them again for the next frame, so the reclaim freed
+storage that context allocated again at once, outside any budget: the
+retried resource took the room, the storage came back past it, and an
+Android guest drawing WebGL at the full budget went past it by about
+100 MiB.
+
+What a reclaim frees is now split by what taking it again costs. Every
+GL context is trimmed, so the driver drops the references its completed
+batches keep to resources the guest has released; that memory comes
+back only through an allocation the budget gates. The host drivers'
+cached buffers are freed at any age for the same reason. Command storage
+is not gated, so it goes only once unused for a while
+(VKR_CACHED_MEMORY_IDLE_NS for the Vulkan devices).
 
 virgl_renderer_set_context_quiet_query() gives the renderer the host's
-word on which contexts are quiet, nothing having run on them for a
-while and no fence of theirs outstanding. The reclaim flushes, finishes
-and trims only those, frees only the shared-memory segments whose
-fences have signalled, and asks the host drivers only for what they
-have cached and not used for a second (VKR_CACHED_MEMORY_IDLE_NS for
-the Vulkan devices' command storage). A refusal then stays a refusal
-for a workload that is drawing. Without a query every context is
-visited, as before.
+word on which contexts are quiet, nothing having run on them for a while
+and no fence of theirs outstanding. Only those are flushed and finished
+before the trim: a flush would submit a drawing context's frame early
+and a finish would stall it. The shared-memory segments whose fences
+have signalled are freed. Without a query every context is finished, as
+before.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/venus/vkr_renderer.c   |  2 +-
- src/venus/vkr_renderer.h   | 10 ++++++--
- src/virglrenderer.c        | 14 +++++++++++
- src/virglrenderer.h        | 13 ++++++++++
- src/vrend/vrend_renderer.c | 50 ++++++++++++++++++++++++++------------
- src/vrend/vrend_renderer.h |  3 +++
- 6 files changed, 74 insertions(+), 18 deletions(-)
+ src/venus/vkr_renderer.h   | 10 +++++--
+ src/virglrenderer.c        | 14 ++++++++++
+ src/virglrenderer.h        | 14 ++++++++++
+ src/vrend/vrend_renderer.c | 57 ++++++++++++++++++++++++++------------
+ src/vrend/vrend_renderer.h |  3 ++
+ 6 files changed, 80 insertions(+), 20 deletions(-)
 
 diff --git a/src/venus/vkr_renderer.c b/src/venus/vkr_renderer.c
 index 8936b38d60ff6d15f185e18b9b996780cb74923e..a8486d004a551eeb953ab3902a75e283d877d5e8 100644
@@ -92,21 +99,22 @@ index 083774c3ffc08a6f511d0d83be0727b8076efac6..e5abea2d435442ccf5bdc28fd0eda78f
  {
     TRACE_FUNC();
 diff --git a/src/virglrenderer.h b/src/virglrenderer.h
-index 9335e0ce538787484b4fc3257d6f0030ee5d8c17..49c22f5ed98560b693d64e7bdcabecac258cae32 100644
+index 9335e0ce538787484b4fc3257d6f0030ee5d8c17..601353e1c27b51a2b11e05906072ac04aa63bf22 100644
 --- a/src/virglrenderer.h
 +++ b/src/virglrenderer.h
-@@ -506,6 +506,19 @@ VIRGL_EXPORT int virgl_renderer_context_get_poll_fd(uint32_t ctx_id);
+@@ -506,6 +506,20 @@ VIRGL_EXPORT int virgl_renderer_context_get_poll_fd(uint32_t ctx_id);
   * thread that runs the renderer. */
  VIRGL_EXPORT void virgl_renderer_context_trim(uint32_t ctx_id);
  
 +/* Tell the renderer how to learn which contexts the host finds quiet: nothing
 + * ran on them for a while and no fence they asked for is outstanding.  When
 + * the host driver refuses a resource's storage, the renderer gives back what
-+ * its quiet contexts hold for completed work and what the host drivers have
-+ * cached and not used for a while, and makes the resource once more; a
-+ * context that is still drawing keeps its storage.  Without a query every
-+ * context is visited.  `quiet` runs on the thread that runs the renderer,
-+ * with no lock of the renderer held; NULL clears it. */
++ * every context's completed work still holds of released resources and the
++ * buffers the host drivers cache, finishing first only the quiet contexts,
++ * and frees command storage only once it has gone unused for a while; then it
++ * makes the resource once more.  Without a query every context is finished.
++ * `quiet` runs on the thread that runs the renderer, with no lock of the
++ * renderer held; NULL clears it. */
 +VIRGL_EXPORT void
 +virgl_renderer_set_context_quiet_query(bool (*quiet)(void *data,
 +                                                     uint32_t ctx_id),
@@ -116,16 +124,14 @@ index 9335e0ce538787484b4fc3257d6f0030ee5d8c17..49c22f5ed98560b693d64e7bdcabecac
   * mapping is owned by the caller and is its responsibility to unmap
   * the resource by its own means (i.e. overriding the map with
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index de9472ddd03a793a7356ca0825881be246d5bc1f..abad7c183ae1e4fcc353b9820e57240aa9c441ae 100644
+index de9472ddd03a793a7356ca0825881be246d5bc1f..fcee4780594995cfed67a301cb25d5df488976d5 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -13409,9 +13409,23 @@ static uint64_t vrend_monotonic_ns(void)
+@@ -13409,16 +13409,33 @@ static uint64_t vrend_monotonic_ns(void)
     return (uint64_t)now.tv_sec * 1000000000ull + (uint64_t)now.tv_nsec;
  }
  
 -/* Runs `fn` once for each GL context of every vrend context, with that GL
-- * context current, and leaves current what was current when it was called.
-- * A context in error has no GL context to use and is skipped. */
 +/* The host's word on which contexts are quiet, which a reclaim asks before it
 + * visits a context; without it every context is visited. */
 +static bool (*vrend_context_quiet)(void *data, uint32_t ctx_id);
@@ -139,24 +145,25 @@ index de9472ddd03a793a7356ca0825881be246d5bc1f..abad7c183ae1e4fcc353b9820e57240a
 +   vrend_context_quiet_data = quiet ? data : NULL;
 +}
 +
-+/* Runs `fn` once for each GL context of every vrend context the host finds
-+ * quiet, with that GL context current, and leaves current what was current
-+ * when it was called.  A context in error has no GL context to use and is
-+ * skipped. */
- static void vrend_for_each_gl_context(void (*fn)(void))
++/* Runs `fn` once for each GL context of every vrend context, or with
++ * `quiet_only` of every vrend context the host finds quiet, with that GL
+  * context current, and leaves current what was current when it was called.
+  * A context in error has no GL context to use and is skipped. */
+-static void vrend_for_each_gl_context(void (*fn)(void))
++static void vrend_for_each_gl_context(void (*fn)(void), bool quiet_only)
  {
     struct vrend_context *current = vrend_state.current_ctx;
-@@ -13419,6 +13433,9 @@ static void vrend_for_each_gl_context(void (*fn)(void))
+ 
     list_for_each_entry(struct vrend_context, ctx, &vrend_state.contexts, all_head) {
        if (!ctx->sub || (ctx->ctx_id != 0 && ctx->in_error))
           continue;
-+      if (vrend_context_quiet &&
++      if (quiet_only && vrend_context_quiet &&
 +          !vrend_context_quiet(vrend_context_quiet_data, ctx->ctx_id))
 +         continue;
  
        struct vrend_sub_context *selected = ctx->sub;
        list_for_each_entry(struct vrend_sub_context, sub, &ctx->sub_ctxs, head) {
-@@ -13452,17 +13469,19 @@ static void vrend_reclaim_trim(void)
+@@ -13452,17 +13469,22 @@ static void vrend_reclaim_trim(void)
  #endif
  }
  
@@ -171,27 +178,36 @@ index de9472ddd03a793a7356ca0825881be246d5bc1f..abad7c183ae1e4fcc353b9820e57240a
 - * false when a reclaim a moment ago did not help and nothing has been
 - * destroyed since: there is nothing new to give back.  The host then waits,
 - * for a moment at most, for what was freed to count in its budget. */
-+/* Gives back what the renderer can reach that holds storage for work that has
-+ * completed or is about to, and that nothing is using: it flushes every GL
-+ * context of a quiet vrend context so that what glthread and the threaded
-+ * context still queue (the deletes of resources the guest has released among
-+ * it) reaches the driver, waits for the GPU to finish that work, trims those
-+ * contexts so the driver drops the references their completed batches kept,
-+ * frees the shared-memory segments whose fences have signalled, and then asks
-+ * the host drivers to free what they cache and have not used for a while.
-+ * A context that is still drawing keeps its storage: it would allocate it
-+ * again at once, past the refusal.  Returns false when a reclaim a moment ago
-+ * did not help and nothing has been destroyed since: there is nothing new to
-+ * give back.  The host then waits, for a moment at most, for what was freed
-+ * to count in its budget. */
++/* Gives back what the renderer can reach that nothing uses any more.  Every GL
++ * context is trimmed, so the driver drops the references its completed
++ * batches keep to resources the guest has released: that memory is garbage,
++ * and taking it again goes through the budget that refused.  A vrend context
++ * the host finds quiet is first flushed, so that what glthread and the
++ * threaded context still queue (the deletes of resources the guest has
++ * released among it) reaches the driver, and finished, so that its last batch
++ * has completed when the trim looks; a context that is still drawing is not,
++ * since a flush would submit its frame early and a finish would stall it.
++ * The shared-memory segments whose fences have signalled are freed, and the
++ * host drivers are asked for what they cache: buffers that were freed, at any
++ * age, and the command storage they have left unused for a while, which a
++ * drawing context would take again past the refusal.  Returns false when a
++ * reclaim a moment ago did not help and nothing has been destroyed since:
++ * there is nothing new to give back.  The host then waits, for a moment at
++ * most, for what was freed to count in its budget. */
  static bool vrend_reclaim_host_memory(void)
  {
     if (vrend_state.reclaim_futile_ns &&
-@@ -13475,7 +13494,8 @@ static bool vrend_reclaim_host_memory(void)
-    vrend_for_each_gl_context(vrend_reclaim_flush);
-    vrend_for_each_gl_context(vrend_reclaim_finish);
-    vrend_for_each_gl_context(vrend_reclaim_trim);
+@@ -13472,10 +13494,11 @@ static bool vrend_reclaim_host_memory(void)
+ 
+    if (vrend_clicbs->reclaim_begin)
+       vrend_clicbs->reclaim_begin();
+-   vrend_for_each_gl_context(vrend_reclaim_flush);
+-   vrend_for_each_gl_context(vrend_reclaim_finish);
+-   vrend_for_each_gl_context(vrend_reclaim_trim);
 -   vrend_drain_retired_shm(true);
++   vrend_for_each_gl_context(vrend_reclaim_flush, true);
++   vrend_for_each_gl_context(vrend_reclaim_finish, true);
++   vrend_for_each_gl_context(vrend_reclaim_trim, false);
 +   /* Only the contexts the host found quiet were finished. */
 +   vrend_drain_retired_shm(!vrend_context_quiet);
  #ifdef HAVE_EPOXY_EGL_H

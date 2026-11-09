@@ -265,14 +265,14 @@ process past B. The ledger counts a heap only once its pages are resident, so
 the driver makes each heap resident before its reservation ends, and a burst of
 creations with no work between them is refused at B
 (`gpu-host-gl-allocation-burst`). A reservation that does not fit first frees
-what the host GL driver has cached unused for a while and is decided again.
-Memory the host frees leaves Metal's counter at once but the ledger only later,
-within milliseconds or at its next sweep. The pool sees the release in Metal's
-counter, and when the request would fit once the ledger had caught up with it,
-waits for the ledger (re-reading it every millisecond, for 300 ms at most)
-rather than refuse. A request that follows no release, or would not fit even
-then, is refused at once, and a wait that reached its bound is not repeated
-until Metal's counter falls again.
+the buffers the host GL driver caches, and the command storage it has left
+unused for a while, and is decided again. Memory the host frees leaves Metal's
+counter at once but the ledger only later, within milliseconds or at its next
+sweep. The pool sees the release in Metal's counter, and when the request would
+fit once the ledger had caught up with it, waits for the ledger (re-reading it
+every millisecond, for 300 ms at most) rather than refuse. A request that
+follows no release, or would not fit even then, is refused at once, and a wait
+that reached its bound is not repeated until Metal's counter falls again.
 
 - `vkAllocateMemory` of any type is refused with
   `VK_ERROR_OUT_OF_DEVICE_MEMORY` when the pool cannot hold it. That covers
@@ -284,13 +284,16 @@ until Metal's counter falls again.
   surface and decoder surfaces are counted and never refused, and they, with
   the geometry heap floor below, are the only way usage passes B.
 - OpenGL: a refused texture or buffer makes the renderer give back what it holds
-  for finished work and create the resource once more: it finishes and trims
-  only the contexts that have been quiet for a second, frees the deferred
-  shared-memory segments whose work has finished and what the host drivers have
-  cached unused for about a second, and waits for the freed memory to count in
-  the pool, for 300 ms at most (`gpu-host-gl-reclaim-retry`), so a refusal stays
-  final for a workload that is still drawing. A reclaim that did not help rules
-  out another until a resource has been destroyed or a quarter of a second has
+  for finished work and create the resource once more: it trims every context,
+  so the driver drops what completed batches still hold of the resources the
+  guest released, finishing first only the contexts that have been quiet for a
+  second, frees the deferred shared-memory segments whose work has finished and
+  the buffers the host drivers cache, and waits for the freed memory to count in
+  the pool, for 300 ms at most (`gpu-host-gl-reclaim-retry`). Taking any of that
+  again goes through the pool. The drivers' command storage does not, so it goes
+  only once it has been unused for about a second, and a refusal stays final for
+  a workload that is still drawing. A reclaim that did not help rules out
+  another until a resource has been destroyed or a quarter of a second has
   passed. A resource that still does not fit fails the creation with `ENOMEM`,
   which the device answers as out of memory when the guest created the resource
   with its own command: the guest kernel fails the creation ioctl and the

@@ -257,8 +257,8 @@ int checkGlDispatchResult(int result) noexcept
 }
 
 /* The renderer's reclaim before a refusal asks this of every context: only a
- * quiet one gives back what it holds, since a context that is still drawing
- * would allocate it again at once. */
+ * quiet one is flushed and waited for, since doing that to a context that is
+ * still drawing would submit its frame early or stall it. */
 bool contextQuiet(void* data, std::uint32_t contextId) noexcept
 {
     try {

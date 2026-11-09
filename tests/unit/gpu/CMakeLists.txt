@@ -355,10 +355,10 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY TIMEOUT 120)
 
-    # A creation the budget refuses only because a quiet guest context still
-    # holds its deleted textures is not refused: the renderer finishes and
-    # trims the quiet contexts, then creates the resource again. A real
-    # overcommit still fails with ENOMEM, in bounded time.
+    # A creation the budget refuses only because another guest context still
+    # holds its deleted textures is not refused: the renderer trims every
+    # context, then creates the resource again. A real overcommit still fails
+    # with ENOMEM, in bounded time.
     uml_add_gpu_unit_test(gpu-host-gl-reclaim-retry
         uml_gpu_host_gl_reclaim_retry_tests
         host_gl_reclaim_retry_tests.cpp
@@ -394,10 +394,9 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY TIMEOUT 120)
 
-    # The device memory pool frees what the host GL driver has cached unused
-    # before it refuses a reservation: the driver releases it for any thread,
-    # with no context current (EGL_MESA_context_trim), and keeps what was
-    # just used.
+    # The device memory pool frees the host GL driver's cache before it
+    # refuses a reservation: the driver releases it for any thread, with no
+    # context current (EGL_MESA_context_trim).
     uml_add_gpu_unit_test(gpu-host-cached-memory-release
         uml_gpu_host_cached_memory_release_tests
         host_gl_cached_memory_release_tests.cpp

@@ -82,10 +82,10 @@ index e5abea2d435442ccf5bdc28fd0eda78f228b5cbd..67292e09a8f61c4e81d8cfe25fb53bb6
  virgl_renderer_export_fence(uint64_t client_fence_id, int *fd)
  {
 diff --git a/src/virglrenderer.h b/src/virglrenderer.h
-index 49c22f5ed98560b693d64e7bdcabecac258cae32..512f5e967635fea7ad564e6737ce71ec6a5b5a74 100644
+index 601353e1c27b51a2b11e05906072ac04aa63bf22..4f6f490045c3a578ec5b84bc0b35ea75c1a3221e 100644
 --- a/src/virglrenderer.h
 +++ b/src/virglrenderer.h
-@@ -675,6 +675,18 @@ virgl_renderer_set_device_memory_pool(
+@@ -676,6 +676,18 @@ virgl_renderer_set_device_memory_pool(
  VIRGL_EXPORT uint64_t
  virgl_renderer_get_imported_host_memory(void);
  
