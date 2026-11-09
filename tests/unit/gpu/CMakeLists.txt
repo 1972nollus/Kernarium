@@ -394,9 +394,10 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY TIMEOUT 120)
 
-    # The device memory pool frees the host GL driver's cache before it
-    # refuses a reservation: the driver releases it for any thread, with no
-    # context current (EGL_MESA_context_trim).
+    # The device memory pool frees what the host GL driver has cached unused
+    # before it refuses a reservation: the driver releases it for any thread,
+    # with no context current (EGL_MESA_context_trim), and keeps what was
+    # just used.
     uml_add_gpu_unit_test(gpu-host-cached-memory-release
         uml_gpu_host_cached_memory_release_tests
         host_gl_cached_memory_release_tests.cpp
