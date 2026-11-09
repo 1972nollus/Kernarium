@@ -81,6 +81,51 @@ struct RulerThinningTests {
         #expect(none.labelEvery > 1 && none.longEvery > 1)
     }
 
+    /// VoiceOver's increment and decrement: one position on a ruler drawn
+    /// whole, the next labelled gibibyte on a thinned one.
+    @Test func anAccessibilityStepFollowsTheThinnedLabels() {
+        // The memory ruler from 1.5 GiB: position 8 is 2 GiB, every 16 more is one.
+        let stops = (1536...65536).filter { $0 % 64 == 0 }
+        func gib(_ index: Int) -> Int { stops[index] / 1024 }
+        func isLongTick(_ index: Int) -> Bool { stops[index] % 1024 == 0 }
+        let thinned = memory(stops: stops.count, width: 316)
+        func step(_ index: Int, forward: Bool, floor: Int = 0) -> Int {
+            thinned.adjusted(from: index, forward: forward, floor: floor, count: stops.count) {
+                isLongTick($0) && thinned.labels(gib($0))
+            }
+        }
+        // Up from the bottom: 5, 10 ... 60 GiB, then the end of the range.
+        var index = 0
+        var visited: [Int] = []
+        while index < stops.count - 1 {
+            index = step(index, forward: true)
+            visited.append(gib(index))
+        }
+        #expect(visited == Array(stride(from: 5, through: 60, by: 5)) + [64])
+        // And down again, 60 ... 5 GiB, then the bottom.
+        visited = []
+        while index > 0 {
+            index = step(index, forward: false)
+            visited.append(gib(index))
+        }
+        #expect(visited == Array(stride(from: 60, through: 5, by: -5)).map { $0 } + [1])
+        // From between two labelled sizes, to the next one in the direction.
+        let between = stops.firstIndex(of: 24 * 1024 + 512)!
+        #expect(gib(step(between, forward: true)) == 25)
+        #expect(gib(step(between, forward: false)) == 20)
+        // A floor stops the decrement; the ends stay where they are.
+        let floor = stops.firstIndex(of: 30 * 1024)!
+        #expect(step(floor + 3, forward: false, floor: floor) == floor)
+        #expect(step(stops.count - 1, forward: true) == stops.count - 1)
+        #expect(step(0, forward: false) == 0)
+        // A ruler drawn whole moves one position, as every ruler did.
+        let whole = memory(stops: 41, width: 316, labelWidth: 8)
+        #expect(whole.adjusted(from: 10, forward: true, floor: 0, count: 41) { _ in false } == 11)
+        #expect(whole.adjusted(from: 10, forward: false, floor: 4, count: 41) { _ in false } == 9)
+        #expect(whole.adjusted(from: 4, forward: false, floor: 4, count: 41) { _ in false } == 4)
+        #expect(whole.adjusted(from: 40, forward: true, floor: 0, count: 41) { _ in false } == 40)
+    }
+
     @Test func theIntervalsAreOneTwoFiveAndTheirTens() {
         #expect([0.0, 1, 1.1, 2, 2.1, 5, 5.1, 10, 11, 21, 51, 101, 1234].map(RulerThinning.nice(atLeast:))
             == [1, 1, 2, 2, 5, 5, 10, 10, 20, 50, 100, 200, 2000])

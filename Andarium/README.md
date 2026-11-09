@@ -204,7 +204,8 @@ control out.
   guest's RAM.
   The memory ruler follows the range, which on a Mac with much RAM has about
   a thousand positions: it labels only the round numbers of gibibytes that do
-  not touch and draws the ticks that have room (`RulerThinning`).
+  not touch and draws the ticks that have room (`RulerThinning`), and
+  VoiceOver's increment and decrement then move to the next labelled one.
 - **Storage.** A guest's files live in `Library/Guest/` of the application's
   container behind `GuestStorage`. The system disk is Android's, read-only, and
   stays in the release directory; the runtime creates the data disk `data.img`

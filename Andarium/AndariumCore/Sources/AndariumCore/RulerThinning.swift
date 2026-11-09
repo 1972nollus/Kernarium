@@ -50,6 +50,26 @@ public struct RulerThinning: Equatable, Sendable {
         number % longEvery == 0 || labels(number)
     }
 
+    /// Where an accessibility increment (`forward`) or decrement of a ruler
+    /// at `index` goes, among its `count` positions and no lower than `floor`.
+    /// One position where the ruler is drawn whole. Where its labels are
+    /// thinned it is the next labelled long tick in that direction
+    /// (`isLabelled` says which positions are), so a thousand positions are
+    /// not a thousand swipes, and the end of the ruler when there is none.
+    public func adjusted(
+        from index: Int, forward: Bool, floor: Int, count: Int, isLabelled: (Int) -> Bool
+    ) -> Int {
+        let last = count - 1
+        let neighbour = forward ? min(last, index + 1) : max(floor, index - 1)
+        guard labelEvery > 1 else { return neighbour }
+        var position = neighbour
+        while forward ? position < last : position > floor {
+            if isLabelled(position) { return position }
+            position += forward ? 1 : -1
+        }
+        return forward ? last : floor
+    }
+
     /// The least of 1, 2, 5, 10, 20, 50, 100 ... that is at least `value`.
     static func nice(atLeast value: Double) -> Int {
         var scale = 1

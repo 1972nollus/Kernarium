@@ -33,6 +33,9 @@ struct Ruler: View {
     var accessibilityName: String = ""
 
     @State private var dragging = false
+    /// The width the ruler is laid out at, which decides how much of it is
+    /// thinned, for the accessibility steps outside the layout pass.
+    @State private var width: CGFloat = 0
     /// A drag that starts mostly vertical belongs to the scroll view.
     @State private var horizontal: Bool?
 
@@ -130,16 +133,29 @@ struct Ruler: View {
             )
         }
         .frame(height: 52)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .sensoryFeedback(.selection, trigger: index)
         .accessibilityElement()
         .accessibilityLabel(accessibilityName)
         .accessibilityValue((valueText ?? label)(index))
         .accessibilityAdjustableAction { direction in
             switch direction {
-            case .increment: index = min(count - 1, index + 1)
-            case .decrement: index = max(floor, index - 1)
+            case .increment: index = adjusted(forward: true)
+            case .decrement: index = adjusted(forward: false)
             @unknown default: break
             }
+        }
+    }
+
+    /// Where VoiceOver's increment or decrement goes: one position, or on a
+    /// ruler whose labels are thinned the next labelled one.
+    private func adjusted(forward: Bool) -> Int {
+        let positionWidth = (width - inset * 2) / CGFloat(max(count - 1, 1))
+        guard let thinning = makeThinning(positionWidth: positionWidth), thinning.labelEvery > 1 else {
+            return forward ? min(count - 1, index + 1) : max(floor, index - 1)
+        }
+        return thinning.adjusted(from: index, forward: forward, floor: floor, count: count) { position in
+            (position - majorOffset) % majorEvery == 0 && thinning.labels(number(position))
         }
     }
 
@@ -147,7 +163,7 @@ struct Ruler: View {
     /// numbers to thin by, and then all of it is. A label is about 7.5 points
     /// to a character.
     private func makeThinning(positionWidth: CGFloat) -> RulerThinning? {
-        guard majorNumber != nil, count > 1 else { return nil }
+        guard majorNumber != nil, count > 1, positionWidth > 0 else { return nil }
         let longest = stride(from: max(majorOffset, 0), to: count, by: majorEvery)
             .map { label($0).count }.max() ?? 1
         return RulerThinning(
