@@ -450,6 +450,15 @@ uml_add_guest_integration_test(
     TIMEOUT 300
     CPUS 2)
 
+# Two-vCPU guest: a serial line opens, and the kernel's boot log reaches the
+# host, however late the host starts reading the console.
+uml_add_guest_integration_test(
+    NAME guest-console-late-reader
+    SCRIPT console/run_guest_console_late_reader.py
+    LABELS guest;console;smoke
+    TIMEOUT 300
+    CPUS 2)
+
 # Two-vCPU guest: output a serial line still queues when the guest powers off
 # reaches the host.
 uml_add_guest_integration_test(
