@@ -90,6 +90,7 @@ public struct GuestTreeItem: Equatable, Sendable {
     public var relativePath: String
     public var isFolder: Bool
     public var size: UInt64
+    public var modified: Date
 }
 
 /// Why a file operation did not do what was asked, besides the adb channel's
@@ -108,6 +109,8 @@ public enum GuestFilesError: Error, Equatable, Sendable {
     case changed
     /// The guest has less free room than the transfer needs.
     case guestFull(needed: UInt64, free: UInt64)
+    /// The device has less free room than the transfer needs (`TransferRoom`).
+    case deviceFull(needed: UInt64, free: UInt64)
     /// The path is not inside internal storage, or its name is not one a file
     /// can have.
     case badPath
@@ -128,22 +131,39 @@ public enum GuestFiles {
     /// partial files of an import.
     public static func isHidden(_ name: String) -> Bool { name.hasPrefix(".") }
 
-    /// The folder's entries, hidden ones left out. A directory that the
-    /// device cannot open lists nothing at all, where an empty one lists `.`
-    /// and `..` (`AdbSync.list`), so no entry at all is `refused`, or
-    /// `missing` when the folder is not there.
-    public static func list(_ folder: String, using sync: AdbSync) throws -> [GuestEntry] {
+    /// The folder's entries, hidden ones left out. adbd lists a folder it
+    /// cannot open as it lists an empty one, with no entries (some folders
+    /// list `.` and `..` and nothing else), so a listing with nothing in it is
+    /// checked with the shell: `refused` when Android does not let the shell
+    /// user open the folder, `missing` when it is not there.
+    public static func list(_ folder: String, on connection: AdbConnection) throws -> [GuestEntry] {
         guard GuestFilePath.isInsideRoot(folder) else { throw GuestFilesError.badPath }
-        let raw = try sync.list(folder)
-        if raw.isEmpty {
-            guard try sync.stat(folder).exists else { throw GuestFilesError.missing }
-            throw GuestFilesError.refused
-        }
+        let sync = try AdbSync(connection: connection)
+        var raw: [AdbDirectoryEntry]
         var entries: [GuestEntry] = []
-        for item in raw where item.name != "." && item.name != ".." && !isHidden(item.name) {
-            if let entry = try entry(for: item, in: folder, using: sync) { entries.append(entry) }
+        do {
+            raw = try sync.list(folder)
+            raw.removeAll { $0.name == "." || $0.name == ".." }
+            for item in raw where !isHidden(item.name) {
+                if let entry = try entry(for: item, in: folder, using: sync) { entries.append(entry) }
+            }
+        } catch {
+            sync.quit()
+            throw error
         }
+        sync.quit()
+        if raw.isEmpty { try checkReadable(folder, on: connection) }
         return entries
+    }
+
+    /// Throws `refused` or `missing` unless the shell user can open `folder`.
+    public static func checkReadable(_ folder: String, on connection: AdbConnection) throws {
+        guard GuestFilePath.isInsideRoot(folder) else { throw GuestFilesError.badPath }
+        let result = try connection.runShell("ls -A -- \(quotedForShell(folder)) >/dev/null")
+        guard result.exitCode != 0 else { return }
+        let text = String(decoding: result.stderr, as: UTF8.self)
+        throw text.contains("No such file") || text.contains("Not a directory")
+            ? GuestFilesError.missing : GuestFilesError.refused
     }
 
     /// A file or folder as listed. A link stands for what it points at,
@@ -168,9 +188,9 @@ public enum GuestFiles {
     }
 
     /// Every file and folder below `folder`, parents before their children.
-    /// Links are not followed, and a folder the device refuses is left out:
-    /// an export carries what the shell user can read. `visit` is called for
-    /// each directory listed, to show signs of life on a large tree.
+    /// Links are not followed, and a folder the shell user cannot open
+    /// comes out empty, as adbd lists it. `visit` is called for each
+    /// directory listed, to show signs of life on a large tree.
     public static func walk(_ folder: String, using sync: AdbSync, visit: () -> Void = {}) throws -> [GuestTreeItem] {
         guard GuestFilePath.isInsideRoot(folder) else { throw GuestFilesError.badPath }
         var items: [GuestTreeItem] = []
@@ -178,27 +198,19 @@ public enum GuestFiles {
         while let next = pending.popLast() {
             visit()
             let raw = try sync.list(next.path)
-            if raw.isEmpty {
-                // The exported folder itself cannot be read, or a folder below
-                // it cannot and is left out.
-                guard !next.relative.isEmpty else {
-                    throw try sync.stat(folder).exists ? GuestFilesError.refused : GuestFilesError.missing
-                }
-                items.removeAll { $0.relativePath == next.relative }
-                continue
-            }
             var folders: [(String, String)] = []
             for item in raw where item.name != "." && item.name != ".." && !isPartial(item.name) {
                 let relative = next.relative.isEmpty ? item.name : next.relative + "/" + item.name
                 let type = item.mode & AdbFileMode.typeMask
+                let modified = Date(timeIntervalSince1970: TimeInterval(item.modified))
                 if type == AdbFileMode.directory {
-                    items.append(GuestTreeItem(relativePath: relative, isFolder: true, size: 0))
+                    items.append(GuestTreeItem(relativePath: relative, isFolder: true, size: 0, modified: modified))
                     folders.append((GuestFilePath.child(item.name, of: next.path), relative))
                 } else if type == AdbFileMode.regular {
-                    items.append(GuestTreeItem(relativePath: relative, isFolder: false, size: item.size))
+                    items.append(GuestTreeItem(relativePath: relative, isFolder: false, size: item.size, modified: modified))
                 }
             }
-            // Depth first, in listing order.
+            // A folder's own entries are listed when the walk reaches it.
             pending.append(contentsOf: folders.reversed())
         }
         return items
@@ -339,10 +351,27 @@ public enum GuestFiles {
     // MARK: Media
 
     /// Asks the guest's media index to look at new files, so its gallery
-    /// shows them.
+    /// shows them. A file moved in through the storage emulation has only a
+    /// partial index row until it is scanned; the media provider's own scan
+    /// call completes it, which the old scanner broadcast does not.
     public static func scanCommand(for paths: [String]) -> String {
         paths.map { path in
-            "am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d \(quotedForShell("file://" + path))"
+            "content call --uri content://media/external_primary/file --method scan_file --arg \(quotedForShell(path))"
         }.joined(separator: "; ")
+    }
+}
+
+/// What a transfer leaves free on the device. An import grows the guest's data
+/// disk and an export stages a copy, and the run is paused for want of space
+/// below `RunSpace.pauseBelowBytes`, so a transfer that would take the device
+/// there is refused before it starts, not stopped half way by the pause. The
+/// system and the share sheet need some room besides.
+public enum TransferRoom {
+    public static let deviceReserveBytes: UInt64 = RunSpace.pauseBelowBytes + 256 * Bytes.mib
+
+    /// Whether the device, with `free` bytes, can take `bytes` and keep its
+    /// reserve.
+    public static func deviceHasRoom(for bytes: UInt64, free: UInt64) -> Bool {
+        free >= bytes && free - bytes >= deviceReserveBytes
     }
 }

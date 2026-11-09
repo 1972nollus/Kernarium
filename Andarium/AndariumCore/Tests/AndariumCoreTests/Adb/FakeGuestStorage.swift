@@ -6,9 +6,10 @@ import Testing
 @testable import AndariumCore
 
 /// A guest's internal storage on a fake adbd: a table of paths that its sync
-/// service and shell answer from, the way adbd's `file_sync_service` does. A
-/// folder it cannot open lists nothing at all, where a readable one lists `.`
-/// and `..` first.
+/// service and shell answer from, the way a real guest's adbd does (checked on
+/// one): a folder lists its entries without `.` and `..`, an empty one lists
+/// nothing, and so does one the shell user cannot open, which only the shell's
+/// `ls` tells apart.
 final class FakeGuestStorage: @unchecked Sendable {
     enum Node: Equatable {
         case file(Data, mtime: Int64)
@@ -18,6 +19,9 @@ final class FakeGuestStorage: @unchecked Sendable {
         case link(String)
         /// A folder `opendir` refuses.
         case refused
+        /// A readable folder that lists `..` and `.` and nothing else, as the
+        /// FUSE view of `Android/data` does.
+        case dotted
     }
 
     /// What the sync service was asked, in order.
@@ -37,8 +41,9 @@ final class FakeGuestStorage: @unchecked Sendable {
     var refuseSend: String?
     /// Keeps the last byte of a sent file back, as a full disk would.
     var truncatesSends = false
-    /// What the shell answers: the exit status for a command.
-    var shell: @Sendable (String) -> (exit: Int, stderr: String) = { _ in (0, "") }
+    /// What the shell answers: the exit status for a command. Without one it
+    /// answers the `ls` that checks a folder, and succeeds at anything else.
+    var shell: (@Sendable (String) -> (exit: Int, stderr: String))?
 
     init(_ nodes: [String: Node] = [:]) {
         table = nodes
@@ -57,13 +62,24 @@ final class FakeGuestStorage: @unchecked Sendable {
             "shell,v2,raw:*": { [self] stream in
                 let command = String(stream.service.dropFirst("shell,v2,raw:".count))
                 lock.withLock { commands.append(command) }
-                let result = shell(command)
+                let result = shell?(command) ?? answer(command)
                 if !result.stderr.isEmpty {
                     try stream.send(ShellPacket(id: ShellPacket.stderr, data: Data(result.stderr.utf8)).encoded())
                 }
                 try stream.send(ShellPacket(id: ShellPacket.exit, data: Data([UInt8(result.exit)])).encoded())
             },
         ]
+    }
+
+    private func answer(_ command: String) -> (exit: Int, stderr: String) {
+        let prefix = "ls -A -- '"
+        guard command.hasPrefix(prefix), command.hasSuffix("' >/dev/null") else { return (0, "") }
+        let path = String(command.dropFirst(prefix.count).dropLast("' >/dev/null".count))
+        switch lock.withLock({ table[path] }) {
+        case nil: return (1, "ls: \(path): No such file or directory\n")
+        case .refused?: return (1, "ls: \(path): Permission denied\n")
+        default: return (0, "")
+        }
     }
 
     // MARK: Sync
@@ -86,7 +102,7 @@ final class FakeGuestStorage: @unchecked Sendable {
     private func mode(of node: Node) -> UInt32 {
         switch node {
         case .file, .large: 0o100644
-        case .folder, .refused: 0o040755
+        case .folder, .refused, .dotted: 0o040755
         case .link: 0o120777
         }
     }
@@ -207,11 +223,12 @@ final class FakeGuestStorage: @unchecked Sendable {
     private func listing(_ folder: String, v2: Bool) -> Data {
         var bytes = Data()
         let tag = v2 ? "DNT2" : "DENT"
-        // `lstat` of the folder itself decides whether it opens.
         let own = lock.withLock { table[folder] }
-        if own == .folder {
-            bytes.append(dent(v2: v2, id: tag, name: ".", node: .folder))
+        if own == .dotted {
             bytes.append(dent(v2: v2, id: tag, name: "..", node: .folder))
+            bytes.append(dent(v2: v2, id: tag, name: ".", node: .folder))
+        }
+        if own == .folder || own == .dotted {
             for child in children(of: folder) {
                 bytes.append(dent(v2: v2, id: tag, name: child.name, node: child.node))
             }

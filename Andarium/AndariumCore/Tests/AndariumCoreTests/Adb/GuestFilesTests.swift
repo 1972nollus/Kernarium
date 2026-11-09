@@ -33,10 +33,10 @@ struct AdbSyncListAndSendTests {
         let connection = try connected(adbd)
         let sync = try AdbSync(connection: connection)
         let entries = try sync.list(root)
-        #expect(entries.map(\.name) == [".", "..", "Movies", "clip.mov"])
+        #expect(entries.map(\.name) == ["Movies", "clip.mov"])
         let clip = try #require(entries.last)
         #expect(clip.size == 5_000_000_000 && clip.modified == 1_760_000_000 && !clip.isDirectory)
-        #expect(entries[2].isDirectory)
+        #expect(entries[0].isDirectory)
         #expect(guest.requests == [.list(root)])
         #expect(try sync.stat(root + "/clip.mov").size == 5_000_000_000)
     }
@@ -48,20 +48,26 @@ struct AdbSyncListAndSendTests {
         let connection = try connected(adbd)
         let sync = try AdbSync(connection: connection)
         let entries = try sync.list(root)
-        #expect(entries.map(\.name) == [".", "..", "a.txt", "big"])
-        #expect(entries[2].size == 3 && entries[2].modified == 5)
+        #expect(entries.map(\.name) == ["a.txt", "big"])
+        #expect(entries[0].size == 3 && entries[0].modified == 5)
         // Version 1 sizes are 32-bit, which is why the client asks for 2.
-        #expect(entries[3].size == 5_000_000_000 % (1 << 32))
+        #expect(entries[1].size == 5_000_000_000 % (1 << 32))
     }
 
-    @Test func aFolderTheDeviceCannotOpenListsNothingAndTheSessionGoesOn() throws {
-        let guest = storage([root + "/Android": .folder, root + "/Android/data": .refused])
+    @Test func anEmptyFolderAndOneTheDeviceCannotOpenBothListNothing() throws {
+        let guest = storage([
+            root + "/Empty": .folder, root + "/Private": .refused, root + "/Android": .folder,
+            root + "/Android/data": .dotted,
+        ])
         let adbd = FakeAdbd(features: v2Features, services: guest.services)
         defer { adbd.shutdown() }
         let connection = try connected(adbd)
         let sync = try AdbSync(connection: connection)
-        #expect(try sync.list(root + "/Android/data").isEmpty)
-        // The terminator was read whole, so the next request is understood.
+        #expect(try sync.list(root + "/Empty").isEmpty)
+        #expect(try sync.list(root + "/Private").isEmpty)
+        // The FUSE view of Android/data lists the two and nothing else.
+        #expect(try sync.list(root + "/Android/data").map(\.name) == ["..", "."])
+        // Each terminator was read whole, so the next request is understood.
         #expect(try sync.stat(root + "/Android").isDirectory)
     }
 
@@ -161,25 +167,35 @@ struct GuestFilesListingTests {
         let adbd = FakeAdbd(features: v2Features, services: guest.services)
         defer { adbd.shutdown() }
         let connection = try connected(adbd)
-        let sync = try AdbSync(connection: connection)
-        let entries = try GuestFiles.list(root, using: sync)
+        let entries = try GuestFiles.list(root, on: connection)
         #expect(entries.map(\.name) == ["Alias.txt", "DCIM", "Notes.txt", "Shortcut"])
         let alias = try #require(entries.first { $0.name == "Alias.txt" })
         #expect(!alias.isFolder && alias.size == 42)
         let shortcut = try #require(entries.first { $0.name == "Shortcut" })
         #expect(shortcut.isFolder && shortcut.size == 0)
         #expect(entries.first { $0.name == "Notes.txt" }?.modified == Date(timeIntervalSince1970: 1_700_000_000))
+        // A folder with entries needs no second look.
+        #expect(guest.shellCommands.isEmpty)
     }
 
     @Test func anEmptyFolderIsNotARefusedOne() throws {
-        let guest = storage([root + "/Audiobooks": .folder, root + "/Android/data": .refused, root + "/Android": .folder])
+        let guest = storage([
+            root + "/Audiobooks": .folder, root + "/Android": .folder, root + "/Android/data": .dotted,
+            root + "/Private": .refused, root + "/Hidden": .folder, root + "/Hidden/.nomedia": .file(Data(), mtime: 1),
+        ])
         let adbd = FakeAdbd(features: v2Features, services: guest.services)
         defer { adbd.shutdown() }
         let connection = try connected(adbd)
-        let sync = try AdbSync(connection: connection)
-        #expect(try GuestFiles.list(root + "/Audiobooks", using: sync).isEmpty)
-        #expect(throws: GuestFilesError.refused) { try GuestFiles.list(root + "/Android/data", using: sync) }
-        #expect(throws: GuestFilesError.missing) { try GuestFiles.list(root + "/Gone", using: sync) }
+        // adbd lists an empty folder and a folder it cannot open alike.
+        #expect(try GuestFiles.list(root + "/Audiobooks", on: connection).isEmpty)
+        #expect(try GuestFiles.list(root + "/Android/data", on: connection).isEmpty)
+        #expect(throws: GuestFilesError.refused) { try GuestFiles.list(root + "/Private", on: connection) }
+        #expect(throws: GuestFilesError.missing) { try GuestFiles.list(root + "/Gone", on: connection) }
+        // A folder of hidden files has entries, which the shell need not confirm.
+        let before = guest.shellCommands.count
+        #expect(try GuestFiles.list(root + "/Hidden", on: connection).isEmpty)
+        #expect(guest.shellCommands.count == before)
+        #expect(guest.shellCommands.contains("ls -A -- '\(root)/Private' >/dev/null"))
     }
 
     @Test func aPathOutsideInternalStorageIsNeverListed() throws {
@@ -187,14 +203,24 @@ struct GuestFilesListingTests {
         let adbd = FakeAdbd(features: v2Features, services: guest.services)
         defer { adbd.shutdown() }
         let connection = try connected(adbd)
-        let sync = try AdbSync(connection: connection)
         for path in ["/", "/data", root + "/..", root + "/../../data", "/storage/emulated/01", root + "//x"] {
-            #expect(throws: GuestFilesError.badPath) { try GuestFiles.list(path, using: sync) }
+            #expect(throws: GuestFilesError.badPath) { try GuestFiles.list(path, on: connection) }
+            #expect(throws: GuestFilesError.badPath) { try GuestFiles.checkReadable(path, on: connection) }
         }
-        #expect(guest.requests.isEmpty)
+        #expect(guest.requests.isEmpty && guest.shellCommands.isEmpty)
     }
 
-    @Test func aWalkSeesEveryReadableFileBelowAFolder() throws {
+    @Test func theListingSessionIsClosedBeforeTheShellIsAsked() throws {
+        let guest = storage([root + "/Empty": .folder])
+        let adbd = FakeAdbd(features: v2Features, services: guest.services)
+        defer { adbd.shutdown() }
+        let connection = try connected(adbd)
+        _ = try GuestFiles.list(root + "/Empty", on: connection)
+        #expect(guest.requests == [.list(root + "/Empty"), .quit])
+        #expect(adbd.servicesOpened.map { $0.hasPrefix("shell") ? "shell" : $0 } == ["sync:", "shell"])
+    }
+
+    @Test func aWalkSeesEveryFileBelowAFolder() throws {
         let guest = storage([
             root + "/Trip": .folder,
             root + "/Trip/a.jpg": .file(Data(count: 10), mtime: 1),
@@ -211,20 +237,13 @@ struct GuestFilesListingTests {
         let sync = try AdbSync(connection: connection)
         var visits = 0
         let items = try GuestFiles.walk(root + "/Trip", using: sync, visit: { visits += 1 })
-        #expect(items.map(\.relativePath) == ["Day 2", "a.jpg", "Day 2/.nomedia", "Day 2/b.jpg"])
+        // A folder the shell cannot open comes out as an empty one; links and
+        // partial files are not carried.
+        #expect(items.map(\.relativePath) == ["Day 2", "Private", "a.jpg", "Day 2/.nomedia", "Day 2/b.jpg"])
         #expect(items.filter { !$0.isFolder }.reduce(0) { $0 + $1.size } == 30)
         #expect(visits == 3)
         // A folder's parent comes before what it holds.
         #expect(items.firstIndex { $0.relativePath == "Day 2" }! < items.firstIndex { $0.relativePath == "Day 2/b.jpg" }!)
-    }
-
-    @Test func aWalkOfAFolderTheDeviceRefusesIsRefused() throws {
-        let guest = storage([root + "/Android/obb": .refused, root + "/Android": .folder])
-        let adbd = FakeAdbd(features: v2Features, services: guest.services)
-        defer { adbd.shutdown() }
-        let connection = try connected(adbd)
-        let sync = try AdbSync(connection: connection)
-        #expect(throws: GuestFilesError.refused) { try GuestFiles.walk(root + "/Android/obb", using: sync) }
     }
 }
 
@@ -400,6 +419,14 @@ struct GuestFilesHelperTests {
         #expect(GuestFiles.guestHasRoom(for: 0, free: reserve))
     }
 
+    @Test func theDeviceKeepsRoomForTheRunsOwnWrites() {
+        let reserve = TransferRoom.deviceReserveBytes
+        #expect(reserve > RunSpace.pauseBelowBytes)
+        #expect(TransferRoom.deviceHasRoom(for: 10, free: 10 + reserve))
+        #expect(!TransferRoom.deviceHasRoom(for: 10, free: 10 + reserve - 1))
+        #expect(!TransferRoom.deviceHasRoom(for: 100, free: 50))
+    }
+
     @Test func pathsStayInsideInternalStorage() {
         #expect(GuestFilePath.isInsideRoot(root))
         #expect(GuestFilePath.isInsideRoot(root + "/DCIM/Camera"))
@@ -443,7 +470,8 @@ struct GuestFilesHelperTests {
 
     @Test func theScanNamesEachFile() {
         let command = GuestFiles.scanCommand(for: [root + "/a b.jpg", root + "/it's.jpg"])
-        #expect(command.contains("'file://\(root)/a b.jpg'"))
-        #expect(command.contains("'file://\(root)/it'\\''s.jpg'"))
+        #expect(command.contains("--method scan_file --arg '\(root)/a b.jpg'"))
+        #expect(command.contains("--arg '\(root)/it'\\''s.jpg'"))
+        #expect(command.components(separatedBy: "; ").count == 2)
     }
 }
