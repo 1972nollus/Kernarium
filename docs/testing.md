@@ -313,8 +313,13 @@ Tooling tests cover `scripts/check-privacy-manifests.py`
 (`ios-privacy-manifests`, which `package-ios-frameworks.sh` also runs on every
 device slice it packages), `Andarium/scripts/check-app-store-bundle.py`
 (`andarium-app-store-bundle`, the last build phase of the AppStore
-configuration, [configurations](../Andarium/README.md#configurations)) and the
-Acknowledgements resource (`andarium-acknowledgements`).
+configuration, [configurations](../Andarium/README.md#configurations)), the
+Acknowledgements resource (`andarium-acknowledgements`) and the stand-in
+debugger that serves the JIT's request for executable memory on a device
+(`andarium-ios-jit-debugger`). The JIT's region route has host tests that run
+on macOS (`arm64-jit-debugger-region`, `arm64-jit-memory-preparation`); a run
+on a device needs a debugger, so `run_ios_device_android.py --engine jit` is its
+lane.
 
 ### UI automation on a device
 
