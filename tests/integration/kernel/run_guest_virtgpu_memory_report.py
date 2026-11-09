@@ -11,7 +11,9 @@ Android's lmkd does: it arms the file, waits with poll(), fills the budget with
 a process, filters the holders, ends the process, has an allocation refused and
 disarms. The probe prints one PASS or FAIL line per check. The runner also
 checks that the launcher's --stats line said "guest-reclaim=on" while the file
-was armed. macOS only.
+was armed, then powers the guest off and checks that the kernel said nothing
+about it: the driver removes its file with the DRM device, at shutdown as at
+removal. macOS only.
 """
 
 from __future__ import annotations
@@ -40,6 +42,14 @@ CHECK = re.compile(r"^(PASS|FAIL) (.*)$", re.MULTILINE)
 RECLAIMING = re.compile(r"uml-darwin: stats .* guest-reclaim=on\s*$", re.MULTILINE)
 # The checks the probe makes, so a probe that stopped early is a failure.
 MINIMUM_CHECKS = 20
+POWEROFF_SECONDS = 60
+# What the kernel prints at power-off when the driver tears its file down in
+# the wrong order ("kernfs: can not remove 'gpu_memory_report', no directory").
+POWEROFF_FAILURE = re.compile(
+    r"^.*(?:WARNING:|BUG:|Oops|Call Trace:|kernfs:|Kernel panic|"
+    r"Darwin UML panic|Kernel mode fault).*$",
+    re.MULTILINE,
+)
 
 
 def main() -> int:
@@ -81,6 +91,8 @@ def main() -> int:
         result = guest.run_command(GUEST_BINARY, arguments.probe_timeout)
         print(result.output.strip())
         console = guest.output()
+        powered_off = guest.shutdown(POWEROFF_SECONDS)
+        poweroff_output = guest.output()[len(console):]
 
     problems = []
     checks = CHECK.findall(result.output)
@@ -97,6 +109,10 @@ def main() -> int:
         problems.append(
             "the launcher's --stats line never said guest-reclaim=on"
         )
+    if not powered_off:
+        problems.append(f"the guest did not power off in {POWEROFF_SECONDS} s")
+    for line in POWEROFF_FAILURE.findall(poweroff_output):
+        problems.append(f"the kernel said at power-off: {line.strip()}")
     if problems:
         raise RuntimeError("; ".join(problems))
     return 0
