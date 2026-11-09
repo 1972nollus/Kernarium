@@ -111,15 +111,6 @@ void ContextIdleTracker::fenceRetired(
     found->second.followUpIn = 0;
 }
 
-bool ContextIdleTracker::quiet(
-    std::uint32_t contextId, Clock::time_point now) const
-{
-    std::lock_guard lock(mutex_);
-    const auto found = contexts_.find(contextId);
-    return found != contexts_.end() && !found->second.hasPendingFence() &&
-        now - found->second.lastActivity >= idleInterval_;
-}
-
 std::vector<std::uint32_t> ContextIdleTracker::takeIdle(Clock::time_point now)
 {
     std::vector<std::uint32_t> idle;

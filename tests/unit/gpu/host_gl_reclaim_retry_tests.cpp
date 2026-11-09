@@ -8,10 +8,9 @@
 // a request that the guest never overcommitted, and the guest sees an out of
 // memory error that browsers answer by losing every WebGL context.
 //
-// The renderer therefore reclaims before it fails a creation: it trims every
-// context it has, whether or not it has just worked, so the driver drops what
-// completed batches still reference, empties the driver's buffer cache, and
-// creates the resource once more. The contract under test:
+// The renderer therefore reclaims before it fails a creation: it finishes and
+// trims every context it has, empties the deferred frees and the driver's
+// caches, and creates the resource once more. The contract under test:
 //
 //  - the creations that fit the budget once the guest's deleted textures are
 //    gone succeed, round after round, although another context holds those

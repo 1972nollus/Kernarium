@@ -347,46 +347,6 @@ void checkSeveralContexts()
         "a reset left a context behind");
 }
 
-/* A reclaim before a refusal visits only the contexts the tracker calls quiet:
- * idle for a whole interval with no fence outstanding, whatever reports were
- * made. Asking changes nothing. */
-void checkQuiet()
-{
-    ContextIdleTracker tracker(1s);
-    tracker.add(first, origin);
-    tracker.add(second, origin);
-
-    require(!tracker.quiet(first, origin + 999ms),
-        "a context was quiet before the interval had passed");
-    require(tracker.quiet(first, origin + 1s),
-        "a context was not quiet after the interval");
-    require(tracker.takeIdle(origin + 1s) == std::vector {first, second},
-        "asking whether a context is quiet reported it");
-    require(tracker.quiet(first, origin + 5s),
-        "a context reported idle was no longer quiet");
-
-    tracker.activity(first, origin + 5s);
-    require(!tracker.quiet(first, origin + 5500ms),
-        "a context that just ran something was quiet");
-    require(tracker.quiet(second, origin + 5500ms),
-        "another context's activity made a context busy");
-
-    tracker.fenceCreated(second, 0, 7, origin + 6s);
-    require(!tracker.quiet(second, origin + 60s),
-        "a context with a fence outstanding was quiet");
-    tracker.fenceRetired(second, 0, 7, origin + 61s);
-    require(!tracker.quiet(second, origin + 61500ms),
-        "the retirement did not start the interval");
-    require(tracker.quiet(second, origin + 62s),
-        "a context was not quiet an interval after its fence retired");
-
-    require(!tracker.quiet(42, origin + 60s),
-        "a context the tracker was not told of was quiet");
-    tracker.remove(first);
-    require(!tracker.quiet(first, origin + 60s),
-        "a removed context was quiet");
-}
-
 void checkThreads()
 {
     /* Retirements come from whichever thread polls the renderer while the
@@ -420,7 +380,6 @@ int main()
     checkActivityMakesTheContextEligibleAgain();
     checkPendingFences();
     checkSeveralContexts();
-    checkQuiet();
     checkThreads();
     return EXIT_SUCCESS;
 }

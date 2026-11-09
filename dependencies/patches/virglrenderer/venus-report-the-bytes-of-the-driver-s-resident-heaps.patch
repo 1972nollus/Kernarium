@@ -60,10 +60,10 @@ index da6106e3dc0098750896116d68e7208982c46b9a..580ec15ee195e4cd67de10e97029cf14
   * before a reclaim frees it: a device that is still recording takes it again
   * within a frame or two. */
 diff --git a/src/virglrenderer.c b/src/virglrenderer.c
-index e5abea2d435442ccf5bdc28fd0eda78f228b5cbd..67292e09a8f61c4e81d8cfe25fb53bb668fcd60f 100644
+index 083774c3ffc08a6f511d0d83be0727b8076efac6..7275c9767adb8ad34b8725e858fede04cbad3e5c 100644
 --- a/src/virglrenderer.c
 +++ b/src/virglrenderer.c
-@@ -1801,6 +1801,17 @@ virgl_renderer_get_imported_host_memory(void)
+@@ -1787,6 +1787,17 @@ virgl_renderer_get_imported_host_memory(void)
  #endif
  }
  
@@ -82,10 +82,10 @@ index e5abea2d435442ccf5bdc28fd0eda78f228b5cbd..67292e09a8f61c4e81d8cfe25fb53bb6
  virgl_renderer_export_fence(uint64_t client_fence_id, int *fd)
  {
 diff --git a/src/virglrenderer.h b/src/virglrenderer.h
-index 601353e1c27b51a2b11e05906072ac04aa63bf22..4f6f490045c3a578ec5b84bc0b35ea75c1a3221e 100644
+index 9335e0ce538787484b4fc3257d6f0030ee5d8c17..3ad1aa3a124dd81f25f7ddee93407cdf1a6d86d3 100644
 --- a/src/virglrenderer.h
 +++ b/src/virglrenderer.h
-@@ -676,6 +676,18 @@ virgl_renderer_set_device_memory_pool(
+@@ -662,6 +662,18 @@ virgl_renderer_set_device_memory_pool(
  VIRGL_EXPORT uint64_t
  virgl_renderer_get_imported_host_memory(void);
  

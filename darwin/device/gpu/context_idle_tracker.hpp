@@ -75,13 +75,6 @@ public:
         std::uint64_t cookie,
         Clock::time_point now);
 
-    /* Whether the context is quiet at `now`: a whole idle interval has passed
-     * since its last activity and no fence it asked for is outstanding. A
-     * context that is not tracked is not quiet. Reports nothing and changes
-     * nothing. */
-    [[nodiscard]] bool quiet(
-        std::uint32_t contextId, Clock::time_point now) const;
-
     /* The contexts to trim at `now`. Each is reported at the end of its idle
      * interval and once more an interval later, then not again until it is
      * active or something was dropped. */

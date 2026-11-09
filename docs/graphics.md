@@ -284,15 +284,12 @@ that reached its bound is not repeated until Metal's counter falls again.
   surface and decoder surfaces are counted and never refused, and they, with
   the geometry heap floor below, are the only way usage passes B.
 - OpenGL: a refused texture or buffer makes the renderer give back what it holds
-  for finished work and create the resource once more: it trims every context,
-  so the driver drops what completed batches still hold of the resources the
-  guest released, finishing first only the contexts that have been quiet for a
-  second, frees the deferred shared-memory segments whose work has finished and
-  the buffers the host drivers cache, and waits for the freed memory to count in
-  the pool, for 300 ms at most (`gpu-host-gl-reclaim-retry`). Taking any of that
-  again goes through the pool. The drivers' command storage does not, so it goes
-  only once it has been unused for about a second, and a refusal stays final for
-  a workload that is still drawing. A reclaim that did not help rules out
+  for finished work and create the resource once more: it finishes and trims
+  every context, frees the deferred shared-memory segments and the buffers the
+  host drivers cache, and waits for the freed memory to count in the pool, for
+  300 ms at most (`gpu-host-gl-reclaim-retry`). Taking any of that again goes
+  through the pool. The drivers' command storage does not, so it goes only once
+  it has been unused for about a second. A reclaim that did not help rules out
   another until a resource has been destroyed or a quarter of a second has
   passed. A resource that still does not fit fails the creation with `ENOMEM`,
   which the device answers as out of memory when the guest created the resource

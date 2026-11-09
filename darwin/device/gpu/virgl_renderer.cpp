@@ -256,19 +256,6 @@ int checkGlDispatchResult(int result) noexcept
     return result == 0 ? EIO : result;
 }
 
-/* The renderer's reclaim before a refusal asks this of every context: only a
- * quiet one is flushed and waited for, since doing that to a context that is
- * still drawing would submit its frame early or stall it. */
-bool contextQuiet(void* data, std::uint32_t contextId) noexcept
-{
-    try {
-        return static_cast<const ContextIdleTracker*>(data)->quiet(
-            contextId, ContextIdleTracker::Clock::now());
-    } catch (...) {
-        return false;
-    }
-}
-
 } // namespace
 
 void VirglRenderer::setDeviceMemoryLimit(std::uint64_t bytes) noexcept
@@ -416,7 +403,6 @@ VirglRenderer::VirglRenderer()
         } catch (...) {
             // A context that is not tracked is never trimmed; that is all.
         }
-        virgl_renderer_set_context_quiet_query(&contextQuiet, &idleContexts_);
         if (deviceMemoryPool) {
             /* A refused reservation first frees what the host GL driver
              * caches. The hook reaches this renderer's provider, so it is
@@ -444,7 +430,6 @@ VirglRenderer::VirglRenderer()
         }
         if (deviceMemoryPool)
             deviceMemoryPool->setReclaim({});
-        virgl_renderer_set_context_quiet_query(nullptr, nullptr);
         if (initialized)
             virgl_renderer_cleanup(this);
         rendererInstanceActive.store(false, std::memory_order_release);
@@ -505,7 +490,6 @@ VirglRenderer::~VirglRenderer()
     }
     if (deviceMemoryPool)
         deviceMemoryPool->setReclaim({});
-    virgl_renderer_set_context_quiet_query(nullptr, nullptr);
     virgl_renderer_cleanup(this);
     /* The pool is the renderer's: nothing the cleanup left can reach it, and
      * the guest that comes after this one starts with nothing reserved. */
