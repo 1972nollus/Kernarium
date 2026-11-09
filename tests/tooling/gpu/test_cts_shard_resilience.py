@@ -1181,14 +1181,29 @@ emit_artifact()
     printf 'artifact %s\\n' "$1" >> "$output/order"
     cp "$2" "$output/sent-$1"
 }}
+# The guest's sync. The host's would wait on every filesystem the host has
+# mounted, a stalled network volume included.
+sync()
+{{
+    printf 'sync\\n' >> "$output/order"
+}}
 {finish}
 finish
 """
                 (root / "harness.sh").write_text(harness)
-                subprocess.run([shell, str(root / "harness.sh")], check=True)
+                finished = subprocess.run(
+                    [shell, str(root / "harness.sh")],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(
+                    finished.stdout,
+                    "UML_VK_CTS_ERROR: artifact transfer failed\n",
+                )
                 self.assertEqual(
                     (root / "order").read_text().split(),
-                    ["prerun", *flushes, "artifact", "summary.txt"],
+                    ["prerun", *flushes, "artifact", "summary.txt", "sync"],
                 )
                 summary = dict(
                     line.split("=", 1)

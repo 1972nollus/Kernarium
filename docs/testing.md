@@ -30,7 +30,9 @@ Rules every test follows:
   tool (`$<TARGET_FILE:...>`) a test runs, so running a test by name after
   configure is enough.
 - Tooling tests run tools against fixtures. They do not grep tracked source for
-  expected tokens or restate values another file owns.
+  expected tokens or restate values another file owns. Guest shell that a test
+  runs on the host gets stubs for commands with host-wide effect, such as
+  `sync`.
 - Unit tests create scratch files through `tests/unit/scratch/` and remove
   them, never at a host-global path unless that path is the contract under
   test. Unix-domain socket paths use `$TMPDIR` (a build-tree path may not fit
