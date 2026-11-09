@@ -271,9 +271,11 @@ requires reopening Andarium.
   ([`docs/graphics.md`](../docs/graphics.md#device-memory-budget)), a dash
   without one; each has a bar of its share, orange from 90%. Settings' Show on
   screen is kept for the install and restored at launch, off on a fresh one
-  (`StatsPreference`, its own stored value beside `DisplayOptions`); a harness
-  launch that states `ANDARIUM_STATS` (`1` or `0`) sets it for its run only and
-  leaves the kept value alone.
+  (`StatsPreference`, its own stored value beside `DisplayOptions`). A launch
+  with any launch setting is a harness's and starts with them off, so a
+  measured run never inherits the overlay; `ANDARIUM_STATS` (`1` or `0`) states
+  the value. Such a launch keeps nothing, and neither does one that states
+  Retina mode, so what the person stored stays (`PreferenceKeeper`).
 - **Graphics memory.** The runtime counts the graphics allocations the host
   refused the guest ([`docs/graphics.md`](../docs/graphics.md#device-memory-budget)).
   While a normal session runs in the foreground the model reads the count every

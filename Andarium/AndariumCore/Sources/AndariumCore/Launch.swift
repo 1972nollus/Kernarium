@@ -33,8 +33,7 @@ public struct LaunchOverrides: Equatable, Sendable {
     /// Erase the guest's data before the start.
     public var erase = false
     /// Show the statistics from the start of the run, and print them, or keep
-    /// them off. Where the launch states neither, the person's own choice
-    /// (`StatsPreference`) stands.
+    /// them off. Where the launch states neither, `StatsPreference` decides.
     public var statistics: Bool?
     public var instance: String?
 

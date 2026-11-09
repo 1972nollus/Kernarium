@@ -30,14 +30,19 @@ public struct StatsPreference {
         /// Whether the statistics show from the start.
         public var showOnScreen: Bool
         /// Whether what the person sets from here on is kept. A launch that
-        /// states the value (automation) is the harness's, so the value kept
-        /// from the person's own choice is left as it is.
+        /// carries a launch setting (automation) is the harness's, so the
+        /// value kept from the person's own choice is left as it is.
         public var keepsChanges: Bool
     }
 
-    /// The start of a launch that states the value as `stated`, or states
-    /// none: the stated value, else the one kept.
-    public func launch(stated: Bool?) -> Launch {
-        Launch(showOnScreen: stated ?? isOn, keepsChanges: stated == nil)
+    /// The start of a launch. One that states the value starts as stated.
+    /// Any other launch that carries a launch setting starts off: reading the
+    /// statistics costs processor time, which a measured run must not
+    /// inherit from the person's overlay. Only a launch with no setting
+    /// restores the kept value.
+    public func launch(for overrides: LaunchOverrides) -> Launch {
+        if let stated = overrides.statistics { return Launch(showOnScreen: stated, keepsChanges: false) }
+        if !overrides.isEmpty { return Launch(showOnScreen: false, keepsChanges: false) }
+        return Launch(showOnScreen: isOn, keepsChanges: true)
     }
 }

@@ -107,13 +107,15 @@ struct AppEntry {
         let options = DisplayOptionsStore.load()
         model.retina = launch.retina ?? options.retina(memoryLimitBytes: MemoryLimit.bytes())
         model.retinaChosen = options.chosenRetina != nil
-        // The statistics show from the start where the person left them. A
-        // harness launch may state them instead, for its run only: it prints
-        // each reading when it shows them, and leaves the person's value
-        // kept. An App Store build states none.
-        let stats = StatsPreference().launch(stated: launch.statistics)
+        // A value a launch states is that run's, and what the person chose
+        // stays stored.
+        model.retinaStatedByLaunch = launch.retina != nil
+        // The statistics show from the start where the person left them,
+        // unless the launch is a harness's, which decides for its run alone
+        // (`StatsPreference.launch`). An App Store build carries no setting.
+        let stats = StatsPreference().launch(for: launch)
         model.session.showStats = stats.showOnScreen
-        model.statsStatedByLaunch = !stats.keepsChanges
+        model.statsDecidedByLaunch = !stats.keepsChanges
         #if !APP_STORE
         model.printsStatistics = launch.statistics == true
         #endif
@@ -336,15 +338,15 @@ enum MemoryLimit {
 enum DisplayOptionsStore {
     private static let key = DisplayOptions.storageKey
 
-    static func load() -> DisplayOptions {
-        guard let data = UserDefaults.standard.data(forKey: key),
+    static func load(from defaults: UserDefaults = .standard) -> DisplayOptions {
+        guard let data = defaults.data(forKey: key),
               let options = try? JSONDecoder().decode(DisplayOptions.self, from: data)
         else { return DisplayOptions() }
         return options
     }
 
-    static func save(_ options: DisplayOptions) {
-        UserDefaults.standard.set(try? JSONEncoder().encode(options), forKey: key)
+    static func save(_ options: DisplayOptions, to defaults: UserDefaults = .standard) {
+        defaults.set(try? JSONEncoder().encode(options), forKey: key)
     }
 }
 

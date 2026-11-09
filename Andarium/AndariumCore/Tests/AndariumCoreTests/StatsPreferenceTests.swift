@@ -20,13 +20,19 @@ private func withDefaults<Result>(_ body: (UserDefaults) throws -> Result) rethr
     return try body(defaults)
 }
 
+/// The settings of a launch, answered as the application's environment
+/// reader would.
+private func launch(_ settings: [LaunchOverrides.Setting: String] = [:]) -> LaunchOverrides {
+    LaunchOverrides(processorCount: 4) { settings[$0] }
+}
+
 struct StatsPreferenceTests {
     @Test func aFreshInstallIsOff() {
         withDefaults { defaults in
             #expect(!StatsPreference(defaults: defaults).isOn)
-            let launch = StatsPreference(defaults: defaults).launch(stated: nil)
-            #expect(!launch.showOnScreen)
-            #expect(launch.keepsChanges)
+            let start = StatsPreference(defaults: defaults).launch(for: launch())
+            #expect(!start.showOnScreen)
+            #expect(start.keepsChanges)
         }
     }
 
@@ -35,10 +41,11 @@ struct StatsPreferenceTests {
             StatsPreference(defaults: defaults).keep(true)
             // Another launch reads the same database with a new value.
             #expect(StatsPreference(defaults: defaults).isOn)
-            #expect(StatsPreference(defaults: defaults).launch(stated: nil).showOnScreen)
+            let on = StatsPreference(defaults: defaults).launch(for: launch())
+            #expect(on.showOnScreen && on.keepsChanges)
             StatsPreference(defaults: defaults).keep(false)
             #expect(!StatsPreference(defaults: defaults).isOn)
-            #expect(!StatsPreference(defaults: defaults).launch(stated: nil).showOnScreen)
+            #expect(!StatsPreference(defaults: defaults).launch(for: launch()).showOnScreen)
         }
     }
 
@@ -46,13 +53,30 @@ struct StatsPreferenceTests {
         withDefaults { defaults in
             let preference = StatsPreference(defaults: defaults)
             preference.keep(true)
-            let off = preference.launch(stated: false)
+            let off = preference.launch(for: launch([.stats: "0"]))
             #expect(!off.showOnScreen && !off.keepsChanges)
             preference.keep(false)
-            let on = preference.launch(stated: true)
+            let on = preference.launch(for: launch([.stats: "1"]))
             #expect(on.showOnScreen && !on.keepsChanges)
             // Stating the value never touched what was kept.
             #expect(!preference.isOn)
+        }
+    }
+
+    @Test func aLaunchWithOtherSettingsStartsOffWhateverWasKept() {
+        withDefaults { defaults in
+            let preference = StatsPreference(defaults: defaults)
+            preference.keep(true)
+            for settings: [LaunchOverrides.Setting: String] in [
+                [.start: "normal"], [.vCPUCount: "2"], [.retina: "1"], [.instance: "legacy-test"], [.erase: "1"],
+            ] {
+                let start = preference.launch(for: launch(settings))
+                #expect(!start.showOnScreen && !start.keepsChanges)
+            }
+            // A setting the launch gets wrong is no setting.
+            let ignored = preference.launch(for: launch([.vCPUCount: "99", .stats: "yes"]))
+            #expect(ignored.showOnScreen && ignored.keepsChanges)
+            #expect(preference.isOn)
         }
     }
 
