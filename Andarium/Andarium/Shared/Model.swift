@@ -157,6 +157,50 @@ final class AppModel {
     /// What is kept of Settings' "Show on screen" across launches
     /// (`StatsPreference`); nil where the launch decided it.
     var showStatsToKeep: Bool? { statsDecidedByLaunch ? nil : session.showStats }
+    #if !APP_STORE
+    // JIT (Home's JIT row): the guest runs on the JIT engine when the person
+    // turned it on and a debugger they attached has prepared the executable
+    // memory. A development build only; an App Store build has no JIT.
+    /// This build on this device can run the guest on the JIT engine: a
+    /// development build on a device. The Simulator and the preview offer it
+    /// only as a mock.
+    var jitAvailable = false
+    /// Whether the person wants the JIT. It applies to the next start.
+    var jitOn = false
+    /// The launch decided it (automation): the value belongs to that run and
+    /// is not kept.
+    var jitDecidedByLaunch = false
+    /// What is kept of the JIT row across launches (`JitPreference`); nil
+    /// where the launch decided it.
+    var jitToKeep: Bool? { jitDecidedByLaunch ? nil : jitOn }
+    /// A debugger is attached to Andarium, as last read.
+    var jitDebuggerAttached = false
+    /// What the executable memory was prepared for, once a start has done it.
+    var jitPrepared: JitShape?
+    /// How the last start answered, when it ran without the JIT it was asked
+    /// for.
+    var jitLastStart: JitAnswer?
+    /// The debugger is preparing the executable memory, which the boot screen
+    /// says while it takes the seconds it takes.
+    var preparingJit = false
+    /// What Home says under the JIT row.
+    var jitStatus: JitStatus {
+        JitStatus(
+            debuggerAttached: jitDebuggerAttached, prepared: jitPrepared,
+            guest: guest.map { JitShape(memoryMiB: $0.memoryMiB, processorCount: $0.cores) },
+            lastStart: jitLastStart)
+    }
+    /// The person turns the JIT on or off. It changes nothing until a start.
+    func setJit(_ on: Bool) {
+        jitOn = on
+    }
+    /// Reads whether a debugger is attached now. The preview plays one.
+    func refreshJit() {
+        jitDebuggerAttached = driver?.jitDebuggerAttached() ?? previewJitDebugger
+    }
+    /// Whether the preview, which has no runtime, plays a debugger.
+    var previewJitDebugger = true
+    #endif
     /// How the last run ended, for the screen that says so.
     var runEnd = RunEnd(result: 0)
     var runUptimeSeconds: Int?
@@ -230,6 +274,9 @@ final class AppModel {
             if applicationActive != oldValue {
                 refreshStatistics()
                 refreshGraphicsNotice()
+                #if !APP_STORE
+                refreshJit()
+                #endif
             }
         }
     }
@@ -880,6 +927,10 @@ final class AppModel {
             bootTracker = BootTracker()
             preparingDisk = false
             diskProgress = nil
+            #if !APP_STORE
+            jitLastStart = nil
+            preparingJit = false
+            #endif
             if case let .update(from, _) = plan { bootFrom = from } else { bootFrom = nil }
             if let driver, let guest {
                 persistNow()
@@ -1195,9 +1246,18 @@ final class AppModel {
         graphicsNotice.record(refusals: 1, at: now)
     }
 
+    /// The debugger is preparing the JIT, which keeps the boot at its first step.
+    private var preparingJitNow: Bool {
+        #if APP_STORE
+        false
+        #else
+        preparingJit
+        #endif
+    }
+
     /// The step of the boot under way, from the runtime's milestones.
     func liveBootStage() -> Int {
-        BootSteps.current(preparingDisk: preparingDisk, milestone: bootTracker.milestone)
+        BootSteps.current(preparingDisk: preparingDisk || preparingJitNow, milestone: bootTracker.milestone)
     }
 
     /// The failure screen's copyable report.

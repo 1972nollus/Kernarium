@@ -57,6 +57,8 @@ final class StubDriver: RuntimeDriver {
         guard !memories.isEmpty else { return nil }
         return memories[min(memoryAsked, memories.count - 1)]
     }
+    var debuggerAttached = false
+    func jitDebuggerAttached() -> Bool { debuggerAttached }
 
     /// What the refusal-count readings answer, in turn, the last one
     /// repeating; nothing until a test scripts them.

@@ -127,8 +127,12 @@ everything that exists for automation or only pretends:
   console lines (`Shared/ConsoleReport.swift`), the launch's deferred work
   (create, erase, start) and the isolated guest instance.
 - It defines `UML_APP_STORE_APPLICATION` for the loader it compiles, which
-  leaves out the display mirror, console input and the automation lookups
-  ([`GuestHost/README.md`](../GuestHost/README.md)).
+  leaves out the display mirror, console input, the automation lookups and the
+  JIT's preparation entries ([`GuestHost/README.md`](../GuestHost/README.md)).
+  The JIT's policy and words (`Shared/Jit.swift`), debugger side
+  (`Live/JitDebugger.swift`) and Home row are under `!APP_STORE`, in the
+  application and not in AndariumCore, which the package builds without that
+  condition.
 - It embeds the App Store runtime, which reads no environment knob and carries
   no debugging or automation support (the `kernarium-ios-device-android-app-store`
   preset, packaged with `package-ios-frameworks.sh --app-store --runtimes
@@ -146,7 +150,8 @@ everything that exists for automation or only pretends:
   release ID in `PENDING_INPUTS_DECISION`.
 - Its last build phase runs `scripts/check-app-store-bundle.py`, which fails the
   build on a missing Info.plist key, an environment knob, a symbol or log text
-  of the debugging and automation support, a test bundle or XCTest framework, a
+  of the debugging and automation support, the JIT (its symbols and text and
+  the `brk #0xf00d` instruction), a test bundle or XCTest framework, a
   trace of the build host, a harness console line, or a privacy manifest that
   does not cover a binary
   ([`scripts/check-privacy-manifests.py`](../scripts/check-privacy-manifests.py));
@@ -248,6 +253,28 @@ requires reopening Andarium.
 - **Retina.** Retina mode applies at the next start and uses the screen's
   native pixels, whose host allocations count against the same iOS process
   limit as guest RAM (`DisplayOptions`).
+- **JIT.** A development build on a device has a JIT row on Home, off until
+  the person turns it on and kept for the install (`JitPreference`). An iOS
+  device gives the JIT its executable memory only through a debugger attached to
+  the process ([`docs/architecture.md`](../docs/architecture.md#executable-code)):
+  the person assigns StikDebug's universal script to Andarium once in StikDebug
+  and opens Andarium from it. With the row on, a start prepares the memory while
+  the boot screen says "Preparing JIT" and boots on the JIT engine; without a
+  debugger, or if the preparation fails, it boots on gadgets and says why on
+  the boot screen and under the row. With the row off, a start lets an attached
+  debugger go, so the guest never runs under it. The memory is prepared once per
+  process for the guest's memory and vCPUs at that start; a guest changed after
+  it needs Andarium opened from StikDebug again. Starting a Debug build from
+  Xcode attaches lldb, which would stop at the request, so Debug serves the
+  request only when the launch says a servicing debugger is attached
+  (`ANDARIUM_JIT_DEBUGGER=1`). `ANDARIUM_JIT` (`1` or `0`) states the row for a
+  harness launch, which keeps nothing; a launch with another setting starts it
+  off. The JIT compiles every process's code again for itself
+  ([cold code](../darwin/cpu/arm64/jit/README.md#cold-code)), so an Android
+  guest's boot, application launches and background work run several times
+  slower than on gadgets, and a long single-process computation runs faster. An
+  App Store build carries none of this: its runtime has no JIT and the
+  application has no row, preference, entries or sentences.
 - **Motion.** Gyroscope needs no permission. The host reads a sensor only while
   a guest application uses it and sends samples over private vsock port 5556;
   the system image must include the
@@ -381,6 +408,10 @@ in that directory, holding a number, stands for the device's free space in the
 run's low-space watch while it exists, so a harness drives the pause without
 filling the disk; a file `space-answer` there (`resume`, `shutdown` or
 `check`) answers the screen over a paused guest once it offers that answer.
+`run_ios_device_android.py --engine jit` runs the guest on the JIT, with the
+stand-in debugger of `tests/integration/support/ios_jit_debugger.py` serving
+the request that StikDebug serves for a person (`--jit-debugger none` shows the
+fall back to gadgets).
 
 On an Apple silicon Mac, `xcodebuild test -scheme Andarium -destination
 'platform=macOS,variant=Designed for iPad'

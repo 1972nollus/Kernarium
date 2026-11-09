@@ -127,6 +127,9 @@ SHOTS: list[Shot] = [
     s("home-first-start", "Home", "home-new", "A guest just created and not yet started: Home as it is before the first start."),
     s("home-display", "Home", "home-display", "Home scrolled to Display: the Retina mode toggle.", dark=True),
     s("home-capabilities", "Home", "home-capabilities", "Home scrolled to Capabilities: Microphone off and Gyroscope on (its default), no notes.", dark=True),
+    s("home-jit", "Home", "home-jit", "Home scrolled to JIT: the toggle on and a debugger attached, so the note says it is ready for the next start.", dark=True),
+    s("home-jit-no-debugger", "Home", "home-jit-no-debugger", "JIT on with no debugger attached: the note says to open Andarium from StikDebug."),
+    s("home-jit-fallback", "Home", "home-jit-fallback", "Home after a start that ran without the JIT it was asked for: the note says StikDebug was not connected."),
     s("home-capabilities-mic-on", "Home", "home-mic-on", "Capabilities with Microphone on, iOS having allowed it."),
     s("home-capabilities-mic-denied", "Home", "home-mic-denied", "Capabilities after iOS refused the microphone or its app permission was removed: the row is dimmed and says it is not allowed in Settings.", dark=True),
     s("home-capabilities-mic-alert", "Home", "home-mic-alert", "Turning Microphone on while iOS refuses it: the alert that offers Settings."),
@@ -168,6 +171,8 @@ SHOTS: list[Shot] = [
     s("boot-first-start", "Boot", "boot-first", "First start: Storage prepares the disk and Startup sets up for the first time."),
     s("boot-update", "Boot", "boot-upgrade", "The first start after an update: Startup updates the apps."),
     s("boot-restart", "Boot", "boot-restart", "The guest restarting."),
+    s("boot-jit", "Boot", "boot-jit", "The debugger preparing the JIT: the System image step says Preparing JIT."),
+    s("boot-jit-fallback", "Boot", "boot-jit-fallback", "A boot that ran without the JIT it was asked for: a note under the steps says why."),
     *boot_stages("boot-recovery", "boot-recovery", ["System image", "Linux kernel", "Storage", "Recovery"], "Recovery boot (opaque, own stage list, no progress bar)", dark_step=3),
     # Running guest
     s("session", "Guest", "session", "The running guest with the side keys closed."),
