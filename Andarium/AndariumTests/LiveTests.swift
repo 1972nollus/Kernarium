@@ -140,6 +140,14 @@ struct HostDeviceTests {
         for count in 1...host.processorCount {
             #expect(host.memory.defaultMemoryMiB(vCPUs: count)
                 == Int(kernarium_runtime_loader_default_guest_memory_mib(UInt32(count), launch)))
+            #expect(host.memory.safeMemoryMiB(vCPUs: count)
+                == Int(kernarium_runtime_loader_conservative_guest_memory_mib(UInt32(count), launch)))
+            #expect(host.memory.defaultMemoryMiB(vCPUs: count) <= host.memory.safeMemoryMiB(vCPUs: count))
+            // The estimate is the loader's, for the guest's size and count.
+            for mib in [1536, host.memory.defaultMemoryMiB(vCPUs: count), host.memory.maximumMiB(vCPUs: count)] {
+                #expect(host.memory.graphicsMemoryMiB(forMemory: mib, vCPUs: count)
+                    == Int(kernarium_runtime_loader_gpu_budget_mib(UInt32(mib), UInt32(count), launch)))
+            }
             #expect(host.memory.maximumMiB(vCPUs: count)
                 == Int(kernarium_runtime_loader_maximum_guest_memory_mib(UInt32(count), maximumSet)))
             #expect(host.memory.defaultMemoryMiB(vCPUs: count) <= host.memory.maximumMiB(vCPUs: count))
@@ -150,12 +158,15 @@ struct HostDeviceTests {
             #expect(!host.memory.isAboveDefault(host.memory.defaultMemoryMiB(vCPUs: count), vCPUs: count))
             #expect(host.memory.isAboveDefault(host.memory.maximumMiB(vCPUs: count), vCPUs: count)
                 == (host.memory.maximumMiB(vCPUs: count) > host.memory.defaultMemoryMiB(vCPUs: count)))
+            #expect(host.memory.isAboveSafe(host.memory.maximumMiB(vCPUs: count), vCPUs: count)
+                == (host.memory.maximumMiB(vCPUs: count) > host.memory.safeMemoryMiB(vCPUs: count)))
         }
         if ProcessInfo.processInfo.isiOSAppOnMac {
             // A Mac sets no limit: the whole range, and nothing to warn about.
             #expect((1...host.processorCount).allSatisfy {
                 host.memory.defaultMemoryMiB(vCPUs: $0) == Limits.runtimeMemoryRangeMiB.upperBound
                     && !host.memory.isAboveDefault(host.memory.maximumMiB(vCPUs: $0), vCPUs: $0)
+                    && !host.memory.isAboveSafe(host.memory.maximumMiB(vCPUs: $0), vCPUs: $0)
             })
         }
         #expect(AppEntry.freeStorageBytes() > 0)
@@ -172,17 +183,27 @@ struct DefaultGuestTests {
         for (cores, expected) in [(1, 1), (4, 4), (6, 6), (8, 8), (10, 8), (12, 8), (20, 8)] {
             #expect(GuestProcessorLimit.vCPUs(physicalProcessorCount: cores) == expected)
         }
-        for (limitMiB, bounds, defaults) in [
-            (1536, [960, 960, 896, 896, 896, 896, 896, 896], [960, 960, 896, 896, 896, 896, 896, 896]),
-            (2048, [1472, 1472, 1408, 1408, 1344, 1344, 1344, 1344], [1472, 1472, 1408, 1408, 1344, 1344, 1344, 1344]),
-            (2304, [1728, 1728, 1664, 1664, 1600, 1600, 1600, 1600], Array(repeating: 1536, count: 8)),
-            (2867, [2304, 2304, 2240, 2240, 2176, 2176, 2176, 2176], Array(repeating: 1536, count: 8)),
-            (3584, [3008, 3008, 2944, 2944, 2880, 2880, 2880, 2880], Array(repeating: 2048, count: 8)),
-            (4096, [3520, 3520, 3456, 3456, 3392, 3392, 3392, 3392], Array(repeating: 2560, count: 8)),
-            (5120, Array(repeating: 4096, count: 8), Array(repeating: 3584, count: 8)),
-            (6144, Array(repeating: 4096, count: 8), Array(repeating: 4096, count: 8)),
-            (0, Array(repeating: 4096, count: 8), Array(repeating: 4096, count: 8)),
-        ] as [(Int, [Int], [Int])] {
+        for (limitMiB, bounds, defaults, safe) in [
+            (1536, [960, 960, 896, 896, 896, 896, 896, 896], [960, 960, 896, 896, 896, 896, 896, 896],
+             [960, 960, 896, 896, 896, 896, 896, 896]),
+            (2048, [1472, 1472, 1408, 1408, 1344, 1344, 1344, 1344], [1472, 1472, 1408, 1408, 1344, 1344, 1344, 1344],
+             [1472, 1472, 1408, 1408, 1344, 1344, 1344, 1344]),
+            (2304, [1728, 1728, 1664, 1664, 1600, 1600, 1600, 1600], Array(repeating: 1536, count: 8),
+             Array(repeating: 1536, count: 8)),
+            (2867, [2304, 2304, 2240, 2240, 2176, 2176, 2176, 2176], Array(repeating: 1536, count: 8),
+             Array(repeating: 1536, count: 8)),
+            (3584, [3008, 3008, 2944, 2944, 2880, 2880, 2880, 2880], Array(repeating: 2048, count: 8),
+             Array(repeating: 2048, count: 8)),
+            (4096, [3520, 3520, 3456, 3456, 3392, 3392, 3392, 3392], Array(repeating: 2560, count: 8),
+             Array(repeating: 2560, count: 8)),
+            (4700, [4096, 4096, 4096, 4032, 4032, 4032, 3968, 3968], Array(repeating: 2560, count: 8),
+             [3584, 3584, 3072, 3072, 3072, 3072, 3072, 3072]),
+            (5120, Array(repeating: 4096, count: 8), Array(repeating: 3072, count: 8),
+             Array(repeating: 3584, count: 8)),
+            (6144, Array(repeating: 4096, count: 8), Array(repeating: 4096, count: 8),
+             Array(repeating: 4096, count: 8)),
+            (0, Array(repeating: 4096, count: 8), Array(repeating: 4096, count: 8), Array(repeating: 4096, count: 8)),
+        ] as [(Int, [Int], [Int], [Int])] {
             let policy = MemoryPolicy(
                 processorCount: 8,
                 bound: { count in
@@ -192,10 +213,34 @@ struct DefaultGuestTests {
                 defaultMemory: { count in
                     Int(kernarium_runtime_loader_default_guest_memory_mib_for_limit(
                         UInt64(limitMiB) << 20, UInt32(count), launch))
+                },
+                safeMemory: { count in
+                    Int(kernarium_runtime_loader_conservative_guest_memory_mib_for_limit(
+                        UInt64(limitMiB) << 20, UInt32(count), launch))
+                },
+                graphicsMemory: { memoryMiB, count in
+                    Int(kernarium_runtime_loader_gpu_budget_mib_for_limit(
+                        UInt64(limitMiB) << 20, UInt32(memoryMiB), UInt32(count), launch))
                 }
             )
             #expect((1...8).map { policy.maximumMiB(vCPUs: $0) } == bounds, "limit \(limitMiB) MiB")
             #expect((1...8).map { policy.defaultMemoryMiB(vCPUs: $0) } == defaults, "limit \(limitMiB) MiB")
+            #expect((1...8).map { policy.safeMemoryMiB(vCPUs: $0) } == safe, "limit \(limitMiB) MiB")
+            // A limit sets the budget a guest of the default size launches with: the
+            // loader's evaluation, half the guest with no limit, never under 384 MiB
+            // otherwise unless half the guest is less.
+            for count in 1...8 {
+                let memory = policy.defaultMemoryMiB(vCPUs: count)
+                let budget = policy.graphicsMemoryMiB(forMemory: memory, vCPUs: count)
+                #expect(budget == Int(kernarium_runtime_loader_gpu_budget_mib_for_limit(
+                    UInt64(limitMiB) << 20, UInt32(memory), UInt32(count), launch)))
+                if limitMiB == 0 {
+                    #expect(budget == memory / 2)
+                } else if bounds[0] == Limits.runtimeMemoryRangeMiB.upperBound {
+                    // On a device that offers 4 GiB, a new guest keeps a gibibyte for the GPU.
+                    #expect((budget ?? 0) >= 1024, "limit \(limitMiB) MiB at \(count) vCPUs")
+                }
+            }
         }
         // The loader's launch set is the conservative one; the maximum counts none.
         #expect(launch.application_mib == 64 && launch.engine_mib == 320 && launch.headroom_mib == 149)

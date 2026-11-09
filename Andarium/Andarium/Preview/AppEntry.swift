@@ -29,6 +29,11 @@ struct AppEntry {
     /// Graphics memory in use, in MiB, held with `statsReadings`: a figure
     /// near the budget turns its bar orange.
     var statsVramMiB: Int?
+    /// The mock device: "iphone-18-pro-max" or "ipad-mini-6"; absent, the
+    /// idiom's own mock.
+    var device: String?
+    /// The guest's memory, in MiB, instead of the default a new guest gets.
+    var memoryMiB: Int?
 
     static func fromArguments() -> AppEntry {
         let defaults = UserDefaults.standard
@@ -40,7 +45,9 @@ struct AppEntry {
             bootStage: defaults.string(forKey: "bootStage").flatMap { Int($0) },
             systemMicrophone: defaults.bool(forKey: "systemMicrophone"),
             statsReadings: defaults.string(forKey: "statsReadings").flatMap { Int($0) },
-            statsVramMiB: defaults.string(forKey: "statsVramMiB").flatMap { Int($0) }
+            statsVramMiB: defaults.string(forKey: "statsVramMiB").flatMap { Int($0) },
+            device: defaults.string(forKey: "device"),
+            memoryMiB: defaults.string(forKey: "memoryMiB").flatMap { Int($0) }
         )
     }
 
@@ -89,8 +96,9 @@ struct AppEntry {
     func makeModel() -> AppModel {
         CaptureState.begin(screen: screen)
         let lowSpace = lowSpace || ["create-low-space", "start-low-space", "home-low-space"].contains(screen)
-        let host = PreviewData.host(lowSpace: lowSpace)
+        let host = PreviewData.host(lowSpace: lowSpace, device: device)
         var guest: Guest? = PreviewData.sampleGuest(on: host)
+        if let memoryMiB { guest?.memoryMiB = memoryMiB }
         if ["welcome", "create", "create-low-space"].contains(screen) { guest = nil }
         let model = AppModel(
             guest: guest, host: host, system: PreviewData.system, capabilities: .preview,
