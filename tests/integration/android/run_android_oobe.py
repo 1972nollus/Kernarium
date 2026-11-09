@@ -57,7 +57,6 @@ import pathlib
 import re
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import tempfile
@@ -68,7 +67,11 @@ from typing import Callable
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 LAUNCHER = REPOSITORY / "tools" / "boot_android.py"
 sys.path.insert(0, str(REPOSITORY / "tools"))
+sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 import android_provision  # noqa: E402
+import slot_ports  # noqa: E402
+
+DEFAULT_ADB_PORT = 5576
 
 WIZARD = android_provision.SETUP_WIZARD
 LAUNCHER_PACKAGE = "com.android.launcher3"
@@ -392,7 +395,7 @@ def disabled_components(dumpsys_package: str) -> set[str]:
 
 
 class Device:
-    """The guest as the host's adb sees it, over one server and one key."""
+    """The guest as the host's adb sees it: the shared server, always named by serial."""
 
     def __init__(self, adb: str, serial: str, environment: dict[str, str]) -> None:
         self.adb = adb
@@ -497,12 +500,6 @@ def wait_booted(device: Device, seconds: int, guest: subprocess.Popen | None) ->
     size_log_buffers(device)
     wait_for("the guest to be booted", lambda: device.shell("getprop sys.boot_completed") == "1",
              max(1, int(deadline - time.monotonic())), guest)
-
-
-def free_loopback_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
 
 
 def stop_launcher(guest: subprocess.Popen) -> None:
@@ -814,25 +811,30 @@ def helper_guest(device: Device, log: pathlib.Path) -> None:
     print("helper: nothing left to do on a provisioned guest")
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--release", type=pathlib.Path, help="release directory (default: the accepted release)")
     parser.add_argument("--adb", default="adb")
     parser.add_argument("--emulator", type=pathlib.Path, help="the Android macOS executable (the launcher's default)")
-    parser.add_argument("--adb-port", type=int, default=5576, help="loopback port the launcher forwards adbd to")
+    parser.add_argument("--adb-port", type=int, default=slot_ports.slot_port(slot_ports.ADB_OFFSET, DEFAULT_ADB_PORT),
+                        help="loopback port the launcher forwards adbd to (default: the guest slot's first port "
+                        f"when GUEST_SLOT_PORT_BASE is set, else {DEFAULT_ADB_PORT})")
     parser.add_argument("--cpus", type=int, default=4)
     parser.add_argument("--width", type=int, help="guest display width in pixels (the launcher's default)")
     parser.add_argument("--height", type=int, help="guest display height in pixels (the launcher's default)")
     parser.add_argument("--dpi", type=int, help="guest display density: with the size it picks the launcher's grid")
     parser.add_argument("--boot-timeout", type=int, default=900)
     parser.add_argument("--only", choices=("wizard", "helper"), help="run one of the two guests")
-    options = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    options = build_parser().parse_args()
 
     adb = shutil.which(options.adb) or options.adb
     with tempfile.TemporaryDirectory(prefix="android-oobe-") as scratch_name:
         scratch = pathlib.Path(scratch_name)
         environment = dict(os.environ)
-        environment["ANDROID_ADB_SERVER_PORT"] = str(free_loopback_port())
         try:
             if options.only != "helper":
                 run_guest(options, scratch, "wizard", adb, environment, [], wizard_guest)
@@ -844,8 +846,10 @@ def main() -> int:
             print(f"FAIL: {problem}", file=sys.stderr)
             return 1
         finally:
-            subprocess.run([adb, "kill-server"], env=environment, stdin=subprocess.DEVNULL,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=False)
+            # The shared server stays up; only this run's guest transport goes.
+            subprocess.run([adb, "disconnect", f"127.0.0.1:{options.adb_port}"], env=environment,
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=30, check=False)
 
 
 if __name__ == "__main__":

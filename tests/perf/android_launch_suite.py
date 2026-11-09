@@ -50,6 +50,10 @@ import time
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[2]
 BOOT = REPOSITORY / "tools" / "boot_android.py"
+sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
+import slot_ports  # noqa: E402
+
+DEFAULT_ADB_PORT = 5601
 MANIFEST = pathlib.Path(__file__).resolve().parent / "android_launch_apps.tsv"
 # `logcat -v epoch`: seconds.fraction, then the rest of the line.
 EPOCH_LINE = re.compile(r"^\s*(\d+\.\d+)\s+(.*)$")
@@ -479,7 +483,7 @@ def run(arguments: argparse.Namespace) -> int:
     return 0 if status == 0 else 1
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--summary", nargs="+", type=pathlib.Path,
@@ -492,7 +496,12 @@ def main() -> int:
     parser.add_argument("--work-instance", type=pathlib.Path,
                         help="the instance directory this run boots, "
                              "recreated from the source")
-    parser.add_argument("--adb-port", type=int, default=5601)
+    parser.add_argument("--adb-port", type=int,
+                        default=slot_ports.slot_port(slot_ports.ADB_OFFSET,
+                                                     DEFAULT_ADB_PORT),
+                        help="the adb forward's port (default: the guest "
+                             "slot's first port when GUEST_SLOT_PORT_BASE is "
+                             f"set, else {DEFAULT_ADB_PORT})")
     parser.add_argument("--apps", default="settings,3dmark,ab2")
     parser.add_argument("--launches", type=int, default=2)
     parser.add_argument("--label", default="run")
@@ -516,6 +525,11 @@ def main() -> int:
     parser.add_argument("--scenario", type=pathlib.Path,
                         help="continue one application's launch into a "
                              "phase it reports (JSON, see android_scenarios/)")
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
     arguments = parser.parse_args()
     if arguments.summary:
         records = [json.loads(line) for path in arguments.summary

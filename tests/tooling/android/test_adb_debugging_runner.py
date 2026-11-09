@@ -17,8 +17,17 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import importlib.util
+import json
+import os
 from pathlib import Path
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+import time
 import unittest
+from unittest import mock
 
 
 SCRIPT = Path(__file__).resolve().parents[2] / "integration/android/run_android_adb_debugging.py"
@@ -137,6 +146,111 @@ class RootRefusedTests(unittest.TestCase):
 
     def test_a_debuggable_build_is_not_asked(self) -> None:
         runner.check_root_refused(RootDevice("restarting adbd as root", debuggable="1"))
+
+
+FAKE_ADB = """\
+#!/bin/sh
+printf '%s\\n' "$ANDROID_ADB_SERVER_PORT|$ADB_USB|$ADB_MDNS|$ADB_SERVER_SOCKET|$*" >> "$FAKE_ADB_LOG"
+"""
+
+
+class PrivateServerTests(unittest.TestCase):
+    """The key rule's one private adb server: never the shared one, always stopped."""
+
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.adb = self.root / "adb"
+        self.adb.write_text(FAKE_ADB)
+        self.adb.chmod(0o755)
+        self.log = self.root / "adb.log"
+        self.addCleanup(runner.PrivateServer.running.clear)
+
+    def calls(self) -> list[list[str]]:
+        if not self.log.exists():
+            return []
+        return [line.split("|") for line in self.log.read_text().splitlines()]
+
+    def environment(self, **extra: str) -> dict[str, str]:
+        return {"FAKE_ADB_LOG": str(self.log), "PATH": os.environ["PATH"], **extra}
+
+    def test_the_shared_servers_port_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            runner.PrivateServer(str(self.adb), runner.SHARED_SERVER_PORT, self.root / "key")
+        self.assertEqual(runner.PrivateServer.running, [])
+
+    def test_the_server_serves_no_usb_or_mdns_and_stop_names_its_port(self) -> None:
+        with mock.patch.dict(os.environ, self.environment(ADB_SERVER_SOCKET="tcp:5037",
+                                                          ANDROID_ADB_SERVER_PORT="5037")):
+            server = runner.PrivateServer(str(self.adb), 21050, self.root / "key")
+            self.assertEqual(runner.PrivateServer.running, [server])
+            server.stop()
+        # ADB_SERVER_SOCKET would override the port, so the child never inherits it.
+        self.assertEqual(self.calls(), [["21050", "0", "0", "", "kill-server"]])
+        self.assertEqual(runner.PrivateServer.running, [])
+
+    def test_stop_private_servers_stops_every_registered_server(self) -> None:
+        with mock.patch.dict(os.environ, self.environment()):
+            first = runner.PrivateServer(str(self.adb), 21050, self.root / "key")
+            runner.PrivateServer(str(self.adb), 21051, self.root / "key")
+            first.stop()
+            runner.stop_private_servers()
+        self.assertEqual([call[0] for call in self.calls()], ["21050", "21051"])
+        self.assertEqual(runner.PrivateServer.running, [])
+
+    def test_a_slot_holder_gets_a_free_port_inside_its_range(self) -> None:
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            probe.listen(1)
+            taken = probe.getsockname()[1]
+            base = taken - runner.slot_ports.SLOT_PORTS + 1
+            # The top of the range is taken; the answer is below it, in the upper half.
+            with mock.patch.dict(os.environ, {"GUEST_SLOT_PORT_BASE": str(base)}):
+                port = runner.private_server_port()
+        self.assertGreaterEqual(port, base + runner.slot_ports.PRIVATE_SERVER_FLOOR)
+        self.assertLess(port, taken)
+
+    def test_without_a_slot_any_free_port_does(self) -> None:
+        with mock.patch.dict(os.environ):
+            os.environ.pop("GUEST_SLOT_PORT_BASE", None)
+            port = runner.private_server_port()
+        self.assertNotEqual(port, runner.SHARED_SERVER_PORT)
+        self.assertTrue(runner.port_is_free(port))
+
+    def test_a_termination_signal_still_stops_the_server(self) -> None:
+        driver = self.root / "driver.py"
+        driver.write_text(
+            "import signal, sys, time\n"
+            f"sys.path.insert(0, {str(SCRIPT.parent)!r})\n"
+            "import run_android_adb_debugging as runner\n"
+            "for name in runner.TERMINATION_SIGNALS:\n"
+            "    signal.signal(name, runner.terminate_on_signal)\n"
+            f"runner.PrivateServer({str(self.adb)!r}, 21052, {str(self.root / 'key')!r})\n"
+            "try:\n"
+            "    print('ready', flush=True)\n"
+            "    time.sleep(60)\n"
+            "finally:\n"
+            "    runner.ignore_termination()\n"
+            "    runner.stop_private_servers()\n"
+        )
+        for number in (signal.SIGTERM, signal.SIGINT):
+            with self.subTest(signal=number.name):
+                self.log.unlink(missing_ok=True)
+                child = subprocess.Popen([sys.executable, "-B", str(driver)], stdout=subprocess.PIPE,
+                                         env={**os.environ, **self.environment()}, text=True)
+                try:
+                    self.assertEqual(child.stdout.readline().strip(), "ready")
+                    child.send_signal(number)
+                    status = child.wait(timeout=30)
+                finally:
+                    if child.poll() is None:
+                        child.kill()
+                        child.wait(timeout=10)
+                    child.stdout.close()
+                self.assertEqual(status, 128 + number)
+                self.assertEqual([call[0] for call in self.calls()], ["21052"])
+                self.assertEqual(self.calls()[0][-1], "kill-server")
 
 
 class RootAnswerTopicTests(unittest.TestCase):
