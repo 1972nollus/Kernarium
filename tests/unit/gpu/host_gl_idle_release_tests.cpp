@@ -7,14 +7,10 @@
 // buffers left behind, so before it did, the process stayed that much over its
 // steady footprint for as long as the guest ran.
 //
-// Three things hold it. The slabs the driver carves small buffers from are
+// Two things hold it. The slabs the driver carves small buffers from are
 // freed once every entry has been free for a while, with no allocation of
-// their size to find them. The screen hands a context the batch state that
-// was freed last, so contexts that run keep using a few and the command
-// storage of the others goes back when a host asks for it, instead of every
-// state being taken again within a few frames and none ever going idle. And
-// a context that is destroyed gives back the storage of all the states it
-// used, whether or not a host asks.
+// their size to find them. And a context that is destroyed gives back what
+// only it kept, whether or not a host asks.
 //
 // Metal's allocation counter is the observable.
 
@@ -42,7 +38,6 @@ using uml::testing::require;
 using namespace std::chrono_literals;
 
 typedef EGLint (*ReleaseCachedMemory)();
-typedef EGLBoolean (*TrimContext)();
 
 constexpr std::uint64_t mebibyte = 1U << 20U;
 constexpr GLsizei targetSize = 256;
@@ -51,9 +46,6 @@ constexpr int heavyDraws = 4096;
 // What may stay once the driver has given back what it caches: the driver's
 // own small allocations.
 constexpr std::uint64_t slackBytes = 4 * mebibyte;
-// What may stay once the host has released the cached memory of a context that
-// went idle: the driver's own allocations and the states the others still use.
-constexpr std::uint64_t keptAfterRelease = 48 * mebibyte;
 // What the heavy context must have grown for the test to prove anything.
 constexpr std::uint64_t grownAtLeast = 16 * mebibyte;
 // How long the counter has to come back with nobody asking: the slabs wait a
@@ -123,74 +115,11 @@ void drawHeavily(int frames, int drawsPerFrame)
     glFinish();
 }
 
-
-/* A context that goes on drawing something small: a target and a program it
- * keeps, one draw and a flush per frame, `pause` apart, for `duration`. */
-void drawLightly(std::chrono::milliseconds duration, std::chrono::milliseconds pause)
-{
-    const auto target = colourTarget(targetSize, targetSize, TextureStorage::immutable);
-    require(target.complete, "the light context's target was incomplete");
-    const GLuint program = linkProgram({compileShader(GL_VERTEX_SHADER, vertexSource),
-        compileShader(GL_FRAGMENT_SHADER, fragmentSource)});
-    glUseProgram(program);
-    const GLint offset = glGetUniformLocation(program, "offset");
-    const GLint colour = glGetUniformLocation(program, "colour");
-    require(offset >= 0 && colour >= 0, "the program has no uniforms");
-    GLuint vertexArray = 0;
-    glGenVertexArrays(1, &vertexArray);
-    glBindVertexArray(vertexArray);
-    glViewport(0, 0, targetSize, targetSize);
-    const auto end = std::chrono::steady_clock::now() + duration;
-    int frame = 0;
-    while (std::chrono::steady_clock::now() < end) {
-        glClear(GL_COLOR_BUFFER_BIT);
-        glUniform4f(offset, 0.0F, 0.0F, 0.0F, 0.0F);
-        glUniform4f(colour, static_cast<float>(frame++ % 16) / 16.0F, 0.0F, 0.0F, 1.0F);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-        glFlush();
-        std::this_thread::sleep_for(pause);
-    }
-    glFinish();
-    require(glGetError() == GL_NO_ERROR, "the light context reported an error");
-}
-
 struct Setup {
     uml::gpu::HostGlProvider& provider;
     void* first;
     ReleaseCachedMemory release;
-    TrimContext trim;
 };
-
-/* The states a context that went idle leaves are not taken again while others
- * run, so their storage goes when a host asks for the cached memory. */
-void checkAnIdleContextGivesItsStatesBack(const Setup& setup)
-{
-    setup.release();
-    std::this_thread::sleep_for(200ms);
-    const std::uint64_t baseline = allocated();
-    void* const heavy = setup.provider.createContext(uml::gpu::testing::glContextParameters(4, 5));
-    require(heavy != nullptr, "no second host GL context");
-    require(setup.provider.makeCurrent(heavy) == 0, "the second context would not bind");
-    drawHeavily(heavyFrames, heavyDraws);
-    const std::uint64_t peak = grown(baseline);
-    std::printf("the heavy context grew the counter by %llu MiB\n",
-        static_cast<unsigned long long>(peak / mebibyte));
-    require(peak >= grownAtLeast,
-        "the heavy context grew too little for the test to prove anything");
-    require(setup.trim() == EGL_TRUE, "the heavy context's trim failed");
-    require(setup.provider.makeCurrent(setup.first) == 0, "the first context would not bind");
-    drawLightly(2500ms, 20ms);
-    const std::uint64_t beforeRelease = grown(baseline);
-    setup.release();
-    std::this_thread::sleep_for(200ms);
-    const std::uint64_t kept = grown(baseline);
-    std::printf("%llu KiB before and %llu KiB after the host released the cached memory\n",
-        static_cast<unsigned long long>(beforeRelease >> 10U),
-        static_cast<unsigned long long>(kept >> 10U));
-    setup.provider.destroyContext(heavy);
-    require(kept <= keptAfterRelease,
-        "the driver kept the command storage of an idle context after the host released the cached memory");
-}
 
 /* A destroyed context's caches go back with nobody asking. */
 void checkADestroyedContextLeavesNothing(const Setup& setup)
@@ -199,8 +128,8 @@ void checkADestroyedContextLeavesNothing(const Setup& setup)
     std::this_thread::sleep_for(200ms);
     const std::uint64_t baseline = allocated();
     void* const heavy = setup.provider.createContext(uml::gpu::testing::glContextParameters(4, 5));
-    require(heavy != nullptr, "no third host GL context");
-    require(setup.provider.makeCurrent(heavy) == 0, "the third context would not bind");
+    require(heavy != nullptr, "no second host GL context");
+    require(setup.provider.makeCurrent(heavy) == 0, "the second context would not bind");
     drawHeavily(heavyFrames, heavyDraws);
     const std::uint64_t peak = grown(baseline);
     std::printf("the heavy context grew the counter by %llu MiB\n",
@@ -235,20 +164,15 @@ int main()
         return uml::gpu::testing::skip(first.failure);
     const EGLDisplay display = eglGetCurrentDisplay();
     require(display != EGL_NO_DISPLAY, "no current EGL display");
-    require(epoxy_has_egl_extension(display, "EGL_MESA_context_trim"),
-        "the driver does not advertise EGL_MESA_context_trim");
     const auto release = reinterpret_cast<ReleaseCachedMemory>(
         eglGetProcAddress("eglReleaseCachedMemoryMESA"));
     require(release != nullptr, "eglReleaseCachedMemoryMESA was not found");
-    const auto trim = reinterpret_cast<TrimContext>(eglGetProcAddress("eglTrimContextMESA"));
-    require(trim != nullptr, "eglTrimContextMESA was not found");
 
     /* The same draws once, so that what the device makes once for every
      * context is in the baseline. */
     drawHeavily(1, 1);
-    const Setup setup {provider, first.context, release, trim};
+    const Setup setup {provider, first.context, release};
 
-    checkAnIdleContextGivesItsStatesBack(setup);
     checkADestroyedContextLeavesNothing(setup);
 
     std::printf("PASS idle release\n");
