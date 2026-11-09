@@ -105,6 +105,7 @@ struct SystemInfoTests {
         let info = try SystemInfo(manifest: Data(manifest.utf8), appVersion: "1.0 (1)")
         #expect(info.version == "17")
         #expect(info.release == "20261031-los24-r4")
+        #expect(info.buildLabel == "r4 (2026-10-31)")
         #expect(info.buildID == "CP2A.260605.016")
         #expect(info.kernel == "Linux 6.18.54")
         #expect(info.architecture == "arm64, 4 KiB pages")
