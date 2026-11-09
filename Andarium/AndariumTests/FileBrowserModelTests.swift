@@ -107,11 +107,12 @@ struct FileBrowserModelTests {
 
     /// A browser standing in `Download`, listed, with these entries.
     private func makeBrowser(
-        _ entries: [GuestFile] = [], backend scripted: ScriptedBackend? = nil
+        _ entries: [GuestFile] = [], backend scripted: ScriptedBackend? = nil, center: NotificationCenter = NotificationCenter()
     ) async -> (FileBrowserModel, ScriptedBackend) {
         let backend = scripted ?? ScriptedBackend()
         backend.folders[download] = entries
-        let browser = FileBrowserModel(backend: backend)
+        // Each browser hears only its own test's notifications.
+        let browser = FileBrowserModel(backend: backend, center: center)
         browser.route = [FolderRoute(path: root), FolderRoute(path: download)]
         await browser.load(download)
         return (browser, backend)
@@ -210,11 +211,12 @@ struct FileBrowserModelTests {
     @Test func leavingTheForegroundStopsTheTransferAndItsFilesSayWhy() async throws {
         let backend = ScriptedBackend()
         backend.holding = ["held.bin"]
-        let (browser, _) = await makeBrowser(backend: backend)
+        let center = NotificationCenter()
+        let (browser, _) = await makeBrowser(backend: backend, center: center)
         browser.received([pick("done.txt"), pick("held.bin"), pick("later.txt")])
         let transfer = try #require(browser.transfer)
         try await waitUntil { backend.started.contains("held.bin") }
-        NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+        center.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
         try await settle(transfer)
         #expect(transfer.stage == .failed)
         let reason = FileBrowserModel.leftForegroundReason

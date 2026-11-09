@@ -189,11 +189,16 @@ final class FileBrowserModel {
         BugReportSharing.present(files, completed: finished)
     }
 
-    init(backend: any GuestFilesBackend) {
+    @ObservationIgnored private let center: NotificationCenter
+
+    /// `center` is where the application's notifications arrive; a test gives
+    /// its own, so that one model's test never stops another's.
+    init(backend: any GuestFilesBackend, center: NotificationCenter = .default) {
         self.backend = backend
+        self.center = center
         // iOS pauses the guest when the application enters the background,
         // so a transfer cannot go on through it.
-        observer = NotificationCenter.default.addObserver(
+        observer = center.addObserver(
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.leftForeground() }
@@ -201,7 +206,7 @@ final class FileBrowserModel {
     }
 
     isolated deinit {
-        if let observer { NotificationCenter.default.removeObserver(observer) }
+        if let observer { center.removeObserver(observer) }
     }
 
     var browsing: Bool { !route.isEmpty }
