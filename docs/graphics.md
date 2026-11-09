@@ -493,7 +493,15 @@ host side little headroom, so guest RAM cannot be raised to make room for a
 workload. The per-device geometry heap starts small and grows within the pool, a
 grown heap is freed once nothing holds it, Zink's buffer cache is bounded, a
 destroyed context's command storage is released with it
-(`gpu-host-gl-batch-storage`) and an idle Virgl context is trimmed. virglrenderer's shared-memory segments are
+(`gpu-host-gl-batch-storage`) and an idle Virgl context is trimmed. What the
+host driver caches for a context that is gone or idle goes back without a
+request while other contexts run: Zink frees a slab once every entry has been
+free for a second and takes the command state that was freed last, so the
+states of an idle context stay unused and their storage goes with the next
+release; KosmicKrisp gives up a command allocator it has not been handed for a
+second; and the renderer releases the host driver's caches about two seconds
+after a guest context is destroyed (`gpu-host-gl-idle-release`).
+virglrenderer's shared-memory segments are
 unlinked container files outside the footprint on iOS and POSIX shared memory
 inside it on macOS. A baked device campaign leaves out the groups its guest
 memory cannot hold ([`testing.md`](testing.md)).
