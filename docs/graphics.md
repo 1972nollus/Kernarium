@@ -501,7 +501,11 @@ states of an idle context stay unused and their storage goes with the next
 release; KosmicKrisp gives up a command allocator it has not been handed for a
 second; and the renderer releases the host driver's caches about two seconds
 after a guest context is destroyed (`gpu-host-gl-idle-release`).
-virglrenderer's shared-memory segments are
+KosmicKrisp keeps the MSL text of a pipeline compressed with libcompression's
+LZFSE, since only a pipeline cache write and a render pass that binds fewer
+attachments read it again; a pipeline cache carries the compressed text, and
+its format number is part of the cache UUID. virglrenderer's shared-memory
+segments are
 unlinked container files outside the footprint on iOS and POSIX shared memory
 inside it on macOS. A baked device campaign leaves out the groups its guest
 memory cannot hold ([`testing.md`](testing.md)).
