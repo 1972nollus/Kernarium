@@ -302,6 +302,9 @@ struct AppEntry {
             safeMemory: { count in
                 Int(kernarium_runtime_loader_conservative_guest_memory_mib(UInt32(count), launchSet))
             },
+            defaultHoldsGraphics: { count in
+                kernarium_runtime_loader_default_guest_memory_holds_gpu_budget(UInt32(count), launchSet) != 0
+            },
             graphicsMemory: { memoryMiB, count in
                 Int(kernarium_runtime_loader_gpu_budget_mib(UInt32(memoryMiB), UInt32(count), launchSet))
             }

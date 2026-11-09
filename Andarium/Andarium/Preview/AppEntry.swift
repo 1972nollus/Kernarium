@@ -29,8 +29,8 @@ struct AppEntry {
     /// Graphics memory in use, in MiB, held with `statsReadings`: a figure
     /// near the budget turns its bar orange.
     var statsVramMiB: Int?
-    /// The mock device: "iphone-18-pro-max" or "ipad-mini-6"; absent, the
-    /// idiom's own mock.
+    /// The mock device: "iphone-18-pro-max", "ipad-mini-6" or "mac-64-gib"
+    /// (a ruler of about a thousand positions); absent, the idiom's own mock.
     var device: String?
     /// The guest's memory, in MiB, instead of the default a new guest gets.
     var memoryMiB: Int?

@@ -38,6 +38,11 @@ enum PreviewData {
                 name: "iPad", processorCount: 6, memory: iPadMini6Memory,
                 freeStorageBytes: gibibytes(lowSpace ? 1.2 : 118.3)
             )
+        case "mac-64-gib":
+            return HostDevice(
+                name: "Mac", processorCount: 8, memory: mac64GiBMemory,
+                freeStorageBytes: gibibytes(lowSpace ? 1.2 : 412.6)
+            )
         default:
             break
         }
@@ -77,8 +82,18 @@ enum PreviewData {
     /// application.
     static let iPhone18ProMaxMemory = MemoryPolicy(
         maximumsMiB: Array(repeating: 4096, count: 6), defaultsMiB: Array(repeating: 3072, count: 6),
-        safeMiB: Array(repeating: 3584, count: 6),
+        safeMiB: Array(repeating: 3584, count: 6), defaultHoldsGraphics: Array(repeating: true, count: 6),
         graphicsMiB: { memory, count in budget(limitMiB: 5120, memoryMiB: memory, vCPUs: count) }
+    )
+
+    /// An iOS app on a Mac with 64 GiB: the host's RAM is on offer at every
+    /// count (about a thousand positions on the memory ruler), a new guest gets
+    /// 4 GiB, nothing is likely to end the application, and with no memory
+    /// limit the host GPU's budget is half the guest.
+    static let mac64GiBMemory = MemoryPolicy(
+        maximumsMiB: Array(repeating: 65536, count: 8), defaultsMiB: Array(repeating: 4096, count: 8),
+        safeMiB: Array(repeating: 65536, count: 8),
+        graphicsMiB: { memory, _ in memory / 2 }
     )
 
     /// B for a mock: L less A (64), E_rest (320), S (149), the gadget cache at
