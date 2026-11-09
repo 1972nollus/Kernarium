@@ -186,7 +186,7 @@ control out.
   [vCPU limit](../docs/architecture.md#memory-and-executable-code) and the RAM
   the runtime loader answers for that count
   (`kernarium_runtime_loader_maximum_guest_memory_mib`); a new guest gets the
-  loader's default for it
+  loader's default for it, which stops at 4 GiB however much is offered
   (`kernarium_runtime_loader_default_guest_memory_mib`). Android is usable
   from 1.5 GiB, so a guest has at least that (`Limits.minimumMemoryMiB`,
   Andarium's own: the runtime still accepts less for Kernarium's guests); a
@@ -196,12 +196,21 @@ control out.
   runtime's conservative size for its vCPU count (`safeMemoryMiB`) is likely
   to be closed by iOS: Home shows a notice and the memory ruler a line and red
   ticks, both following the guest's memory and vCPU count (`MemoryWarning`).
-  Where the default is lower, a guest with more than the default has less than
-  1 GiB of graphics memory (VRAM, the host GPU's budget): the System sheet
-  turns the ticks past the default orange and warns that games may run out of
-  it (`GraphicsMemoryWarning`), and Home says nothing. The sheet also shows
-  the loader's estimate of VRAM for the chosen memory and vCPUs and says it is
-  separate from the guest's RAM.
+  A guest above the graphics line (`MemoryPolicy.graphicsLineMiB`) may run out
+  of graphics memory (VRAM, the host GPU's budget): the System sheet turns the
+  ticks past it orange and warns that games may (`GraphicsMemoryWarning`), and
+  Home says nothing. The line is the default where the runtime lowered the
+  default to keep the GPU 1 GiB
+  (`kernarium_runtime_loader_default_guest_memory_holds_gpu_budget`), and
+  elsewhere the largest size whose estimate of VRAM is still 1 GiB or more
+  (`Limits.minimumDefaultGraphicsMemoryMiB`), so a range above 4 GiB warns
+  only where the estimate falls. The sheet also shows the loader's estimate of
+  VRAM for the chosen memory and vCPUs and says it is separate from the
+  guest's RAM.
+  The memory ruler follows the range, which on a Mac with much RAM has about
+  a thousand positions: it labels only the round numbers of gibibytes that do
+  not touch and draws the ticks that have room (`RulerThinning`), and
+  VoiceOver's increment and decrement then move to the next labelled one.
 - **Storage.** A guest's files live in `Library/Guest/` of the application's
   container behind `GuestStorage`. The system disk is Android's, read-only, and
   stays in the release directory; the runtime creates the data disk `data.img`
