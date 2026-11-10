@@ -3,6 +3,7 @@
 #include "virgl_renderer.hpp"
 
 #include "device_memory_pool.hpp"
+#include "freed_memory_watch.hpp"
 #include "host_gl_provider.hpp"
 #include "gpu_memory_figures.hpp"
 #include "host_gpu_memory.hpp"
@@ -94,6 +95,9 @@ std::atomic<void*> memoryAccountObserverData;
 std::atomic<VirglRenderer::MemoryWaitObserver> memoryWaitObserver;
 std::atomic<VirglRenderer::MemoryWaitedObserver> memoryWaitedObserver;
 std::atomic<void*> memoryWaitObserverData;
+// What the guest has freed, for the pool's reclaim hook; the account callback
+// below feeds it.
+FreedMemoryWatch guestFrees;
 // Guards the pool's address for the readers of its figures: a statistics read
 // from any thread must not meet a renderer that is going.
 std::mutex deviceMemoryReadMutex;
@@ -144,6 +148,8 @@ void deviceMemoryWaited(void*, std::uint32_t, bool admitted) noexcept
 void deviceMemoryAccounted(
     void*, std::uint32_t contextId, std::int64_t delta) noexcept
 {
+    if (delta < 0)
+        guestFrees.noteFreed(static_cast<std::uint64_t>(-delta));
     if (const auto observer =
             memoryAccountObserver.load(std::memory_order_acquire)) {
         observer(
@@ -438,11 +444,24 @@ VirglRenderer::VirglRenderer()
         }
         if (deviceMemoryPool) {
             /* A refused reservation first frees what the host GL driver
-             * caches. The hook reaches this renderer's provider, so it is
+             * caches, and has Metal give back the footprint of the heaps that
+             * were freed. The hook reaches this renderer's provider, so it is
              * cleared before the provider goes. */
+            guestFrees.reset();
             deviceMemoryPool->setReclaim(
                 [provider = provider_.get()]() -> std::uint64_t {
-                    return provider->releaseCachedMemory();
+                    const std::uint64_t released =
+                        provider->releaseCachedMemory();
+                    /* The decision that follows reads the footprint at once,
+                     * so when something was freed the retire is given the
+                     * moment it takes; a refusal with nothing to give back
+                     * fails at once. */
+                    const bool freed = guestFrees.freedSinceLastCall(
+                        released, virgl_renderer_get_resident_heap_memory());
+                    uml::platform::retireFreedGpuMemory(
+                        freed ? std::chrono::milliseconds {10}
+                              : std::chrono::milliseconds {});
+                    return released;
                 });
         }
 #ifndef UML_APP_STORE_RUNTIME
@@ -1306,9 +1325,12 @@ void VirglRenderer::trimIdleContexts() noexcept
         }
         // The contexts have released what a destroyed context's resources
         // held; the driver's caches keep it until they are asked, and no
-        // guest that is not allocating asks.
-        if (idleContexts_.takeRelease(now))
+        // guest that is not allocating asks. The footprint of the heaps the
+        // release freed stays until Metal is asked to retire it.
+        if (idleContexts_.takeRelease(now)) {
             (void)provider_->releaseCachedMemory();
+            uml::platform::retireFreedGpuMemory();
+        }
     } catch (...) {
         // Never carry a C++ exception through the C renderer API.
     }

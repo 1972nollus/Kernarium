@@ -285,9 +285,15 @@ heap is made resident, not twice that. A reservation that does not fit first
 frees the buffers the host GL driver caches, and the command storage it has left
 unused for a while, and is decided again. Memory the host frees leaves Metal's
 counter at once but the ledger only later, within milliseconds or at its next
-sweep. The pool sees the release in Metal's counter, and when the request would
-fit once the ledger had caught up with it, waits for the ledger (re-reading it
-every millisecond, for 300 ms at most) rather than refuse. A request that
+sweep. A freed heap that was made resident stays in the ledger until the process
+next asks Metal to make an allocation resident. The reclaim makes that request
+for a small buffer of its own and, when memory was freed since its last run,
+waits up to 10 ms for the ledger to fall, so a refusal with nothing to give back
+fails at once; the release after a guest context is destroyed makes the request
+without waiting (`retireFreedGpuMemory`, `freed_memory_watch.hpp`). The pool
+sees the release in Metal's counter, and when the request would fit once the
+ledger had caught up with it, waits for the ledger (re-reading it every
+millisecond, for 300 ms at most) rather than refuse. A request that
 follows no release, or would not fit even then, is refused at once, and a wait
 that reached its bound is not repeated until Metal's counter falls again.
 
@@ -402,8 +408,9 @@ when a refusal was counted; the guest then asks again.
   still refused first, which the refusal edge reports.
 - Nothing is periodic and nothing wakes an idle device: the ledger's change
   observer arms a coalescing 250 ms timer on the transport thread, a refusal
-  moves that timer to the next millisecond, and the evaluator arms one
-  deadline for its own next change.
+  moves that timer to the next millisecond, an idle trim of the contexts arms it
+  too (the ledger does not see what that gives back), and the evaluator arms
+  one deadline for its own next change.
 - A query that sets `GUEST_RECLAIMS` records that a reclaimer in the guest is
   armed. The flag belongs to the connection, is cleared by a query without it
   and by a new connection, and reaches the applications as `guest_reclaims` of

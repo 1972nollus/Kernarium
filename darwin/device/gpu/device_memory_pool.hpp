@@ -90,19 +90,24 @@ namespace uml::gpu {
  * Memory the host driver caches for reuse counts against the pool, and the
  * driver releases it only when a client of that driver is refused, never for
  * another consumer's refusal. So the pool takes one reclaim hook, which frees
- * what the host drivers cache and reports how many cached allocations it
- * freed, and calls it before it refuses: a reservation that does not fit
- * runs the hook and is decided once more.
+ * what the host drivers cache, has Metal return the graphics footprint of the
+ * heaps freed (waiting for it only when something was freed), and reports how
+ * many cached allocations it freed, and calls it before it refuses: a
+ * reservation that does not fit runs the hook and is decided once more.
  *
  * What `allocated` reports does not all follow a release at once. Metal's
  * counter drops the moment a heap is freed, and the graphics ledger beside it
- * follows later: within milliseconds, or only at the ledger's next sweep,
- * a quarter of a second at most. A request that fits once everything is freed
- * is therefore refused by the ledger's share for that while. A pool given a
- * `prompt` reading, the part of `allocated` that does follow at once, sees
- * the release: at every decision it compares the prompt reading with the one
- * before, and what it fell by is what the ledger still owes, less what
- * `allocated` has fallen by since and what the prompt reading has risen by.
+ * follows later: within milliseconds, or only at the ledger's next sweep, a
+ * quarter of a second at most. A heap made resident through a residency set, as
+ * KosmicKrisp makes each of its heaps, leaves the ledger only when the process
+ * next asks Metal to make an allocation resident, which the reclaim hook and
+ * the release after a context's destruction do. A request that fits once
+ * everything is freed is therefore refused by the ledger's share for that
+ * while. A pool given a `prompt` reading, the part of `allocated` that does
+ * follow at once, sees the release: at every decision it compares the prompt
+ * reading with the one before, and what it fell by is what the ledger still
+ * owes, less what `allocated` has fallen by since and what the prompt reading
+ * has risen by.
  * When a request is refused and would fit once the ledger had paid what it
  * owes, the pool waits for `allocated` to fall rather than refuse, until it
  * admits the request, the ledger has paid and it still does not fit, or the
