@@ -240,6 +240,13 @@ memory type gets its own heap sized to it. A mapping near the aperture's size
 can fail at `vkMapMemory` with `VK_ERROR_OUT_OF_DEVICE_MEMORY` until the guest's
 released nodes retire.
 
+The aperture also holds every Venus shared-memory region of the guest: the ring
+and the command and reply pools. A reply larger than 16 MiB, such as the data of
+`vkGetPipelineCacheData` for a large cache, gets a region of its own that is
+unmapped when the reply is consumed; the Android guest's Venus port carries
+that rule, and a guest without it keeps the oversized pool region mapped, so the
+heap the application is shown is larger than the room it has left.
+
 ### Device memory budget
 
 Device memory is charged to the application like guest RAM, so the host gives
@@ -522,10 +529,13 @@ request while other contexts run: Zink frees a slab once every entry has been
 free for a second; KosmicKrisp gives up a command allocator it has not been
 handed for a second; and the renderer releases the host driver's caches about
 two seconds after a guest context is destroyed (`gpu-host-gl-idle-release`).
-virglrenderer's shared-memory segments are unlinked container files outside the
-footprint on iOS and POSIX shared memory inside it on macOS. A baked device
-campaign leaves out the groups its guest memory cannot hold
-([`testing.md`](testing.md)).
+KosmicKrisp keeps the MSL text of a pipeline compressed with libcompression's
+LZFSE, since only a pipeline cache write and a render pass that binds fewer
+attachments read it again; a pipeline cache carries the compressed text, and
+its format number is part of the cache UUID. virglrenderer's shared-memory
+segments are unlinked container files outside the footprint on iOS and POSIX
+shared memory inside it on macOS. A baked device campaign leaves out the groups
+its guest memory cannot hold ([`testing.md`](testing.md)).
 
 ## Metal shader cache
 
