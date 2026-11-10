@@ -13,7 +13,7 @@ enum StatisticsViewer: Hashable {
 }
 
 enum SheetKind: String, Identifiable, Hashable {
-    case create, resize, info, system
+    case create, resize, info, system, whatsNew
 
     var id: String { rawValue }
 }
@@ -59,7 +59,7 @@ final class SessionState {
     /// been. ADB over network needs it on.
     var usbDebugging: Bool?
     /// Whether the guest's internal storage is up, as last read; nil until it
-    /// has been. Android ends its boot some seconds before it, and the Files
+    /// has been. Android ends its boot some seconds before it, and the file
     /// browser waits for it.
     var storageReady: Bool?
     var showStats = false
@@ -151,6 +151,9 @@ final class AppModel {
 
     var sessionPreset = SessionPreset()
     var session = SessionState()
+    /// The release notes: Info's history and the ribbon above Start after an
+    /// update.
+    var whatsNew = WhatsNewModel()
     /// The launch decided whether the statistics show (automation, see
     /// `StatsPreference.launch`): the value belongs to that run and is not kept.
     var statsDecidedByLaunch = false
@@ -585,7 +588,7 @@ final class AppModel {
         driver == nil ? session.usbDebugging != false : session.usbDebugging == true
     }
 
-    /// The Files browser may list and move files: USB debugging is on, as
+    /// The file browser may list and move files: USB debugging is on, as
     /// Settings shows it, and Android has its storage up. The preview has no
     /// guest to ask and says yes unless a screen says no.
     var filesAvailable: Bool {

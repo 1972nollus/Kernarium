@@ -42,6 +42,14 @@ extension JitPreference {
 }
 
 extension AppEntry {
+    /// Whether the launch is the person's own, which announces the release
+    /// notes (`announceWhatsNew`). A launch that states any setting, the JIT
+    /// included, or runs under XCTest is a harness's.
+    static func isPersonsLaunch(overrides: LaunchOverrides, environment: [String: String]) -> Bool {
+        overrides.isEmpty && JitPreference.stated(in: environment) == nil
+            && environment["XCTestConfigurationFilePath"] == nil
+    }
+
     /// The file in an isolated guest instance's directory whose number, in
     /// mebibytes, stands for the device's free space while it exists, so that
     /// a harness launch drives the run's low-space pause without filling the
