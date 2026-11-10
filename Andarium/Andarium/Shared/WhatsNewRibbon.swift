@@ -98,8 +98,8 @@ struct WhatsNewRibbon: View {
         }
     }
 
-    /// "Files · More memory · Graphics memory", "Files · More memory · 5
-    /// more", or "7 new features" when none is named.
+    /// "File browser · More memory · Graphics memory", "File browser · More
+    /// memory · 5 more", or "7 new features" when none is named.
     static func summary(_ titles: [String], naming named: Int) -> String {
         guard named > 0 else {
             return titles.count == 1 ? "1 new feature" : "\(titles.count) new features"

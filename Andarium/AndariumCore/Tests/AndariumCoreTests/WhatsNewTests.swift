@@ -151,7 +151,7 @@ struct WhatsNewCatalogTests {
             notes(
                 date: "2026-11-12",
                 entry: #"""
-                "id": "files", "title": "File browser", "text": "T", "symbol": "folder.fill",
+                "id": "file-browser", "title": "File browser", "text": "T", "symbol": "folder.fill",
                 "place": "sessionSettings", "requirement": {"memoryAboveMiB": 4096}
                 """#))
         let release = try #require(decoded.first)
