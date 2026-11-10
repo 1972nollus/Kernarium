@@ -930,6 +930,23 @@ uml_add_guest_integration_test(
     CPUS 4
     GPUS 1)
 
+# A system call that copies from or into a mapped host-visible Virtio-GPU blob,
+# whose frames lie in the vhost-user shared-memory aperture outside guest RAM,
+# fails with EFAULT, while the process's own access to the blob works, and the
+# guest runs on.
+uml_add_guest_integration_test(
+    NAME guest-virtgpu-blob-uaccess
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/virtgpu_blob_uaccess_probe.cpp
+        "--cxxflags=-Wall -Wextra -Werror"
+        --guest-argument=--gpu --guest-argument=--gpu-display=vnc
+        --guest-argument=--gpu-vnc-bind=127.0.0.1 --guest-argument=--gpu-vnc-port=0
+        --ncpus 2 --probe-timeout 240
+    LABELS guest;kernel;gpu
+    TIMEOUT 600
+    CPUS 2
+    GPUS 1)
+
 # A Virtio-GPU context names the process that created it: the kernel appends
 # "|pid=<tgid>|comm=<comm>" to the debug name, and the host credits the memory
 # a context holds to that process (docs/graphics.md). Three guest processes

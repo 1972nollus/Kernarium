@@ -110,6 +110,10 @@ it. The bridge fields used below are defined by the comments in
 - A string copied from user memory is copied a page at a time and, as with
   `strncpy_from_user()`, leaves the destination past the terminator as it was.
   `guest-user-strings` checks it.
+- A system call's access to user memory reaches only guest RAM. One that names
+  a mapping of other memory, such as a host-visible Virtio-GPU blob in the
+  shared-memory aperture, fails with `EFAULT`; the process still reads and
+  writes the mapping itself (`guest-virtgpu-blob-uaccess`).
 
 ## arm64 task interface
 
