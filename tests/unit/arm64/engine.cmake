@@ -228,6 +228,12 @@
         WITHOUT_HARNESS
         OBJECTS $<TARGET_OBJECTS:uml_cpu_executable_memory_region_test>
                 $<TARGET_OBJECTS:uml_arm64_jit_arena_region_test>)
+    # The request to the debugger when none serves it: the breakpoint is
+    # stepped over, P_TRACED is read right before it, and a trap that is not a
+    # request goes on.
+    uml_add_arm64_unit_test(jit_debugger_request NAME arm64-jit-debugger-request
+        WITHOUT_HARNESS
+        OBJECTS $<TARGET_OBJECTS:uml_cpu_executable_memory_region_test>)
     # The size of that region from the JIT cache's geometry, and the
     # preparation seam on a host without the route.
     uml_add_arm64_unit_test(jit_memory_preparation

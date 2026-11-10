@@ -93,6 +93,11 @@ using JitMemoryStatus = ::uml::cpu::JitMemoryStatus;
  * process that will not use JIT. */
 [[nodiscard]] bool jit_debugger_attached() noexcept;
 void release_jit_debugger() noexcept;
+
+/* The executable memory a debugger prepared and the process keeps wired, in
+ * bytes, zero before any. A run that does not use it still carries it, so the
+ * run's memory plan counts it. */
+[[nodiscard]] std::size_t prepared_jit_region_bytes() noexcept;
 #endif
 
 /* Parses a byte count with an optional K/M/G suffix. Zero if unparsable. */

@@ -33,4 +33,9 @@ using ::uml::cpu::JitMemoryStatus;
 /* Tells an attached debugger to detach, for a process that will not use JIT. */
 void release_jit_debugger() noexcept;
 
+/* The bytes of executable memory a debugger prepared for this process, zero
+ * before one did. They stay wired for the life of the process, used by a JIT
+ * run or not. */
+[[nodiscard]] std::size_t prepared_jit_region_bytes() noexcept;
+
 } // namespace uml::cpu::arm64
