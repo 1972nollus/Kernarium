@@ -6,14 +6,14 @@
       {
         "id": "file-browser",
         "title": "File browser",
-        "text": "Browse Android’s internal storage, and import or export files and folders.",
+        "text": "Browse the guest’s internal storage, and import or export files and folders.",
         "symbol": "folder.fill",
         "place": "sessionSettings"
       },
       {
         "id": "more-memory",
         "title": "More memory",
-        "text": "On devices that allow it, Android’s RAM can now go above 4 GiB.",
+        "text": "On devices that allow it, the guest’s RAM can now go above 4 GiB.",
         "symbol": "memorychip.fill",
         "requirement": { "memoryAboveMiB": 4096 }
       },
@@ -21,7 +21,7 @@
         "id": "stability-fixes",
         "title": "Stability fixes",
         "points": [
-          "Fixed Android crashing on many iPhones",
+          "Fixed the guest crashing on many iPhones",
           "Fixed a crash when returning to Andarium from the background",
           "Fixed crashes in some 3D games and apps",
           "Fixed a crash when using the gyroscope",

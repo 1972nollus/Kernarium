@@ -153,13 +153,13 @@ extension KeyedDecodingContainer {
 
 /// Where a feature is found, said under its text.
 public enum WhatsNewPlace: String, Hashable, Decodable, Sendable {
-    /// Session Settings, which opens from the side keys while Android runs
+    /// Session Settings, which opens from the side keys while the guest runs
     /// in a normal session.
     case sessionSettings
 
     public var words: String {
         switch self {
-        case .sessionSettings: "In Settings while Android runs"
+        case .sessionSettings: "In Settings while the guest runs"
         }
     }
 
