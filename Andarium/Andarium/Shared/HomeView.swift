@@ -56,15 +56,21 @@ struct HomeView: View {
             }
         }
         .sheet(item: $model.sheet) { kind in
-            switch kind {
-            case .create: NewGuestSheet()
-            case .resize: ResizeSheet()
-            case .system: SystemSheet()
-            case .info: InfoSheet(page: hints.infoPage)
-            case .whatsNew:
-                WhatsNewSheet(releases: model.whatsNew.pending)
-                    .modifier(ZoomFrom(id: Self.ribbonID, namespace: whatsNewZoom, enabled: !reduceMotion))
+            // On a Mac, SwiftUI reads a sheet's presentation preferences
+            // before the sheet inherits this view's environment, so every
+            // sheet is handed the model it reads.
+            Group {
+                switch kind {
+                case .create: NewGuestSheet()
+                case .resize: ResizeSheet()
+                case .system: SystemSheet()
+                case .info: InfoSheet(page: hints.infoPage)
+                case .whatsNew:
+                    WhatsNewSheet(releases: model.whatsNew.pending)
+                        .modifier(ZoomFrom(id: Self.ribbonID, namespace: whatsNewZoom, enabled: !reduceMotion))
+                }
             }
+            .environment(model)
         }
         .microphoneAccessAlert()
         .alert("Erase guest?", isPresented: $model.confirmingErase) {

@@ -5,9 +5,10 @@ Andarium is the iOS application that runs one Android (LineageOS 24, Android
 creates, sizes and erases is the guest. [Kernarium](../Kernarium/README.md)
 stays the developer application for Linux guests and for Android bundles. In
 its development configurations Andarium also runs on an Apple silicon Mac in
-Designed for iPad mode (the App Store configuration is not offered to Macs),
-and it builds for the iOS Simulator, where the guest renders on the CPU for UI
-tests ([`graphics.md`](../docs/graphics.md#ios-simulator-software-renderer)).
+Designed for iPad mode (Xcode offers no Mac destination for the App Store
+configuration), and it builds for the iOS Simulator, where the guest renders
+on the CPU for UI tests
+([`graphics.md`](../docs/graphics.md#ios-simulator-software-renderer)).
 
 ## Ownership
 
@@ -63,7 +64,10 @@ capability key names the chip, so `UIRequiredDeviceCapabilities` names `metal`
 and the application asks the GPU for the Metal 4 family at launch
 (`HostDevice.runsGuestGraphics`), refusing to start a guest without it; the
 Simulator draws on the CPU and always passes. iPhone and iPad are supported;
-the AppStore configuration sets `SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD` to NO.
+the AppStore configuration sets `SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD` to NO,
+which only removes Xcode's Mac destination: whether the App Store and
+TestFlight offer the uploaded build to Apple silicon Macs is the app's
+availability in App Store Connect.
 `ITSAppUsesNonExemptEncryption` is NO in `Config/Info.plist`.
 
 The iPhone interface is portrait-only. On iPad, a guest session whose scene
@@ -137,7 +141,7 @@ everything that exists for automation or only pretends:
   no debugging or automation support (the `kernarium-ios-device-android-app-store`
   preset, packaged with `package-ios-frameworks.sh --app-store --runtimes
   android`; [`Kernarium/README.md`](../Kernarium/README.md#automation-runs)).
-- It is not offered to Macs, and its Archive action uses it.
+- Xcode offers no Mac destination for it, and its Archive action uses it.
 - It refuses an embedded artifact that is behind the archived commit: a build
   phase runs [`scripts/check-embedded-artifacts.py`](../scripts/check-embedded-artifacts.py),
   which compares the accepted Android release and kernel descriptors with the

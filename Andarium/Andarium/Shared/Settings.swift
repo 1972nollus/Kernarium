@@ -309,3 +309,19 @@ struct SessionSettingsSheet: View {
             .contentTransition(.numericText())
     }
 }
+
+extension View {
+    /// Settings over a session, which hides the status bar. The sheet is
+    /// handed the model and keeps the status bar hidden too: on a Mac, SwiftUI
+    /// reads a sheet's presentation preferences before the sheet inherits the
+    /// session's environment, and a full-height sheet whose status bar differs
+    /// from the session's flips its visibility on every layout until AppKit
+    /// ends the application.
+    func sessionSettings(isPresented: Binding<Bool>, large: Bool, model: AppModel) -> some View {
+        sheet(isPresented: isPresented) {
+            SessionSettingsSheet(large: large)
+                .environment(model)
+                .statusBarHidden(true)
+        }
+    }
+}
