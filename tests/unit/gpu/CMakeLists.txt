@@ -233,6 +233,15 @@ if(TARGET uml_gpu_service AND UML_TARGET_MACOS)
 endif()
 
 if(TARGET uml_gpu_service)
+    # A guest that destroys a framebuffer's attachment image view, or its
+    # image, and then begins a render pass on that framebuffer must lose its
+    # context, not crash the host in the driver's render-pass setup.
+    uml_add_gpu_unit_test(gpu-venus-render-pass-lifetime
+        uml_gpu_venus_render_pass_lifetime_tests
+        venus_render_pass_lifetime_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries}
+        VULKAN UNIT_DIRECTORY TIMEOUT 120)
+
     uml_add_gpu_unit_test(gpu-host-gl-provider-lifetime
         uml_gpu_host_gl_provider_tests host_gl_provider_lifetime_tests.cpp
         LIBRARIES uml_gpu_renderer UML::ThirdPartyVirglrenderer
