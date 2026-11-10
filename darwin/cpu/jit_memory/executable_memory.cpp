@@ -40,6 +40,10 @@
 #error "debugger-prepared JIT memory exists on an iOS device only"
 #endif
 
+#if UML_JIT_MEMORY_REGION_TEST
+#include "executable_memory_testing.hpp"
+#endif
+
 #if UML_JIT_MEMORY_REGION_ROUTE
 #include <mach/mach.h>
 #include <mach/vm_map.h>
@@ -47,6 +51,7 @@
 #include <signal.h>
 #include <sys/proc.h>
 #include <sys/sysctl.h>
+#include <sys/ucontext.h>
 
 #include <atomic>
 #include <chrono>
@@ -276,15 +281,36 @@ constexpr std::size_t region_granule = 16U * 1024U;
 constexpr std::size_t region_limit = 1024U * 1024U * 1024U;
 constexpr std::uintptr_t region_address_limit = std::uintptr_t{1} << 40U;
 constexpr std::uintptr_t region_prediction_block = std::uintptr_t{1} << 29U;
-#if !UML_JIT_MEMORY_REGION_TEST
 constexpr auto debugger_bound = std::chrono::minutes{10};
+
+/* `brk #0xf00d`: the word a request executes. */
+constexpr std::uint32_t request_word = 0xd43e01a0U;
+
+#if UML_JIT_MEMORY_REGION_TEST
+/* What the host test steers; see executable_memory_testing.hpp. */
+std::atomic<bool> test_sends_requests{false};
+std::atomic<bool (*)() noexcept> test_traced_probe{nullptr};
 #endif
 
+/* How a request to the debugger came back. */
+enum class Reply : std::uint8_t {
+	/* The debugger resumed the process past the breakpoint. */
+	answered,
+	/* No debugger was there: none was attached when the request was to be
+	 * sent, or the breakpoint was not resumed and none is attached now. */
+	no_debugger,
+	/* The breakpoint was not resumed within the bound. The thread stays
+	 * stopped wherever the debugger left it, and a debugger that answers
+	 * late may still act. */
+	timed_out,
+	/* The breakpoint was not resumed, and a debugger is still attached. */
+	unanswered,
+};
+
 /* One request to the debugger. The breakpoint instruction is the protocol's
- * (`brk #0xf00d`); a process nothing services it in is ended by SIGTRAP, so
- * callers send it only to a traced process, and the unit-test variant never
- * sends it. */
-#if !UML_JIT_MEMORY_REGION_TEST
+ * (`brk #0xf00d`). A process nothing services it in is ended by SIGTRAP, so
+ * callers send it only to a traced process and from a thread the trap guard
+ * below covers. */
 [[gnu::noinline]] void debugger_request(std::uint64_t command,
 	std::uint64_t address, std::uint64_t length) noexcept
 {
@@ -293,49 +319,12 @@ constexpr auto debugger_bound = std::chrono::minutes{10};
 	register std::uint64_t x16 __asm__("x16") = command;
 	__asm__ volatile("brk #0xf00d" : "+r"(x0), "+r"(x1) : "r"(x16) : "memory");
 }
-#endif
-
-struct Answer final {
-	std::mutex mutex;
-	std::condition_variable condition;
-	bool done{};
-};
-
-/* Sends a request from a thread of its own and waits for the debugger, up to
- * the bound. The thread outlives a timeout, stopped wherever the debugger left
- * it. */
-[[nodiscard]] bool ask_debugger(std::uint64_t command, std::uint64_t address,
-	std::uint64_t length) noexcept
-{
-#if UML_JIT_MEMORY_REGION_TEST
-	(void)command;
-	(void)address;
-	(void)length;
-	return true;
-#else
-	try {
-		auto answer = std::make_shared<Answer>();
-		std::thread{[answer, command, address, length] {
-			debugger_request(command, address, length);
-			{
-				std::lock_guard lock{answer->mutex};
-				answer->done = true;
-			}
-			answer->condition.notify_all();
-		}}.detach();
-		std::unique_lock lock{answer->mutex};
-		return answer->condition.wait_for(
-			lock, debugger_bound, [&] { return answer->done; });
-	} catch (...) {
-		return false;
-	}
-#endif
-}
 
 [[nodiscard]] bool traced() noexcept
 {
 #if UML_JIT_MEMORY_REGION_TEST
-	return true;
+	const auto probe = test_traced_probe.load();
+	return probe == nullptr || probe();
 #else
 	struct kinfo_proc information {};
 	std::size_t length = sizeof information;
@@ -344,6 +333,132 @@ struct Answer final {
 		return false;
 	return (information.kp_proc.p_flag & P_TRACED) != 0;
 #endif
+}
+
+/* The trap guard.
+ *
+ * A debugger can vanish while a request waits for it: StikDebug, which the
+ * system ends when it spins in the background, leaves its debugserver holding
+ * the process traced until it notices the closed connection. The breakpoint
+ * then goes unanswered, and when the debugserver finally lets go the system
+ * turns it into SIGTRAP, which ends the process. Reading P_TRACED before the
+ * request cannot see that, so the process answers the signal itself: the
+ * handler steps over a `brk #0xf00d` and counts it, and the thread that sent
+ * the request reads the count to learn it was never resumed.
+ *
+ * The handler stays for the life of the process, and any SIGTRAP that is not
+ * this one goes on to the disposition that was there before it: a crash
+ * report still sees a genuine trap. SIGTRAP is a synchronous signal, so it is
+ * delivered to the thread that executed the instruction and the thread must
+ * not block it (a blocked fault signal makes its thread re-execute the
+ * instruction forever); the request thread unblocks it. The count is shared
+ * by all requests: a trap taken by another stopped request makes this one read
+ * unanswered, never the reverse.
+ */
+std::atomic<unsigned> unanswered_requests{};
+struct sigaction previous_trap {};
+
+void on_request_trap(int signal_number, siginfo_t *information, void *context)
+{
+	auto *state = static_cast<ucontext_t *>(context);
+	const auto pc = static_cast<std::uintptr_t>(
+		arm_thread_state64_get_pc(state->uc_mcontext->__ss));
+	if (pc != 0 && *reinterpret_cast<const std::uint32_t *>(pc) == request_word) {
+		unanswered_requests.fetch_add(1, std::memory_order_acq_rel);
+		arm_thread_state64_set_pc_fptr(state->uc_mcontext->__ss,
+			reinterpret_cast<void (*)()>(pc + sizeof(std::uint32_t)));
+		return;
+	}
+	if ((previous_trap.sa_flags & SA_SIGINFO) != 0 &&
+	    previous_trap.sa_sigaction != nullptr) {
+		previous_trap.sa_sigaction(signal_number, information, context);
+	} else if ((previous_trap.sa_flags & SA_SIGINFO) == 0 &&
+		   previous_trap.sa_handler != SIG_DFL &&
+		   previous_trap.sa_handler != SIG_IGN) {
+		previous_trap.sa_handler(signal_number);
+	} else {
+		/* The instruction runs again under the disposition it had. */
+		(void)sigaction(SIGTRAP, &previous_trap, nullptr);
+	}
+}
+
+/* Makes the guard the process's SIGTRAP disposition, whatever else set one
+ * since the last request, and says whether it is. */
+[[nodiscard]] bool arm_trap_guard() noexcept
+{
+	struct sigaction current {};
+	if (sigaction(SIGTRAP, nullptr, &current) != 0)
+		return false;
+	if ((current.sa_flags & SA_SIGINFO) != 0 &&
+	    current.sa_sigaction == on_request_trap)
+		return true;
+	struct sigaction guard {};
+	guard.sa_sigaction = on_request_trap;
+	guard.sa_flags = SA_SIGINFO;
+	sigemptyset(&guard.sa_mask);
+	previous_trap = current;
+	return sigaction(SIGTRAP, &guard, nullptr) == 0;
+}
+
+struct Answer final {
+	std::mutex mutex;
+	std::condition_variable condition;
+	bool done{};
+	Reply reply{Reply::answered};
+};
+
+/* The request's body, on the thread that waits at the breakpoint. */
+[[nodiscard]] Reply send_request(std::uint64_t command, std::uint64_t address,
+	std::uint64_t length) noexcept
+{
+	sigset_t trap;
+	sigemptyset(&trap);
+	sigaddset(&trap, SIGTRAP);
+	(void)pthread_sigmask(SIG_UNBLOCK, &trap, nullptr);
+	/* The last look before the breakpoint: it is only for a process a
+	 * debugger holds. */
+	if (!traced())
+		return Reply::no_debugger;
+	const auto before = unanswered_requests.load(std::memory_order_acquire);
+	debugger_request(command, address, length);
+	if (unanswered_requests.load(std::memory_order_acquire) == before)
+		return Reply::answered;
+	return traced() ? Reply::unanswered : Reply::no_debugger;
+}
+
+/* Sends a request from a thread of its own and waits for the debugger, up to
+ * the bound. The thread outlives a timeout, stopped wherever the debugger left
+ * it. */
+[[nodiscard]] Reply ask_debugger(std::uint64_t command, std::uint64_t address,
+	std::uint64_t length) noexcept
+{
+#if UML_JIT_MEMORY_REGION_TEST
+	if (!test_sends_requests.load())
+		return Reply::answered;
+#endif
+	if (!traced())
+		return Reply::no_debugger;
+	if (!arm_trap_guard())
+		return Reply::unanswered;
+	try {
+		auto answer = std::make_shared<Answer>();
+		std::thread{[answer, command, address, length] {
+			const auto reply = send_request(command, address, length);
+			{
+				std::lock_guard lock{answer->mutex};
+				answer->reply = reply;
+				answer->done = true;
+			}
+			answer->condition.notify_all();
+		}}.detach();
+		std::unique_lock lock{answer->mutex};
+		if (!answer->condition.wait_for(
+			    lock, debugger_bound, [&] { return answer->done; }))
+			return Reply::timed_out;
+		return answer->reply;
+	} catch (...) {
+		return Reply::unanswered;
+	}
 }
 
 /* The process may run a bad page into SIGBUS and not into SIGKILL. */
@@ -437,19 +552,31 @@ public:
 			note("the region could not be mapped");
 			return RegionStatus::failed;
 		}
-		/* From the first request the debugger is involved: whatever
-		 * happens, this process does not try again. */
+		const auto prepared = ask_debugger(
+			1, reinterpret_cast<std::uintptr_t>(executable), size);
+		if (prepared == Reply::no_debugger) {
+			/* The debugger was gone before it served the request, so
+			 * nothing can still write into the region, and this process
+			 * has not involved one: it can try again. */
+			note("the debugger left before it prepared the region");
+			give_back(executable, writable, size);
+			return RegionStatus::no_debugger;
+		}
+		/* From a request the debugger is involved: whatever happens, this
+		 * process does not try again. */
 		spent_ = true;
-		if (!ask_debugger(1, reinterpret_cast<std::uintptr_t>(executable),
-			    size)) {
+		if (prepared != Reply::answered) {
 			/* A debugger that answers late still writes into the
 			 * region, so it stays mapped. */
 			note("the debugger did not prepare the region");
 			return RegionStatus::failed;
 		}
 		/* Detach next: the guest must not run under the debugger. A
-		 * debugger that does not answer this either is left as it is. */
-		if (!ask_debugger(0, 0, 0)) {
+		 * debugger that does not answer this either is left as it is; one
+		 * that is gone has detached, and the pages it blessed before it
+		 * went are proved below. */
+		const auto detached = ask_debugger(0, 0, 0);
+		if (detached != Reply::answered && detached != Reply::no_debugger) {
 			note("the debugger did not detach");
 			return RegionStatus::failed;
 		}
@@ -624,6 +751,32 @@ private:
 #endif // UML_JIT_MEMORY_REGION_ROUTE
 
 } // namespace
+
+#if UML_JIT_MEMORY_REGION_TEST
+namespace testing {
+
+void send_real_requests(bool send) noexcept
+{
+	test_sends_requests.store(send);
+}
+
+void set_traced_probe(bool (*probe)() noexcept) noexcept
+{
+	test_traced_probe.store(probe);
+}
+
+int request(std::uint64_t command) noexcept
+{
+	return static_cast<int>(ask_debugger(command, 0, 0));
+}
+
+unsigned unanswered_requests_seen() noexcept
+{
+	return unanswered_requests.load();
+}
+
+} // namespace testing
+#endif
 
 bool available() noexcept
 {

@@ -6,9 +6,9 @@
 blessing byte through a function it is given, so the decisions run here with
 a fake memory: one byte per 16 KiB page of a region the process mapped, a
 refusal for anything else, and a detach on command. The host side's parts
-that need no device are checked too: finding the application's pid in a
-``devicectl`` listing, the lldb command line, and how the Android runner
-records a run's JIT.
+that need no device are checked too: which listed process is the launch a
+debugger attaches to (never an older instance still listed), the lldb command
+line, and how the Android runner records a run's JIT.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
@@ -108,6 +109,11 @@ class ServiceTests(unittest.TestCase):
 
 
 class HostSideTests(unittest.TestCase):
+    """The debugger attaches to the process of its own launch. The device's
+    list of processes can still hold an older instance of the application, and
+    attaching to that one leaves the new process stopped for ever; devicectl
+    writes no report of the launch while it holds the console."""
+
     LISTING = {"result": {"runningProcesses": [
         {"executable": "file:///usr/libexec/other", "processIdentifier": 90},
         {"executable": "file:///private/var/containers/Bundle/Application/X/Andarium.app/Andarium",
@@ -118,10 +124,59 @@ class HostSideTests(unittest.TestCase):
          "processIdentifier": 3456},
     ]}}
 
-    def test_the_newest_process_of_the_application_is_found(self) -> None:
-        self.assertEqual(debugger.find_pid(self.LISTING, "Andarium"), 2345)
-        self.assertIsNone(debugger.find_pid(self.LISTING, "Absent"))
-        self.assertIsNone(debugger.find_pid({}, "Andarium"))
+    def test_every_pid_of_the_application_is_found(self) -> None:
+        self.assertEqual(debugger.find_pids(self.LISTING, "Andarium"), {1234, 2345})
+        self.assertEqual(debugger.find_pids(self.LISTING, "Absent"), set())
+        self.assertEqual(debugger.find_pids({}, "Andarium"), set())
+
+    @staticmethod
+    def listings(*pid_sets: set[int]):
+        """``application_pids`` answering one set per call, the last one for
+        every call after."""
+        calls = iter(pid_sets)
+        last: list[set[int]] = [set()]
+
+        def answer(_device: str, _name: str) -> set[int]:
+            last[0] = next(calls, last[0])
+            return last[0]
+
+        return mock.patch.object(debugger, "application_pids", side_effect=answer)
+
+    def test_the_launch_s_process_is_the_one_not_listed_before_it(self) -> None:
+        # The older instance (1234) is still listed after the launch, and
+        # is the larger of the two pids this time.
+        with self.listings({1234, 9000}, {1234, 9000}, {1234, 9000, 8000}), \
+                mock.patch.object(debugger.time, "sleep"):
+            self.assertEqual(debugger.launched_pid("device", "Andarium", {1234, 9000}, 30), 8000)
+
+    def test_an_older_instance_alone_is_not_the_launch(self) -> None:
+        clock = iter(range(0, 1000, 5))
+        with self.listings({1234}), \
+                mock.patch.object(debugger.time, "sleep"), \
+                mock.patch.object(debugger.time, "monotonic", side_effect=lambda: next(clock)):
+            with self.assertRaises(debugger.DebuggerError):
+                debugger.launched_pid("device", "Andarium", {1234}, 20)
+
+    def test_a_failed_listing_is_tried_again_until_the_bound(self) -> None:
+        clock = iter(range(0, 1000, 5))
+        failing = mock.patch.object(
+            debugger, "application_pids",
+            side_effect=[debugger.DebuggerError("no list"), {7}])
+        with failing, mock.patch.object(debugger.time, "sleep"), \
+                mock.patch.object(debugger.time, "monotonic", side_effect=lambda: next(clock)):
+            self.assertEqual(debugger.launched_pid("device", "Andarium", set(), 60), 7)
+
+    def test_a_listing_the_device_does_not_give_is_an_error_not_an_empty_baseline(self) -> None:
+        with mock.patch.object(debugger.subprocess, "run"):
+            with self.assertRaises(debugger.DebuggerError):
+                debugger.application_pids("device", "Andarium")
+
+    def test_the_launch_is_stopped_and_holds_the_console(self) -> None:
+        command = debugger.launch_command("device", "com.example.app")
+        self.assertEqual(command[:4], ["xcrun", "devicectl", "device", "process"])
+        for flag in ("--start-stopped", "--console", "--terminate-existing"):
+            self.assertIn(flag, command)
+        self.assertEqual(command[-1], "com.example.app")
 
     def test_lldb_attaches_to_the_pid_and_serves_with_a_log_and_a_bound(self) -> None:
         command = debugger.attach_command(
@@ -132,6 +187,13 @@ class HostSideTests(unittest.TestCase):
         self.assertIn("device process attach -p 77", script)
         self.assertIn("ios_jit_debugger.py", script)
         self.assertIn("jit_serve --log /work/serve.log --timeout 900", script)
+
+    def test_serving_starts_lldb_on_the_given_pid_without_listing_processes(self) -> None:
+        with mock.patch.object(debugger.subprocess, "Popen") as popen, \
+                mock.patch.object(debugger.subprocess, "run") as run:
+            debugger.start_serving("device", 4242, pathlib.Path("/work/serve.log"), serve_timeout=60)
+        self.assertIn("device process attach -p 4242", " ".join(popen.call_args.args[0]))
+        run.assert_not_called()
 
 
 class RunnerTests(unittest.TestCase):

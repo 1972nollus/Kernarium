@@ -1496,12 +1496,29 @@ constexpr std::uint64_t mebibyte = 1024ULL * 1024ULL;
 
 /* The host GPU's budget for a guest of `guestMemoryMiB` and
  * `guestProcessorCount` vCPUs with the launch parameters `boot` states, which
- * is what both the application's warning and the run use. */
+ * is what both the application's warning and the run use.
+ *
+ * `usesPreparedJitMemory` says whether the guest runs on the executable memory
+ * a debugger prepared for this process. That memory is wired from the moment
+ * it is prepared, which may be long before the start, and it stays so. A JIT
+ * run's cache term is that memory, so the plan holds it already. A run that
+ * does not use it (the JIT is off, or the guest changed after the memory was
+ * prepared) carries it beside its own cache, and the plan counts it as engine
+ * memory so the GPU does not take what it holds. The application's estimate
+ * before a start takes the memory as used. */
 uml::emulator::GpuBudgetPlan planGpuBudget(
     const kernarium_runtime_boot* boot,
     std::uint32_t guestMemoryMiB,
-    std::uint32_t guestProcessorCount)
+    std::uint32_t guestProcessorCount,
+    bool usesPreparedJitMemory)
 {
+    std::uint64_t unusedJitMemory = 0;
+#ifndef UML_APP_STORE_RUNTIME
+    if (!usesPreparedJitMemory)
+        unusedJitMemory = uml::runtime::prepared_jit_region_bytes();
+#else
+    (void)usesPreparedJitMemory;
+#endif
     auto plan = uml::emulator::plan_gpu_budget(
         static_cast<std::uint64_t>(guestMemoryMiB) * mebibyte,
         /* The host sets the limit; a launch states neither it nor the
@@ -1511,7 +1528,8 @@ uml::emulator::GpuBudgetPlan planGpuBudget(
         guestProcessorCount,
         {
             .application = boot->gpu_budget_application_mib * mebibyte,
-            .engine_rest = boot->gpu_budget_engine_mib * mebibyte,
+            .engine_rest =
+                boot->gpu_budget_engine_mib * mebibyte + unusedJitMemory,
             .headroom = boot->gpu_budget_headroom_mib * mebibyte,
         });
 #if UML_GPU_SOFTWARE_RENDERER
@@ -1543,7 +1561,7 @@ int runtimePlanGpuBudget(
     parameters.gpu_budget_engine_mib = engineMiB;
     parameters.gpu_budget_headroom_mib = headroomMiB;
     const auto planned = planGpuBudget(
-        &parameters, guestMemoryMiB, guestProcessorCount);
+        &parameters, guestMemoryMiB, guestProcessorCount, true);
     const std::uint32_t size = plan->struct_size;
     *plan = {};
     plan->struct_size = size;
@@ -1803,7 +1821,8 @@ int runtimeRun(
              * leaves less than the floor (runtimePlanGpuBudget); the guest boots
              * with the floor. */
             const auto gpuBudget = planGpuBudget(
-                boot, guestMemoryMiB, guestProcessorCount);
+                boot, guestMemoryMiB, guestProcessorCount,
+                request.jitCacheBudget != 0);
             const std::uint64_t deviceMemoryLimit = gpuBudget.budget.bytes;
             if (gpuBudget.budget.short_of_floor) {
                 std::fprintf(

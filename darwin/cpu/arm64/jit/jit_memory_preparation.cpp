@@ -60,4 +60,9 @@ void release_jit_debugger() noexcept
 	jit_memory::release_debugger();
 }
 
+std::size_t prepared_jit_region_bytes() noexcept
+{
+	return jit_memory::prepared_region_bytes();
+}
+
 } // namespace uml::cpu::arm64

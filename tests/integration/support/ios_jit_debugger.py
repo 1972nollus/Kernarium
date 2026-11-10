@@ -19,10 +19,18 @@ process asks with ``brk #0xf00d`` and registers ``x16`` (the command), ``x0``
 This module is that debugger for a harness, in two parts. ``JitService``
 decides each request and touches nothing but what it is given, so a test can
 drive it. ``serve`` is the command lldb runs once attached (``jit_serve``).
-``main`` launches the application on a device stopped, attaches lldb to it,
-serves it until it detaches and then holds the console; the lease on the
-device, the application's install and everything else a run needs stay with
-the caller. It writes nothing into the application's container.
+``main`` launches the application on a device stopped, attaches lldb to the
+process that launch made, serves it until it detaches and then holds the
+console; the lease on the device, the application's install and everything
+else a run needs stay with the caller. It writes nothing into the
+application's container. The process of the launch is the one the device lists
+that no earlier listing held: devicectl does not say, because with ``--console``
+it writes its report only when the application ends, and the newest listed
+instance can be an older one that is still on its way out.
+
+Andarium makes its request as soon as it opens, so the debugger is attached
+and serving before the application's first line runs: the process is launched
+stopped, and lldb continues it.
 """
 
 from __future__ import annotations
@@ -54,6 +62,8 @@ ADDRESS_LIMIT = 1 << 40
 # The byte the debugger writes into each page.
 BLESSING_BYTE = 0x69
 PACKET_RETRIES = 3
+# How long to wait for the launched process to be listed.
+PID_TIMEOUT = 90
 
 
 @dataclass(frozen=True)
@@ -256,52 +266,6 @@ def device_command(*arguments: str) -> list[str]:
     return ["xcrun", "devicectl", *arguments]
 
 
-def find_pid(listing: object, process_name: str) -> int | None:
-    """The pid of the process whose executable is ``<process_name>.app`` in a
-    ``devicectl device info processes`` listing, however it is nested."""
-    found: list[int] = []
-
-    def walk(node: object) -> None:
-        if isinstance(node, dict):
-            executable = node.get("executable")
-            pid = node.get("processIdentifier")
-            if (isinstance(executable, str) and isinstance(pid, int)
-                    and f"/{process_name}.app/" in executable):
-                found.append(pid)
-            for value in node.values():
-                walk(value)
-        elif isinstance(node, list):
-            for value in node:
-                walk(value)
-
-    walk(listing)
-    return max(found) if found else None
-
-
-def wait_for_pid(device: str, process_name: str, timeout: float) -> int:
-    """The newest pid of the application, polled until it appears."""
-    deadline = time.monotonic() + timeout
-    while True:
-        with tempfile.TemporaryDirectory(prefix="ios-jit-processes-") as name:
-            report = pathlib.Path(name) / "processes.json"
-            subprocess.run(
-                device_command(
-                    "device", "info", "processes", "--device", device,
-                    "--json-output", str(report), "--quiet", "--timeout", "30",
-                ),
-                check=False, stdin=subprocess.DEVNULL, timeout=60,
-            )
-            if report.exists():
-                pid = find_pid(json.loads(report.read_text(encoding="utf-8")),
-                               process_name)
-                if pid is not None:
-                    return pid
-        if time.monotonic() >= deadline:
-            raise DebuggerError(
-                f"no {process_name} process on the device within {timeout:.0f} seconds")
-        time.sleep(1.0)
-
-
 def attach_command(device: str, pid: int, log: pathlib.Path,
                    timeout: float) -> list[str]:
     """lldb, attached to the process, serving it as this file's ``jit_serve``."""
@@ -314,13 +278,81 @@ def attach_command(device: str, pid: int, log: pathlib.Path,
     ]
 
 
-def start_serving(device: str, process_name: str, log: pathlib.Path, *,
-                  pid_timeout: float = 90, serve_timeout: float = 900,
+def find_pids(listing: object, process_name: str) -> set[int]:
+    """The pids of the processes whose executable is ``<process_name>.app`` in
+    a ``devicectl device info processes`` listing, however it is nested."""
+    found: set[int] = set()
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            executable = node.get("executable")
+            pid = node.get("processIdentifier")
+            if (isinstance(executable, str) and isinstance(pid, int)
+                    and f"/{process_name}.app/" in executable):
+                found.add(pid)
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(listing)
+    return found
+
+
+def application_pids(device: str, process_name: str) -> set[int]:
+    """The pids the device lists for the application now."""
+    with tempfile.TemporaryDirectory(prefix="ios-jit-processes-") as name:
+        report = pathlib.Path(name) / "processes.json"
+        subprocess.run(
+            device_command(
+                "device", "info", "processes", "--device", device,
+                "--json-output", str(report), "--quiet", "--timeout", "30",
+            ),
+            check=False, stdin=subprocess.DEVNULL, timeout=60,
+        )
+        if not report.exists():
+            raise DebuggerError("the device did not list its processes")
+        return find_pids(json.loads(report.read_text(encoding="utf-8")),
+                         process_name)
+
+
+def launched_pid(device: str, process_name: str, before: set[int],
+                 timeout: float) -> int:
+    """The pid of the process a launch made: the one the device lists for the
+    application that ``before``, the pids it listed ahead of the launch, did
+    not hold. The newest listed pid is not it when an older instance is still
+    on its way out, and attaching to that one leaves the new process stopped
+    for ever."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            new = application_pids(device, process_name) - before
+        except (DebuggerError, subprocess.SubprocessError, ValueError):
+            new = set()
+        if new:
+            return max(new)
+        if time.monotonic() >= deadline:
+            raise DebuggerError(
+                f"no new {process_name} process on the device within "
+                f"{timeout:.0f} seconds")
+        time.sleep(1.0)
+
+
+def launch_command(device: str, bundle_id: str) -> list[str]:
+    """devicectl, launching the application stopped for a debugger and holding
+    its console."""
+    return device_command(
+        "device", "process", "launch", "--device", device,
+        "--terminate-existing", "--start-stopped", "--console", bundle_id)
+
+
+def start_serving(device: str, pid: int, log: pathlib.Path, *,
+                  serve_timeout: float = 900,
                   output: pathlib.Path | None = None) -> subprocess.Popen[bytes]:
-    """Finds the stopped application and starts lldb serving it; the caller
-    waits for the returned process, which ends once the application has
-    detached (or the time is up), and reads ``log``."""
-    pid = wait_for_pid(device, process_name, pid_timeout)
+    """Starts lldb serving the stopped process ``pid``; the caller waits for
+    the returned process, which ends once the application has detached (or the
+    time is up), and reads ``log``."""
     sink = output.open("wb") if output is not None else subprocess.DEVNULL
     return subprocess.Popen(
         attach_command(device, pid, log, serve_timeout),
@@ -340,28 +372,31 @@ def main(argv: list[str] | None = None) -> int:
                         help="where the console and the debugger's log go (a directory)")
     parser.add_argument("--until", default=None, metavar="REGEX",
                         help="stop holding the console at the first line that matches")
+    parser.add_argument("--pid-timeout", type=float, default=PID_TIMEOUT,
+                        help="how long to wait for the launched process to be listed")
     parser.add_argument("--hold-seconds", type=float, default=600)
     parser.add_argument("--serve-timeout", type=float, default=900)
     options = parser.parse_args(argv)
-
     options.log.mkdir(parents=True, exist_ok=True)
     console_log = options.log / "console.log"
     serve_log = options.log / "jit-debugger.log"
+    # What the device lists before the launch is not the launch's process.
+    before = application_pids(options.device, options.process_name)
     environment = dict(os.environ)
     for setting in options.env:
         name, _, value = setting.partition("=")
         environment[f"DEVICECTL_CHILD_{name}"] = value
     with console_log.open("wb") as console:
         launch = subprocess.Popen(
-            device_command(
-                "device", "process", "launch", "--device", options.device,
-                "--terminate-existing", "--start-stopped", "--console",
-                options.bundle_id),
+            launch_command(options.device, options.bundle_id),
             stdin=subprocess.DEVNULL, stdout=console, stderr=subprocess.STDOUT,
             env=environment)
         try:
+            pid = launched_pid(
+                options.device, options.process_name, before,
+                options.pid_timeout)
             debugger = start_serving(
-                options.device, options.process_name, serve_log,
+                options.device, pid, serve_log,
                 serve_timeout=options.serve_timeout,
                 output=options.log / "lldb.log")
             debugger.wait(timeout=options.serve_timeout + 60)

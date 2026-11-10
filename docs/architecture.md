@@ -209,8 +209,22 @@ no entry, Andarium's JIT row and the loader's preparation entries are compiled
 out of its application, and `check-app-store-bundle.py` refuses the symbols,
 text and the `brk` instruction. A start that cannot have the JIT runs on
 gadgets and says why; it never fails. Andarium asks for the preparation through
-runtime API 30 (`prepare_jit`, `use_jit`), with StikDebug as the debugger and
-`tests/integration/support/ios_jit_debugger.py` as the harness's.
+runtime API 30 (`prepare_jit`, `use_jit`) as it opens, because StikDebug spins
+until it is served and is ended by the system within a minute; the region then
+sits wired until the process ends, and a run that does not use it (the JIT is
+off, or the guest changed after it was prepared) carries it beside its own
+cache, which the run's GPU budget plan counts as engine memory.
+
+The owner reads `P_TRACED` right before every request and sends the `brk` from a
+thread that has `SIGTRAP` unblocked, under a process-wide `SIGTRAP` handler that
+steps over a `brk #0xf00d`, counts it and passes any other trap to the
+disposition it found. A debugger that vanishes while a request waits (its
+debugserver holds the process traced for a while, then lets go) leaves the
+request unanswered instead of ending the process; the answer is "no debugger"
+when none is attached afterwards, and a region it never prepared is given back.
+The debugger is StikDebug, and
+`tests/integration/support/ios_jit_debugger.py` is the harness's: it attaches to
+the process of its own stopped launch and serves the request at launch.
 
 Every product that embeds a kernel carries its ELF as a host-page-aligned
 Mach-O `__TEXT,__uml_elf` section, which the emulator runs in place: the loader

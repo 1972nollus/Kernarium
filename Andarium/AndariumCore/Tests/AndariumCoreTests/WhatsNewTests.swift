@@ -21,7 +21,7 @@ private func withDefaults<Result>(_ body: (UserDefaults) throws -> Result) rethr
 private func release(_ build: Int, _ ids: [String]) -> WhatsNewRelease {
     WhatsNewRelease(
         build: build, version: "1.0 (\(build))",
-        entries: ids.map { WhatsNewEntry(id: $0, title: $0, text: "", symbol: "star") })
+        entries: ids.map { WhatsNewEntry(id: $0, title: $0, text: "T", symbol: "star") })
 }
 
 /// Releases 4 and 5 stand for earlier ones, 7 for a later one, and 4 for one
@@ -180,6 +180,46 @@ struct WhatsNewCatalogTests {
         #expect(release.entries.first?.requirement == WhatsNewRequirement(memoryAboveMiB: 4096))
     }
 
+    @Test func anEntryHasTextPointsOrBoth() throws {
+        let entry = #""id": "a", "title": "A", "symbol": "star""#
+        let text = try #require(decode(notes(entry: entry + #", "text": "T""#)).first?.entries.first)
+        #expect(text.text == "T" && text.points.isEmpty)
+        let points = try #require(decode(notes(entry: entry + #", "points": ["One", "Two"]"#)).first?.entries.first)
+        #expect(points.text == nil && points.points == ["One", "Two"])
+        let both = try #require(
+            decode(notes(entry: entry + #", "text": "T", "points": ["One"]"#)).first?.entries.first)
+        #expect(both.text == "T" && both.points == ["One"])
+    }
+
+    @Test func anEntryWithNeitherTextNorPointsIsRefused() {
+        #expect(throws: (any Error).self) { try decode(notes(entry: #""id": "a", "title": "A", "symbol": "star""#)) }
+    }
+
+    @Test func anEmptyStringIsRefusedInEveryField() {
+        func entry(id: String = "a", title: String = "A", text: String = "T", symbol: String = "s", more: String = "")
+            -> String
+        {
+            #""id": "\#(id)", "title": "\#(title)", "text": "\#(text)", "symbol": "\#(symbol)"\#(more)"#
+        }
+        #expect(throws: Never.self) { try decode(notes(entry: entry())) }
+        #expect(throws: (any Error).self) { try decode(notes(entry: entry(id: ""))) }
+        #expect(throws: (any Error).self) { try decode(notes(entry: entry(title: ""))) }
+        #expect(throws: (any Error).self) { try decode(notes(entry: entry(text: ""))) }
+        #expect(throws: (any Error).self) { try decode(notes(entry: entry(symbol: ""))) }
+        // An empty text is no text, even beside points.
+        #expect(throws: (any Error).self) { try decode(notes(entry: entry(text: "", more: #", "points": ["One"]"#))) }
+        #expect(throws: (any Error).self) { try decode(notes(entry: entry(more: #", "points": ["One", ""]"#))) }
+    }
+
+    @Test func aListOfPointsThatStatesNothingIsRefused() {
+        let entry = #""id": "a", "title": "A", "symbol": "star""#
+        #expect(throws: (any Error).self) { try decode(notes(entry: entry + #", "points": []"#)) }
+        // Not even beside text.
+        #expect(throws: (any Error).self) { try decode(notes(entry: entry + #", "text": "T", "points": []"#)) }
+        #expect(throws: (any Error).self) { try decode(notes(entry: entry + #", "points": "One""#)) }
+        #expect(throws: (any Error).self) { try decode(notes(entry: entry + #", "points": [1]"#)) }
+    }
+
     @Test func theDayIsOptional() throws {
         let release = try #require(decode(notes()).first)
         #expect(release.date == nil && release.day == nil)
@@ -216,7 +256,9 @@ struct WhatsNewCatalogTests {
     }
 
     @Test func aMissingFieldIsRefused() {
-        #expect(throws: (any Error).self) { try decode(notes(entry: #""id": "a", "title": "A", "symbol": "star""#)) }
+        #expect(throws: (any Error).self) { try decode(notes(entry: #""id": "a", "text": "T", "symbol": "star""#)) }
+        #expect(throws: (any Error).self) { try decode(notes(entry: #""title": "A", "text": "T", "symbol": "star""#)) }
+        #expect(throws: (any Error).self) { try decode(notes(entry: #""id": "a", "title": "A", "text": "T""#)) }
     }
 
     @Test func noReleaseAtOrBeforeTheLastBuildWithoutARecordHasNotes() throws {

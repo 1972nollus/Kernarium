@@ -585,6 +585,11 @@ void release_jit_debugger() noexcept
 {
 	::uml::cpu::release_jit_debugger();
 }
+
+std::size_t prepared_jit_region_bytes() noexcept
+{
+	return ::uml::cpu::prepared_jit_region_bytes();
+}
 #endif
 
 std::size_t set_gadget_cache_budget(std::size_t guest_memory_bytes,

@@ -69,15 +69,21 @@ public struct WhatsNewRelease: Identifiable, Hashable, Decodable, Sendable {
     }
 }
 
-/// One new feature of a release.
+/// One new feature of a release, or a group of fixes. It has `text`, `points`
+/// or both.
 public struct WhatsNewEntry: Identifiable, Hashable, Decodable, Sendable {
     /// Stable across releases, for VoiceOver and tests: "file-browser".
     public let id: String
-    /// The feature's name, which the ribbon lists: "File browser".
+    /// The entry's name, which the ribbon lists: "File browser".
     public let title: String
     /// What it does, in a sentence or two, true on every device: an entry
-    /// a device cannot use is still listed in Info's history.
-    public let text: String
+    /// a device cannot use is still listed in Info's history. Nil for an
+    /// entry that is only its points.
+    public let text: String?
+    /// Short points under the title, one line to two each, for an entry that
+    /// is a list rather than a sentence: "Fixed a crash when ...". Empty for
+    /// an entry with none.
+    public let points: [String]
     /// The SF Symbol on the entry's accent tile.
     public let symbol: String
     /// Where the feature lives, for one the person finds outside Home.
@@ -87,40 +93,73 @@ public struct WhatsNewEntry: Identifiable, Hashable, Decodable, Sendable {
     public var requirement: WhatsNewRequirement?
 
     public init(
-        id: String, title: String, text: String, symbol: String,
+        id: String, title: String, text: String? = nil, points: [String] = [], symbol: String,
         place: WhatsNewPlace? = nil, requirement: WhatsNewRequirement? = nil
     ) {
         self.id = id
         self.title = title
         self.text = text
+        self.points = points
         self.symbol = symbol
         self.place = place
         self.requirement = requirement
     }
 
-    private enum CodingKeys: String, CodingKey, CaseIterable { case id, title, text, symbol, place, requirement }
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case id, title, text, points, symbol, place, requirement
+    }
 
+    /// A text field is never empty, and the notes say something: `text`,
+    /// `points` or both, and a list of points has a point.
     public init(from decoder: any Decoder) throws {
         try decoder.requireOnly(CodingKeys.self)
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        id = try values.decode(String.self, forKey: .id)
-        title = try values.decode(String.self, forKey: .title)
-        text = try values.decode(String.self, forKey: .text)
-        symbol = try values.decode(String.self, forKey: .symbol)
+        id = try values.decodeText(forKey: .id)
+        title = try values.decodeText(forKey: .title)
+        text = try values.decodeTextIfPresent(forKey: .text)
+        if let listed = try values.decodeIfPresent([String].self, forKey: .points) {
+            guard !listed.isEmpty, !listed.contains(where: \.isEmpty) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .points, in: values, debugDescription: "a list of points is empty or has an empty point")
+            }
+            points = listed
+        } else {
+            points = []
+        }
+        guard text != nil || !points.isEmpty else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath, debugDescription: "an entry has neither text nor points"))
+        }
+        symbol = try values.decodeText(forKey: .symbol)
         place = try values.decodeIfPresent(WhatsNewPlace.self, forKey: .place)
         requirement = try values.decodeIfPresent(WhatsNewRequirement.self, forKey: .requirement)
     }
 }
 
+extension KeyedDecodingContainer {
+    fileprivate func decodeText(forKey key: Key) throws -> String {
+        let text = try decode(String.self, forKey: key)
+        guard !text.isEmpty else {
+            throw DecodingError.dataCorruptedError(
+                forKey: key, in: self, debugDescription: "\(key.stringValue) is empty")
+        }
+        return text
+    }
+
+    fileprivate func decodeTextIfPresent(forKey key: Key) throws -> String? {
+        contains(key) ? try decodeText(forKey: key) : nil
+    }
+}
+
 /// Where a feature is found, said under its text.
 public enum WhatsNewPlace: String, Hashable, Decodable, Sendable {
-    /// Session Settings, which opens from the side keys while Android runs
+    /// Session Settings, which opens from the side keys while the guest runs
     /// in a normal session.
     case sessionSettings
 
     public var words: String {
         switch self {
-        case .sessionSettings: "In Settings while Android runs"
+        case .sessionSettings: "In Settings while the guest runs"
         }
     }
 

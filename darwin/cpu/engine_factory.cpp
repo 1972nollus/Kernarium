@@ -110,6 +110,11 @@ void release_jit_debugger() noexcept
 {
 	arm64::release_jit_debugger();
 }
+
+std::size_t prepared_jit_region_bytes() noexcept
+{
+	return arm64::prepared_jit_region_bytes();
+}
 #endif
 #else
 /* No JIT engine, so no translated-code cache to size or to serialize. */
