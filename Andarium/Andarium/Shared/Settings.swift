@@ -111,10 +111,10 @@ struct SessionSettingsSheet: View {
         return false
     }
 
-    // MARK: Files
+    // MARK: File browser
 
     private var files: some View {
-        Section("Files") {
+        Section("File browser") {
             NavigationLink(value: FolderRoute(path: GuestPath.root)) {
                 HStack(spacing: 12) {
                     IconTile(symbol: "folder.fill")
