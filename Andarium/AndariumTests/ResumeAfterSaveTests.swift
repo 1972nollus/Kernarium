@@ -24,7 +24,8 @@ import UIKit
 /// host; iOS's Foundation also writes it again on a save that changes
 /// nothing. The flip is undone once the guest is back. The test requires
 /// that the host held the guest while the application was away, which is
-/// what releases the disk locks.
+/// what releases the disk locks and, where the guest's RAM is written out,
+/// shrinks the process's footprint.
 @Suite(.serialized)
 @MainActor
 struct ResumeAfterSaveTests {
@@ -48,14 +49,19 @@ struct ResumeAfterSaveTests {
             let included = try #require(model.guest?.includeInBackups)
             _ = try await operations.shell("input keyevent KEYCODE_HOME", limit: .seconds(15))
             try await Task.sleep(for: Self.settle)
+            let running = Self.footprint()
             let center = NotificationCenter.default
             center.post(name: UIApplication.willResignActiveNotification, object: UIApplication.shared)
             center.post(name: UIApplication.didEnterBackgroundNotification, object: UIApplication.shared)
             try await Task.sleep(for: Self.away)
             // A guest the host did not hold released no lock, and its resume
-            // verifies nothing.
+            // verifies nothing. One it held and wrote out leaves the process
+            // with a fraction of its footprint and answers nothing.
+            let away = Self.footprint()
             let answered = try? await operations.shell("echo away", limit: .seconds(10))
-            try #require(answered == nil, "the guest was not held while away, so this run checks nothing")
+            try #require(
+                away < running / 10 * 7 && answered == nil,
+                "the host did not hold the guest while away (footprint \(running >> 20) MiB, then \(away >> 20) MiB), so this run checks nothing")
 
             let before = try Self.times(of: disk)
             model.guest?.includeInBackups = !included
@@ -76,6 +82,19 @@ struct ResumeAfterSaveTests {
             model.persistNow()
             #expect(back, "the guest did not answer after the return")
         }
+    }
+
+    /// The process's physical footprint, which includes the guest's RAM.
+    private static func footprint() -> UInt64 {
+        var info = task_vm_info_data_t()
+        let words = MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size
+        var count = mach_msg_type_number_t(words)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: words) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        return result == KERN_SUCCESS ? info.phys_footprint : 0
     }
 
     /// Seconds and nanoseconds of the disk's modification and change times.
