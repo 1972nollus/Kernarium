@@ -229,9 +229,10 @@ control out.
 - **Backup.** The guest is left out of iCloud and computer backups unless the
   user turns on Back up guest data.
 - **Release notes.** `Shared/WhatsNew.json` bundles the notes per build,
-  from build 6 (the first public release, build 5, has none). The first
-  launch of an update that carries notes shows a ribbon above Start, on at most
-  three launches, that opens them; Info keeps every release's notes
+  from build 7 (build 5, the first public release, and build 6 have none).
+  The first launch of an update that carries notes shows a ribbon above Start,
+  on at most three launches, that opens them; a build shows the notes up to its
+  own number and no later ones. Info keeps every release's notes
   (`WhatsNewRules`, `WhatsNewStore`). A launch with a launch setting, or one a
   test runs, shows no ribbon and keeps no record.
 

@@ -1,7 +1,7 @@
 [
   {
-    "build": 6,
-    "version": "1.0 (6)",
+    "build": 7,
+    "version": "1.0 (7)",
     "entries": [
       {
         "id": "file-browser",
@@ -16,12 +16,6 @@
         "text": "On devices that allow it, Android’s RAM can now go above 4 GiB.",
         "symbol": "memorychip.fill",
         "requirement": { "memoryAboveMiB": 4096 }
-      },
-      {
-        "id": "graphics-memory",
-        "title": "Graphics memory",
-        "text": "Games free and reuse graphics memory better, so heavy games are less likely to be stopped.",
-        "symbol": "gamecontroller.fill"
       }
     ]
   }

@@ -57,6 +57,25 @@ struct WhatsNewRulesTests {
         #expect(launch.pending.map(\.build) == [6, 5])
     }
 
+    @Test func notesWrittenForALaterBuildWaitForItAndTheRecordMovesOn() {
+        let later = [release(7, ["x", "y"])]
+        let six = WhatsNewRules.launch(
+            releases: later, record: WhatsNewRecord(seenBuild: 5), currentBuild: 6, hasGuest: true, offers: all)
+        #expect(six.pending.isEmpty)
+        #expect(six.record == WhatsNewRecord(seenBuild: 6))
+
+        // Build 7 then offers them, after build 6 and straight from build 5.
+        let afterSix = WhatsNewRules.launch(
+            releases: later, record: six.record, currentBuild: 7, hasGuest: true, offers: all)
+        #expect(afterSix.pending.map(\.build) == [7])
+        #expect(afterSix.pending.first?.entries.map(\.id) == ["x", "y"])
+        #expect(afterSix.record == WhatsNewRecord(seenBuild: 6, ribbonBuild: 7, ribbonLaunches: 1))
+        let fromFive = WhatsNewRules.launch(
+            releases: later, record: nil, currentBuild: 7, hasGuest: true, offers: all)
+        #expect(fromFive.pending.map(\.build) == [7])
+        #expect(fromFive.record == WhatsNewRecord(seenBuild: 5, ribbonBuild: 7, ribbonLaunches: 1))
+    }
+
     @Test func theRibbonIsOfferedOnThreeLaunchesThenGoesAsIfPutAway() {
         var record = WhatsNewRecord(seenBuild: 5)
         for number in 1...4 {
