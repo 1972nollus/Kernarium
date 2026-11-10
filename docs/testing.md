@@ -509,8 +509,10 @@ anywhere is a blocker. The candidate must show:
 
 `android-oobe`, `android-adb-debugging` (integration) each register only when
 `UML_ANDROID_OOBE_RELEASE` or `UML_ANDROID_ADB_DEBUGGING_RELEASE` names the
-release and the Android macOS executable is built. They boot blank instances
-and check the setup wizard's flow and end state, and the product's adb
+release and the Android macOS executable is built (`UML_BUILD_ANDROID17_CLI`
+with `UML_KERNEL_PRODUCT=android-17`: the executable embeds its product's
+kernel, and the Linux default cannot start Android's init). They boot blank
+instances and check the setup wizard's flow and end state, and the product's adb
 defaults; `tests/integration/android/run_guest_android_adb_vsock.py` is the
 opt-in ADB-over-vsock counterpart of `guest-vsock-stream`.
 `android-microg-spoofing` (integration) additionally needs
