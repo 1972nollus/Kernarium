@@ -276,9 +276,10 @@ requires reopening Andarium.
   App Store build carries none of this: its runtime has no JIT and the
   application has no row, preference, entries or sentences.
 - **Motion.** Gyroscope needs no permission. The host reads a sensor only while
-  a guest application uses it and sends samples over private vsock port 5556;
-  the system image must include the
-  [motion sub-HAL](../android/lineage-24/README.md#motion-sensors).
+  a guest application uses it and sends samples over private vsock port 5556
+  from the process's one Core Motion manager, which is never released (a
+  released manager crashes inside Core Motion); the system image must include
+  the [motion sub-HAL](../android/lineage-24/README.md#motion-sensors).
 - **Free space.** Once Android has booted a normal start, the application
   reads the device's free space (`RunSpace.nextCheck`: every 2 s near the
   limit, every 30 s on a roomy device) and pauses the guest below 1 GiB
