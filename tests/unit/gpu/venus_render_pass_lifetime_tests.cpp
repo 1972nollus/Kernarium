@@ -1,0 +1,383 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+// A guest drives the Venus renderer, so a guest command stream must never make
+// the host dereference freed memory. A framebuffer keeps only the handles of
+// its attachment image views, and the driver reads every view of the pass, and
+// the image of each, when a render pass begins. A guest that destroys an
+// attachment's image view (or its image) and then begins a render pass on that
+// framebuffer made KosmicKrisp read the freed view and end the host process in
+// transition_attachment. The renderer must instead mark the context lost and
+// keep running.
+//
+// This test drives the real vkr renderer in-process against the real host
+// Vulkan driver and submits a hand-encoded Venus command stream. The guest
+// chooses every Venus object id, so no reply stream is needed. Each case runs
+// in a context of its own and checks whether the context stays live:
+//
+//  - a render pass begun with every attachment intact, through both
+//    vkCmdBeginRenderPass and vkCmdBeginRenderPass2, leaves the context live
+//    (the controls); and
+//  - a render pass begun after the attachment's view or its image was
+//    destroyed marks the context lost and does not crash the host.
+//
+// On a renderer without the defensive check the view case crashes this
+// process in the driver, which fails the test.
+
+#include "require.hpp"
+
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <vector>
+
+#define VK_NO_PROTOTYPES
+#include <vulkan/vulkan.h>
+
+// vkr_renderer.h's public entry points, declared here to avoid its internal
+// include web. The renderer runs the Venus dispatch synchronously on the
+// calling thread and returns false once the context is lost.
+extern "C" {
+constexpr std::uint32_t vkrRendererThreadSync = 1u << 0;
+constexpr std::uint32_t vkrRendererAsyncFenceCb = 1u << 1;
+constexpr std::uint32_t virtgpuDrmCapsetVenus = 4;
+struct vkr_renderer_callbacks {
+    void* debug_logger;
+    void (*retire_fence)(std::uint32_t, std::uint32_t, std::uint64_t);
+    void (*context_fatal)(std::uint32_t);
+};
+bool vkr_renderer_init(std::uint32_t flags, const vkr_renderer_callbacks* cbs);
+void vkr_renderer_fini();
+bool vkr_renderer_create_context(
+    std::uint32_t ctxId, std::uint32_t ctxFlags, std::uint32_t nlen, const char* name);
+void vkr_renderer_destroy_context(std::uint32_t ctxId);
+bool vkr_renderer_submit_cmd(std::uint32_t ctxId, void* cmd, std::uint32_t size);
+}
+
+namespace {
+
+using uml::testing::require;
+
+// The subset of Venus command type numbers this stream uses.
+enum Cmd : std::uint32_t {
+    createInstance = 0, enumeratePhysicalDevices = 2, createDevice = 11,
+    getImageMemoryRequirements = 31, allocateMemory = 21, bindImageMemory = 29,
+    createImage = 54, destroyImage = 55, createImageView = 57,
+    destroyImageView = 58, createRenderPass = 82, createFramebuffer = 80,
+    createCommandPool = 85, allocateCommandBuffers = 88,
+    beginCommandBuffer = 90, cmdBeginRenderPass = 133,
+    cmdEndRenderPass = 135, endCommandBuffer = 91, cmdBeginRenderPass2 = 168,
+};
+// The object ids the guest assigns.
+enum Id : std::uint64_t {
+    instanceId = 1, physDevId = 2, deviceId = 3, imageId = 10, memoryId = 20,
+    viewId = 30, renderPassId = 40, framebufferId = 41, poolId = 50, cmdBufId = 60,
+};
+constexpr std::uint32_t extent = 64;
+constexpr std::uint64_t memorySize = 64 * 1024;
+
+// A little-endian Venus wire encoder in the driver's layout.
+class Stream {
+public:
+    void u32(std::uint32_t v) { append(&v, 4); }
+    void u64(std::uint64_t v) { append(&v, 8); }
+    void ptr(bool present) { u64(present ? 1 : 0); }
+    void arraySize(std::uint64_t n) { u64(n); }
+    void f32(float v) { std::uint32_t b; std::memcpy(&b, &v, 4); u32(b); }
+    void command(Cmd type) { u32(type); u32(0 /* no reply */); }
+    [[nodiscard]] std::vector<std::uint8_t>& bytes() { return bytes_; }
+
+private:
+    void append(const void* data, std::size_t n)
+    {
+        const auto* p = static_cast<const std::uint8_t*>(data);
+        bytes_.insert(bytes_.end(), p, p + n);
+    }
+    std::vector<std::uint8_t> bytes_;
+};
+
+void encodeSetup(Stream& s)
+{
+    s.command(createInstance);
+    s.ptr(true);
+    s.u32(VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO); s.u64(0);
+    s.u32(0);                       // flags
+    s.ptr(true);                    // pApplicationInfo
+    s.u32(VK_STRUCTURE_TYPE_APPLICATION_INFO); s.u64(0);
+    s.arraySize(0); s.u32(0); s.arraySize(0); s.u32(0);
+    s.u32(VK_API_VERSION_1_2);      // vkCmdBeginRenderPass2 is core
+    s.u32(0); s.arraySize(0);       // layers
+    s.u32(0); s.arraySize(0);       // extensions
+    s.ptr(false);                   // pAllocator
+    s.ptr(true); s.u64(instanceId);
+
+    s.command(enumeratePhysicalDevices);
+    s.u64(instanceId);
+    s.ptr(true); s.u32(1);
+    s.arraySize(1); s.u64(physDevId);
+
+    s.command(createDevice);
+    s.u64(physDevId);
+    s.ptr(true);
+    s.u32(VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO); s.u64(0);
+    s.u32(0);                       // flags
+    s.u32(1); s.arraySize(1);       // one queue family
+    s.u32(VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO); s.u64(0);
+    s.u32(0); s.u32(0); s.u32(1);
+    s.arraySize(1); s.f32(1.0F);
+    s.u32(0); s.arraySize(0);       // layers
+    s.u32(0); s.arraySize(0);       // extensions
+    s.ptr(false);                   // pEnabledFeatures
+    s.ptr(false);                   // pAllocator
+    s.ptr(true); s.u64(deviceId);
+
+    s.command(createImage);
+    s.u64(deviceId);
+    s.ptr(true);
+    s.u32(VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO); s.u64(0);
+    s.u32(0);
+    s.u32(VK_IMAGE_TYPE_2D); s.u32(VK_FORMAT_R8G8B8A8_UNORM);
+    s.u32(extent); s.u32(extent); s.u32(1);
+    s.u32(1); s.u32(1);
+    s.u32(VK_SAMPLE_COUNT_1_BIT); s.u32(VK_IMAGE_TILING_OPTIMAL);
+    s.u32(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+    s.u32(VK_SHARING_MODE_EXCLUSIVE); s.u32(0); s.arraySize(0);
+    s.u32(VK_IMAGE_LAYOUT_UNDEFINED);
+    s.ptr(false);
+    s.ptr(true); s.u64(imageId);
+
+    s.command(getImageMemoryRequirements);
+    s.u64(deviceId); s.u64(imageId); s.ptr(true);
+
+    s.command(allocateMemory);
+    s.u64(deviceId);
+    s.ptr(true);
+    s.u32(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO); s.u64(0);
+    s.u64(memorySize); s.u32(0);
+    s.ptr(false);
+    s.ptr(true); s.u64(memoryId);
+
+    s.command(bindImageMemory);
+    s.u64(deviceId); s.u64(imageId); s.u64(memoryId); s.u64(0);
+
+    s.command(createImageView);
+    s.u64(deviceId);
+    s.ptr(true);
+    s.u32(VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO); s.u64(0);
+    s.u32(0); s.u64(imageId);
+    s.u32(VK_IMAGE_VIEW_TYPE_2D); s.u32(VK_FORMAT_R8G8B8A8_UNORM);
+    s.u32(VK_COMPONENT_SWIZZLE_IDENTITY); s.u32(VK_COMPONENT_SWIZZLE_IDENTITY);
+    s.u32(VK_COMPONENT_SWIZZLE_IDENTITY); s.u32(VK_COMPONENT_SWIZZLE_IDENTITY);
+    s.u32(VK_IMAGE_ASPECT_COLOR_BIT); s.u32(0); s.u32(1); s.u32(0); s.u32(1);
+    s.ptr(false);
+    s.ptr(true); s.u64(viewId);
+
+    s.command(createRenderPass);
+    s.u64(deviceId);
+    s.ptr(true);
+    s.u32(VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO); s.u64(0);
+    s.u32(0);
+    s.u32(1); s.arraySize(1);       // one attachment
+    s.u32(0); s.u32(VK_FORMAT_R8G8B8A8_UNORM); s.u32(VK_SAMPLE_COUNT_1_BIT);
+    s.u32(VK_ATTACHMENT_LOAD_OP_CLEAR); s.u32(VK_ATTACHMENT_STORE_OP_STORE);
+    s.u32(VK_ATTACHMENT_LOAD_OP_DONT_CARE); s.u32(VK_ATTACHMENT_STORE_OP_DONT_CARE);
+    s.u32(VK_IMAGE_LAYOUT_UNDEFINED); s.u32(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    s.u32(1); s.arraySize(1);       // one subpass
+    s.u32(0); s.u32(VK_PIPELINE_BIND_POINT_GRAPHICS);
+    s.u32(0); s.arraySize(0);       // input
+    s.u32(1); s.arraySize(1);       // colour
+    s.u32(0); s.u32(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    s.arraySize(0);                 // resolve absent
+    s.ptr(false);                   // depth/stencil
+    s.u32(0); s.arraySize(0);       // preserve
+    s.u32(0); s.arraySize(0);       // dependencies
+    s.ptr(false);
+    s.ptr(true); s.u64(renderPassId);
+
+    s.command(createFramebuffer);
+    s.u64(deviceId);
+    s.ptr(true);
+    s.u32(VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO); s.u64(0);
+    s.u32(0); s.u64(renderPassId);
+    s.u32(1); s.arraySize(1); s.u64(viewId);
+    s.u32(extent); s.u32(extent); s.u32(1);
+    s.ptr(false);
+    s.ptr(true); s.u64(framebufferId);
+
+    s.command(createCommandPool);
+    s.u64(deviceId);
+    s.ptr(true);
+    s.u32(VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO); s.u64(0);
+    s.u32(0); s.u32(0);
+    s.ptr(false);
+    s.ptr(true); s.u64(poolId);
+
+    s.command(allocateCommandBuffers);
+    s.u64(deviceId);
+    s.ptr(true);
+    s.u32(VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO); s.u64(0);
+    s.u64(poolId); s.u32(VK_COMMAND_BUFFER_LEVEL_PRIMARY); s.u32(1);
+    s.arraySize(1); s.u64(cmdBufId);
+}
+
+// What the guest does to the framebuffer's attachments before it begins the
+// render pass, and which begin command it uses.
+enum class Scenario {
+    intact,
+    intactBegin2,
+    destroyView,
+    destroyViewBegin2,
+    destroyImage,
+};
+
+[[nodiscard]] constexpr bool usesBegin2(Scenario scenario)
+{
+    return scenario == Scenario::intactBegin2 ||
+        scenario == Scenario::destroyViewBegin2;
+}
+
+void encodeRenderPassBeginInfo(Stream& s)
+{
+    s.ptr(true);
+    s.u32(VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO); s.u64(0);
+    s.u64(renderPassId); s.u64(framebufferId);
+    s.u32(0); s.u32(0); s.u32(extent); s.u32(extent);
+    s.u32(1); s.arraySize(1);
+    s.u32(0);                       // VkClearValue tag
+    s.u32(2); s.arraySize(4); s.u32(0); s.u32(0); s.u32(0); s.u32(0);
+}
+
+// Records a render pass after the guest has treated the attachments as the
+// scenario says.
+void encodeRecord(Stream& s, Scenario scenario)
+{
+    switch (scenario) {
+    case Scenario::destroyView:
+    case Scenario::destroyViewBegin2:
+        s.command(destroyImageView);
+        s.u64(deviceId); s.u64(viewId); s.ptr(false);
+        break;
+    case Scenario::destroyImage:
+        s.command(destroyImage);
+        s.u64(deviceId); s.u64(imageId); s.ptr(false);
+        break;
+    case Scenario::intact:
+    case Scenario::intactBegin2:
+        break;
+    }
+
+    s.command(beginCommandBuffer);
+    s.u64(cmdBufId);
+    s.ptr(true);
+    s.u32(VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO); s.u64(0);
+    s.u32(0); s.ptr(false);
+
+    if (usesBegin2(scenario)) {
+        s.command(cmdBeginRenderPass2);
+        s.u64(cmdBufId);
+        encodeRenderPassBeginInfo(s);
+        s.ptr(true);
+        s.u32(VK_STRUCTURE_TYPE_SUBPASS_BEGIN_INFO); s.u64(0);
+        s.u32(VK_SUBPASS_CONTENTS_INLINE);
+    } else {
+        s.command(cmdBeginRenderPass);
+        s.u64(cmdBufId);
+        encodeRenderPassBeginInfo(s);
+        s.u32(VK_SUBPASS_CONTENTS_INLINE);
+    }
+
+    s.command(cmdEndRenderPass);
+    s.u64(cmdBufId);
+
+    s.command(endCommandBuffer);
+    s.u64(cmdBufId);
+}
+
+void retireFence(std::uint32_t, std::uint32_t, std::uint64_t) {}
+void contextFatal(std::uint32_t) {}
+
+// Brings a context up through setup, records a render pass as scenario says,
+// and returns whether the context stayed live.
+[[nodiscard]] bool runContext(std::uint32_t ctxId, Scenario scenario)
+{
+    require(vkr_renderer_create_context(
+                ctxId, virtgpuDrmCapsetVenus, 4, "test"),
+        "the Venus context could not be created");
+
+    Stream setup;
+    encodeSetup(setup);
+    require(vkr_renderer_submit_cmd(ctxId, setup.bytes().data(),
+                static_cast<std::uint32_t>(setup.bytes().size())),
+        "the context was lost bringing the device up; the host driver may be "
+        "unavailable in this environment");
+
+    Stream record;
+    encodeRecord(record, scenario);
+    const bool live = vkr_renderer_submit_cmd(ctxId, record.bytes().data(),
+        static_cast<std::uint32_t>(record.bytes().size()));
+
+    vkr_renderer_destroy_context(ctxId);
+    return live;
+}
+
+// One guest behaviour and what the renderer must do about it.
+struct Case {
+    const char* name;
+    Scenario scenario;
+    // Whether the context stays live. Every case that is not a control must
+    // lose it.
+    bool live;
+    const char* failure;
+};
+
+constexpr Case cases[] = {
+    // Controls: every attachment is intact, so the render pass records
+    // through either begin command and the context stays live. They also show
+    // that the wire encoding of both commands is accepted, so a lost context
+    // in the cases below is the check's doing.
+    {"intact", Scenario::intact, true,
+        "recording a render pass with live attachments lost the context"},
+    {"intact-begin2", Scenario::intactBegin2, true,
+        "recording a render pass 2 with live attachments lost the context"},
+    // The regression: the attachment's view is destroyed before the render
+    // pass begins. The renderer must mark the context lost rather than read
+    // the freed view and crash the host.
+    {"destroyed-view", Scenario::destroyView, false,
+        "a render pass whose attachment view was destroyed did not lose the "
+        "context"},
+    {"destroyed-view-begin2", Scenario::destroyViewBegin2, false,
+        "a render pass 2 whose attachment view was destroyed did not lose the "
+        "context"},
+    // The image of a live view is as much a use of freed host memory.
+    {"destroyed-image", Scenario::destroyImage, false,
+        "a render pass whose attachment image was destroyed did not lose the "
+        "context"},
+};
+
+} // namespace
+
+// With no argument every case runs; with a case's name, that case alone.
+int main(int argc, char** argv)
+{
+    const vkr_renderer_callbacks callbacks {
+        .debug_logger = nullptr,
+        .retire_fence = retireFence,
+        .context_fatal = contextFatal,
+    };
+    require(vkr_renderer_init(
+                vkrRendererThreadSync | vkrRendererAsyncFenceCb, &callbacks),
+        "the Venus renderer could not be initialised");
+
+    std::uint32_t ctxId = 1;
+    bool ran = false;
+    for (const Case& c : cases) {
+        if (argc > 1 && std::strcmp(argv[1], c.name) != 0)
+            continue;
+        ran = true;
+        std::fprintf(stderr, "render pass case: %s\n", c.name);
+        require(runContext(ctxId++, c.scenario) == c.live, c.failure);
+    }
+    require(ran, "no case has the name given");
+
+    vkr_renderer_fini();
+    return 0;
+}
