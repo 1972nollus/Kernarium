@@ -513,6 +513,10 @@ release and the Android macOS executable is built. They boot blank instances
 and check the setup wizard's flow and end state, and the product's adb
 defaults; `tests/integration/android/run_guest_android_adb_vsock.py` is the
 opt-in ADB-over-vsock counterpart of `guest-vsock-stream`.
+`android-microg-spoofing` (integration) additionally needs
+`UML_ANDROID_MICROG_PROBE_DIR`, the output of
+[`microg/build-apks.sh`](../tests/integration/android/microg/README.md), and
+checks that only microG's own packages present Google's certificate.
 
 Every first-party script that reaches a guest over adb uses the one shared adb
 server, names the guest with `-s 127.0.0.1:<port>` and at the end only
