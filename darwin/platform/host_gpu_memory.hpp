@@ -29,8 +29,9 @@ namespace uml::platform {
  * a small buffer of its own, and the footprint falls a few milliseconds later.
  * With a `wait` it polls for that, returning once the footprint has fallen by a
  * mebibyte or more or the time has passed; without, it returns at once. Any
- * thread. Does nothing without a Metal device, and nothing where the device has
- * no residency sets (the iOS Simulator's may not). */
+ * thread. Does nothing without a Metal device or a device that makes no
+ * residency sets, and does not wait while the footprint is under a mebibyte,
+ * which is all the iOS Simulator reports. */
 void retireFreedGpuMemory(std::chrono::milliseconds wait = {}) noexcept;
 
 } // namespace uml::platform
