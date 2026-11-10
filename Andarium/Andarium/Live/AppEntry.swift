@@ -12,6 +12,15 @@ import UIKit
 /// environment (`Andarium/README.md#automation`).
 struct AppEntry {
     var overrides: LaunchOverrides
+    /// Whether this launch is the person's own, the only kind that announces
+    /// the release notes with the ribbon and keeps their record. A launch
+    /// that builds an entry without `fromArguments`, as a test does, is not.
+    var announcesWhatsNew = false
+    /// The build this launch runs (`CFBundleVersion`); nil when the bundle
+    /// states none as a number.
+    var build = AppEntry.bundleBuild()
+    /// Where the release notes' record is kept.
+    var defaults = UserDefaults.standard
 
     /// The live application opens no screen directly.
     var hints: ScreenHints { ScreenHints() }
@@ -19,14 +28,16 @@ struct AppEntry {
     static func fromArguments() -> AppEntry {
         #if APP_STORE
         // An App Store build reads no launch setting.
-        return AppEntry(overrides: LaunchOverrides())
+        return AppEntry(overrides: LaunchOverrides(), announcesWhatsNew: true)
         #else
         let info = ProcessInfo.processInfo
+        let overrides = LaunchOverrides(
+            environment: info.environment,
+            processorCount: GuestProcessorLimit.vCPUs(physicalProcessorCount: info.activeProcessorCount)
+        )
         return AppEntry(
-            overrides: LaunchOverrides(
-                environment: info.environment,
-                processorCount: GuestProcessorLimit.vCPUs(physicalProcessorCount: info.activeProcessorCount)
-            )
+            overrides: overrides,
+            announcesWhatsNew: Self.isPersonsLaunch(overrides: overrides, environment: info.environment)
         )
         #endif
     }
@@ -169,6 +180,8 @@ struct AppEntry {
             // Microphone choice with it.
             model.microphone?.refresh()
         }
+        announceWhatsNew(
+            on: model, hasGuest: guest != nil, vCPUs: guest?.cores ?? host.processorCount)
         model.alert = problem.map { AppAlert(title: "Andarium is incomplete", message: $0) }
         return model
     }
@@ -221,6 +234,12 @@ struct AppEntry {
     #endif
 
     // MARK: Device
+
+    /// The build number, which orders the releases whose notes the ribbon
+    /// announces.
+    static func bundleBuild(_ bundle: Bundle = .main) -> Int? {
+        (bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String).flatMap { Int($0) }
+    }
 
     private static func appVersion(_ bundle: Bundle) -> String {
         let short = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"

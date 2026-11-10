@@ -63,7 +63,7 @@ final class WhatsNewModel {
 extension WhatsNewCatalog {
     /// The notes the application bundles, `WhatsNew.json`; none if the
     /// resource is missing or unreadable.
-    static func load(from bundle: Bundle = .main) -> [WhatsNewRelease] {
+    nonisolated static func load(from bundle: Bundle = .main) -> [WhatsNewRelease] {
         guard let url = bundle.url(forResource: "WhatsNew", withExtension: "json"),
               let data = try? Data(contentsOf: url),
               let releases = try? decode(data)
