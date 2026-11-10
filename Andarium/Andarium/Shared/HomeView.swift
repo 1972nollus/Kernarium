@@ -93,6 +93,7 @@ struct HomeView: View {
         VStack(spacing: 22) {
             notices
             SystemSection()
+            developmentSections
             guestSections
             RecoveryErasePanel()
                 .id("erase")
@@ -108,6 +109,7 @@ struct HomeView: View {
         VStack(spacing: 28) {
             notices
             SystemSection()
+            developmentSections
             guestSections
             RecoveryErasePanel()
                 .id("erase")
@@ -124,6 +126,7 @@ struct HomeView: View {
             VStack(spacing: 22) {
                 notices
                 SystemSection()
+                developmentSections
             }
             .frame(maxWidth: 520)
             VStack(spacing: 22) {
@@ -139,14 +142,20 @@ struct HomeView: View {
         .frame(maxWidth: .infinity)
     }
 
-    /// Display, Capabilities, JIT and Backup: what the guest shows and may use.
+    /// JIT, right below Guest system, in the builds that have it. An App Store
+    /// build has none and nothing takes its place.
+    @ViewBuilder
+    private var developmentSections: some View {
+        #if !APP_STORE
+        JitSection()
+        #endif
+    }
+
+    /// Display, Capabilities and Backup: what the guest shows and may use.
     @ViewBuilder
     private var guestSections: some View {
         DisplaySection()
         CapabilitiesSection()
-        #if !APP_STORE
-        JitSection()
-        #endif
         BackupSection()
     }
 

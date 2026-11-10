@@ -122,7 +122,7 @@ def boot_stages(prefix: str, screen: str, names: list[str], what: str, dark_step
 
 SHOTS: list[Shot] = [
     # Home
-    s("home", "Home", "home", "Home with a configured guest: Guest system (two matched rows: CPU and memory with Edit, then Storage with its usage bar and Resize), Display, Capabilities, Backup, Recovery and erase, and the Start bar.", dark=True),
+    s("home", "Home", "home", "Home with a configured guest: Guest system (two matched rows: CPU and memory with Edit, then Storage with its usage bar and Resize), JIT (in the builds that have it), Display, Capabilities, Backup, Recovery and erase, and the Start bar.", dark=True),
     s("home-welcome", "Home", "welcome", "Home before any guest exists: the welcome and Set up guest. First screen of the initial setup."),
     s("home-first-start", "Home", "home-new", "A guest just created and not yet started: Home as it is before the first start."),
     s("home-display", "Home", "home-display", "Home scrolled to Display: the Retina mode toggle.", dark=True),
