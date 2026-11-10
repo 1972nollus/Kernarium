@@ -138,7 +138,12 @@ final class StubDriver: RuntimeDriver {
     /// Computers connected through the listener, which a stop closes.
     var connectedComputers = 0
     private(set) var closedComputers = 0
-    func usbDebugging() async -> Bool? { debugging }
+    /// While set, reading the setting does not answer, as while adbd restarts.
+    var holdsUsbDebuggingReads = false
+    func usbDebugging() async -> Bool? {
+        while holdsUsbDebuggingReads, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(10)) }
+        return debugging
+    }
     /// What Android's storage reads as; a test sets it as a boot would.
     var storage: Bool? = true
     func storageReady() async -> Bool? { storage }

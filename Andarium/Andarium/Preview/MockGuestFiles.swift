@@ -31,7 +31,6 @@ final class MockGuestFiles: GuestFilesBackend {
     var failing: [String: String] = [:]
     /// Failing names that work on Try Again.
     var recovering: Set<String> = []
-    var setUsbDebugging: (Bool) -> Void = { _ in }
 
     private func node(at path: String) -> Node? {
         guard path.hasPrefix(GuestPath.root) else { return nil }
@@ -179,6 +178,7 @@ final class MockGuestFiles: GuestFilesBackend {
         case "files-refused":
             route = folder("Android", "data")
         case "files-usb-off":
+            // The guest's USB debugging is off and the browser lists all the same.
             model.session.usbDebugging = false
         case "files-starting":
             // Android's storage comes up a few seconds in, and the browser follows.
@@ -273,7 +273,7 @@ final class MockGuestFiles: GuestFilesBackend {
         }
         browser.route = route
         model.sessionPreset = SessionPreset(
-            settings: true, settingsLarge: !["files-medium", "files-usb-off", "files-starting"].contains(screen)
+            settings: true, settingsLarge: !["files-medium", "files-starting"].contains(screen)
         )
         model.phase = .running(.normal)
     }
@@ -317,17 +317,6 @@ private struct MockImportPicker: View {
                             FilePick(name: name, size: 40 * Limits.bytesPerMiB),
                             FilePick(name: "Scan.pdf", size: 2 * Limits.bytesPerMiB),
                         ])
-                    }
-                }
-                Section("Guest") {
-                    Button("Turn USB debugging off") {
-                        files.setUsbDebugging(false)
-                        dismiss()
-                        // As if it were turned on again in the guest.
-                        Task {
-                            try? await Task.sleep(for: .seconds(6))
-                            files.setUsbDebugging(true)
-                        }
                     }
                 }
             }

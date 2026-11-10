@@ -64,11 +64,7 @@ nonisolated struct AdbFailure: LocalizedError, Equatable {
         case .guestGone, .streamClosed:
             // adbd restarts when the guest's USB debugging turns off, which
             // ends a connection in use; the next try reaches the new one.
-            if activity == .files {
-                message = "The guest\u{2019}s debugging service stopped. Check that USB debugging is still on, then try again."
-            } else {
-                message = "The guest\u{2019}s debugging service restarted before \(activity.stoppedBefore). Try again."
-            }
+            message = "The guest\u{2019}s debugging service restarted before \(activity.stoppedBefore). Try again."
         case .timedOut:
             message = "The guest stopped responding while \(activity.whileDoing)."
         case let .remote(text):

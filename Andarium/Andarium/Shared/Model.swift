@@ -588,12 +588,12 @@ final class AppModel {
         driver == nil ? session.usbDebugging != false : session.usbDebugging == true
     }
 
-    /// The file browser may list and move files: USB debugging is on, as
-    /// Settings shows it, and Android has its storage up. The preview has no
-    /// guest to ask and says yes unless a screen says no.
+    /// The file browser may list and move files: Android has its storage up.
+    /// The guest's USB debugging setting does not matter, since the browser
+    /// uses the application's own channel. The preview has no guest to ask
+    /// and says yes unless a screen says no.
     var filesAvailable: Bool {
-        guard adbOverNetworkAvailable else { return false }
-        return driver == nil ? session.storageReady != false : session.storageReady == true
+        driver == nil ? session.storageReady != false : session.storageReady == true
     }
 
     /// The toggle in Settings. Turning it on opens the listener on the
@@ -679,12 +679,15 @@ final class AppModel {
     }
 
     /// While Settings is open: the address and the settings, read again every
-    /// few seconds until the sheet goes and the task is cancelled.
+    /// few seconds until the sheet goes and the task is cancelled. The two
+    /// readings are independent, so the file browser's storage check never
+    /// waits for the USB debugging one.
     func watchSettings() async {
         while !Task.isCancelled {
             refreshAdbAddress()
-            await refreshUsbDebugging()
-            await refreshStorage()
+            async let debugging: Void = refreshUsbDebugging()
+            async let storage: Void = refreshStorage()
+            _ = await (debugging, storage)
             try? await Task.sleep(for: .seconds(3))
         }
     }

@@ -15,8 +15,9 @@ struct FilesBar: View {
     static let scrimReach: CGFloat = 28
 
     @Bindable var browser: FileBrowserModel
-    /// USB debugging is on, so the guest can be browsed: the trail and Import
-    /// or Export show. A transfer or a question stays in view regardless.
+    /// Android's storage is up, so the guest can be browsed: the trail and
+    /// Import or Export show. A transfer or a question stays in view
+    /// regardless.
     let usable: Bool
     /// The sheet's own bottom inset, measured outside the bar: read here, the
     /// bar's padding would feed its own measurement.

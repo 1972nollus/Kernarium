@@ -165,8 +165,8 @@ final class FileBrowserModel {
     static let leftForegroundReason = "Stopped when Andarium left the foreground."
 
     @ObservationIgnored let backend: any GuestFilesBackend
-    /// Whether the guest can be browsed now (USB debugging on, its storage
-    /// up). Nothing is imported or exported while it cannot.
+    /// Whether the guest can be browsed now (its storage is up). Nothing is
+    /// imported or exported while it cannot.
     @ObservationIgnored var isAvailable: () -> Bool = { true }
 
     /// The Settings sheet's navigation path: empty on Settings itself, then

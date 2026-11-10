@@ -114,7 +114,6 @@ struct AppEntry {
         )
         let files = MockGuestFiles()
         let browser = FileBrowserModel(backend: files)
-        files.setUsbDebugging = { [weak model] in model?.session.usbDebugging = $0 }
         MockFolderProbe.browser = browser
         model.fileBrowser = browser
         let freeze = !play
