@@ -16,6 +16,18 @@
         "text": "On devices that allow it, Android’s RAM can now go above 4 GiB.",
         "symbol": "memorychip.fill",
         "requirement": { "memoryAboveMiB": 4096 }
+      },
+      {
+        "id": "stability-fixes",
+        "title": "Stability fixes",
+        "points": [
+          "Fixed Android crashing on many iPhones",
+          "Fixed a crash when returning to Andarium from the background",
+          "Fixed crashes in some 3D games and apps",
+          "Fixed a crash when using the gyroscope",
+          "Fixed high CPU use and heat after a network connection drops"
+        ],
+        "symbol": "wrench.and.screwdriver.fill"
       }
     ]
   }
