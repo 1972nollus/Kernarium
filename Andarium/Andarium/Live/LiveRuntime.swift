@@ -236,38 +236,19 @@ final class LiveRuntime: RuntimeDriver {
     }
 
     #if !APP_STORE
-    /// Prepares the JIT's executable memory when the person turned the JIT on
-    /// and a debugger is here to do it, or lets an attached debugger go when
-    /// the JIT is off, so that the guest does not run under it. Returns
-    /// whether the guest boots on the JIT. A start that cannot have it runs on
-    /// gadgets and says why; it never fails.
+    /// Whether the guest boots on the JIT (`AppModel.startOnJit`).
     private func prepareJit(for run: PendingRun) async -> Bool {
         guard let model, model.jitAvailable else { return false }
-        let wanted = model.jitOn
-        let shape = JitShape(memoryMiB: run.guest.memoryMiB, processorCount: run.guest.cores)
-        if wanted { model.preparingJit = true }
-        let answer = await JitDebugger.prepare(wanted: wanted, shape: shape, flavor: Self.androidFlavor)
-        model.preparingJit = false
-        model.refreshJit()
-        switch answer {
-        case .ready:
-            model.jitPrepared = shape
-            model.jitLastStart = nil
-            print("Andarium: JIT ready")
-            return true
-        case .disabled:
-            model.jitLastStart = nil
-            return false
-        case .noDebugger, .failed, .otherSettings, .unsupported:
-            // A fall-back is only worth a sentence to a person who asked for the JIT.
-            model.jitLastStart = wanted ? answer : nil
-            if wanted { print("Andarium: \(answer.fallbackSentence ?? "started without JIT")") }
-            return false
-        }
+        return await model.startOnJit(
+            JitShape(memoryMiB: run.guest.memoryMiB, processorCount: run.guest.cores))
     }
 
     func jitDebuggerAttached() -> Bool {
         JitDebugger.attached()
+    }
+
+    func prepareJit(wanted: Bool, shape: JitShape) async -> JitAnswer {
+        await JitDebugger.prepare(wanted: wanted, shape: shape, flavor: Self.androidFlavor)
     }
     #endif
 

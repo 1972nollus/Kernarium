@@ -186,12 +186,102 @@ final class AppModel {
     /// The debugger is preparing the executable memory, which the boot screen
     /// says while it takes the seconds it takes.
     var preparingJit = false
+    /// How the attempt made when Andarium opened ended, when it left the
+    /// memory unprepared (`prepareJitAtLaunch`).
+    var jitLaunch: JitAnswer?
+    /// The attempt made when Andarium opened, which a start that comes while
+    /// it runs waits for.
+    @ObservationIgnored private var jitLaunchWork: Task<Void, Never>?
+    @ObservationIgnored private var jitLaunchAsked = false
     /// What Home says under the JIT row.
     var jitStatus: JitStatus {
         JitStatus(
             debuggerAttached: jitDebuggerAttached, prepared: jitPrepared,
             guest: guest.map { JitShape(memoryMiB: $0.memoryMiB, processorCount: $0.cores) },
-            lastStart: jitLastStart)
+            lastStart: jitLastStart, launch: jitLaunch)
+    }
+    /// Asks the debugger attached to Andarium for what the JIT row says now,
+    /// once per process, as the application opens: StikDebug spins while it
+    /// waits for the request and the system ends it within a minute. With the
+    /// row on, the executable memory is prepared for the guest (`standard`
+    /// when there is none yet, or when `replacingGuest` says the launch is
+    /// about to make another); with the row off, the debugger is told to go.
+    /// The work is off the main thread, Home does not wait for it, and a start
+    /// that comes while it runs waits for it.
+    func prepareJitAtLaunch(standard: JitShape, replacingGuest: Bool = false) {
+        guard !jitLaunchAsked else { return }
+        jitLaunchAsked = true
+        guard jitAvailable, let driver else { return }
+        refreshJit()
+        let current = replacingGuest
+            ? nil : guest.map { JitShape(memoryMiB: $0.memoryMiB, processorCount: $0.cores) }
+        let wanted = jitOn
+        guard let request = JitLaunchRequest.atLaunch(
+            wanted: wanted, debuggerAttached: jitDebuggerAttached, guest: current, standard: standard)
+        else { return }
+        let shape: JitShape
+        switch request {
+        case .prepare(let target): shape = target
+        case .detach: shape = current ?? standard
+        }
+        jitLaunchWork = Task { [weak self] in
+            let answer = await driver.prepareJit(wanted: wanted, shape: shape)
+            self?.jitLaunchEnded(answer, shape: shape)
+        }
+    }
+    /// Waits for the attempt made at launch, if it is still under way.
+    func waitForJitLaunch() async {
+        await jitLaunchWork?.value
+    }
+    private func jitLaunchEnded(_ answer: JitAnswer, shape: JitShape) {
+        switch answer {
+        case .ready:
+            jitPrepared = shape
+            print("Andarium: JIT prepared at launch for \(shape.memoryMiB) MiB, \(shape.processorCount) vCPUs")
+        case .disabled:
+            print("Andarium: JIT is off; the debugger was told to detach at launch")
+        case .noDebugger, .failed, .otherSettings, .unsupported:
+            jitLaunch = answer
+            print("Andarium: JIT was not prepared at launch (\(answer))")
+        }
+        refreshJit()
+    }
+    /// What a start does about the JIT for a guest of `shape`; true when the
+    /// guest boots on it. The memory was prepared for this guest when
+    /// Andarium opened, or is prepared here when no attempt was made then. A
+    /// start that comes while the attempt at launch runs waits for it, and the
+    /// boot says "Preparing JIT" meanwhile. A JIT that is off lets an attached
+    /// debugger go, so that the guest does not run under it. A start that
+    /// cannot have the JIT runs on gadgets and says why; it never fails.
+    func startOnJit(_ shape: JitShape) async -> Bool {
+        let wanted = jitOn
+        if wanted { preparingJit = true }
+        await waitForJitLaunch()
+        let answer: JitAnswer
+        if wanted, jitPrepared == shape {
+            answer = .ready
+        } else if let driver {
+            answer = await driver.prepareJit(wanted: wanted, shape: shape)
+        } else {
+            answer = .unsupported
+        }
+        preparingJit = false
+        refreshJit()
+        switch answer {
+        case .ready:
+            jitPrepared = shape
+            jitLastStart = nil
+            print("Andarium: JIT ready")
+            return true
+        case .disabled:
+            jitLastStart = nil
+            return false
+        case .noDebugger, .failed, .otherSettings, .unsupported:
+            // A fall-back is only worth a sentence to a person who asked for the JIT.
+            jitLastStart = wanted ? answer : nil
+            if wanted { print("Andarium: \(answer.fallbackSentence ?? "started without JIT")") }
+            return false
+        }
     }
     /// The person turns the JIT on or off. It changes nothing until a start.
     func setJit(_ on: Bool) {

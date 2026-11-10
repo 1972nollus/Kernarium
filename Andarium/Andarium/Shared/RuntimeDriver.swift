@@ -159,6 +159,11 @@ protocol RuntimeDriver: AnyObject {
     #if !APP_STORE
     /// Whether a debugger that serves the JIT is attached to Andarium now.
     func jitDebuggerAttached() -> Bool
+    /// Prepares the JIT's executable memory for `shape` when `wanted`, or
+    /// tells an attached debugger to leave when not, and says how it came
+    /// out. It takes the seconds the debugger takes and never blocks the main
+    /// thread. Without a servicing debugger it asks the runtime nothing.
+    func prepareJit(wanted: Bool, shape: JitShape) async -> JitAnswer
     #endif
 }
 

@@ -59,6 +59,24 @@ final class StubDriver: RuntimeDriver {
     }
     var debuggerAttached = false
     func jitDebuggerAttached() -> Bool { debuggerAttached }
+    /// What the JIT preparation answers and what it was asked, in order. A
+    /// debugger that serves the request has left once the answer is ready or
+    /// disabled. A test can hold the preparation to have a start catch it.
+    var jitAnswer = JitAnswer.ready
+    private(set) var jitAsked: [(wanted: Bool, shape: JitShape)] = []
+    var holdsJit = false
+    private var heldJit: CheckedContinuation<Void, Never>?
+    func prepareJit(wanted: Bool, shape: JitShape) async -> JitAnswer {
+        jitAsked.append((wanted, shape))
+        if holdsJit { await withCheckedContinuation { heldJit = $0 } }
+        let answer = wanted ? jitAnswer : .disabled
+        if answer == .ready || answer == .disabled { debuggerAttached = false }
+        return answer
+    }
+    func releaseJit() {
+        heldJit?.resume()
+        heldJit = nil
+    }
 
     /// What the refusal-count readings answer, in turn, the last one
     /// repeating; nothing until a test scripts them.
