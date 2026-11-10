@@ -83,7 +83,7 @@ struct WhatsNewNotesList: View {
     }
 }
 
-/// "Version 1.0 (7)" and the day it came out, when the notes give one, side
+/// "Version 1.0 (8)" and the day it came out, when the notes give one, side
 /// by side, or stacked when the text is too large for one line.
 struct WhatsNewReleaseHeading: View {
     let release: WhatsNewRelease

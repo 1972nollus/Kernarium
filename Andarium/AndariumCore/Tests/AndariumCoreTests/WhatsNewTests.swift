@@ -58,22 +58,22 @@ struct WhatsNewRulesTests {
     }
 
     @Test func notesWrittenForALaterBuildWaitForItAndTheRecordMovesOn() {
-        let later = [release(7, ["x", "y"])]
-        let six = WhatsNewRules.launch(
-            releases: later, record: WhatsNewRecord(seenBuild: 5), currentBuild: 6, hasGuest: true, offers: all)
-        #expect(six.pending.isEmpty)
-        #expect(six.record == WhatsNewRecord(seenBuild: 6))
+        let later = [release(8, ["x", "y"])]
+        let seven = WhatsNewRules.launch(
+            releases: later, record: WhatsNewRecord(seenBuild: 5), currentBuild: 7, hasGuest: true, offers: all)
+        #expect(seven.pending.isEmpty)
+        #expect(seven.record == WhatsNewRecord(seenBuild: 7))
 
-        // Build 7 then offers them, after build 6 and straight from build 5.
-        let afterSix = WhatsNewRules.launch(
-            releases: later, record: six.record, currentBuild: 7, hasGuest: true, offers: all)
-        #expect(afterSix.pending.map(\.build) == [7])
-        #expect(afterSix.pending.first?.entries.map(\.id) == ["x", "y"])
-        #expect(afterSix.record == WhatsNewRecord(seenBuild: 6, ribbonBuild: 7, ribbonLaunches: 1))
+        // Build 8 then offers them, after build 7 and straight from build 5.
+        let afterSeven = WhatsNewRules.launch(
+            releases: later, record: seven.record, currentBuild: 8, hasGuest: true, offers: all)
+        #expect(afterSeven.pending.map(\.build) == [8])
+        #expect(afterSeven.pending.first?.entries.map(\.id) == ["x", "y"])
+        #expect(afterSeven.record == WhatsNewRecord(seenBuild: 7, ribbonBuild: 8, ribbonLaunches: 1))
         let fromFive = WhatsNewRules.launch(
-            releases: later, record: nil, currentBuild: 7, hasGuest: true, offers: all)
-        #expect(fromFive.pending.map(\.build) == [7])
-        #expect(fromFive.record == WhatsNewRecord(seenBuild: 5, ribbonBuild: 7, ribbonLaunches: 1))
+            releases: later, record: nil, currentBuild: 8, hasGuest: true, offers: all)
+        #expect(fromFive.pending.map(\.build) == [8])
+        #expect(fromFive.record == WhatsNewRecord(seenBuild: 5, ribbonBuild: 8, ribbonLaunches: 1))
     }
 
     @Test func theRibbonIsOfferedOnThreeLaunchesThenGoesAsIfPutAway() {
