@@ -914,8 +914,8 @@ uml_add_guest_integration_test(
 # blob waits for the host's answer and fails with EINVAL or ENOMEM, in the
 # host3d and guest-blob branches alike, instead of returning a GEM handle that
 # no host resource stands behind. The guest has the GPU. The probe names host
-# objects that do not exist (EINVAL), and asks for a resource larger than the
-# GPU budget of a 1 GiB guest, made inside the blob's command buffer as gralloc
+# objects that do not exist (EINVAL), and asks for a resource the GPU budget of
+# a 1 GiB guest cannot hold, made inside the blob's command buffer as gralloc
 # does (ENOMEM).
 uml_add_guest_integration_test(
     NAME guest-virtgpu-blob-refusal

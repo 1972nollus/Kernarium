@@ -79,7 +79,7 @@ enum WhatsNewPreview {
             memory: MemoryPolicy(
                 maximumsMiB: Array(repeating: pad ? 7_168 : 4_608, count: count),
                 defaultsMiB: Array(repeating: pad ? 4_096 : 3_072, count: count),
-                graphicsMiB: { memory, _ in min(max(limitMiB - 900 - memory, 384), memory / 2) }
+                graphicsMiB: { memory, _ in max(limitMiB - 900 - memory, 384) }
             ),
             freeStorageBytes: UInt64((pad ? 118.3 : 41.6) * Double(Limits.bytesPerGiB))
         )

@@ -180,8 +180,8 @@ struct HostDeviceTests {
                     && host.memory.safeMemoryMiB(vCPUs: $0) == host.memory.maximumMiB(vCPUs: $0)
                     && !host.memory.isAboveSafe(host.memory.maximumMiB(vCPUs: $0), vCPUs: $0)
             })
-            // Half the guest is the GPU's budget at every size above a new guest's,
-            // so the sheet warns about none of them.
+            // The guest's own size is the GPU's budget at every size above a new
+            // guest's, so the sheet warns about none of them.
             #expect((1...host.processorCount).allSatisfy {
                 host.memory.risk(host.memory.maximumMiB(vCPUs: $0), vCPUs: $0) == .none
             })
@@ -254,15 +254,15 @@ struct DefaultGuestTests {
             #expect((1...8).map { policy.defaultMemoryMiB(vCPUs: $0) } == defaults, "limit \(limitMiB) MiB")
             #expect((1...8).map { policy.safeMemoryMiB(vCPUs: $0) } == safe, "limit \(limitMiB) MiB")
             // A limit sets the budget a guest of the default size launches with: the
-            // loader's evaluation, half the guest with no limit, never under 384 MiB
-            // otherwise unless half the guest is less.
+            // loader's evaluation, the guest's memory with no limit, never under 384 MiB
+            // otherwise.
             for count in 1...8 {
                 let memory = policy.defaultMemoryMiB(vCPUs: count)
                 let budget = policy.graphicsMemoryMiB(forMemory: memory, vCPUs: count)
                 #expect(budget == Int(kernarium_runtime_loader_gpu_budget_mib_for_limit(
                     UInt64(limitMiB) << 20, UInt32(memory), UInt32(count), launch)))
                 if limitMiB == 0 {
-                    #expect(budget == memory / 2)
+                    #expect(budget == memory)
                 } else if bounds[0] >= Limits.defaultMemoryRangeMiB.upperBound {
                     // On a device that offers 4 GiB, a new guest keeps a gibibyte for the GPU.
                     #expect((budget ?? 0) >= 1024, "limit \(limitMiB) MiB at \(count) vCPUs")

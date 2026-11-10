@@ -204,10 +204,11 @@ inline constexpr LaunchMemorySet maximum_memory_set =
 	launch_memory_mib(0, 0, 0);
 
 /* B: the host GPU's budget a launch of `guest_mib` MiB of guest RAM gets at
- * `executors` vCPUs under `memory_limit` bytes (zero for none) with `set`, and
- * whether the limit leaves it less than its floor. It is the evaluation the
- * run makes (emulator/src/gpu_budget_plan.hpp) when the launch states no gadget
- * cache budget of its own, so the settings can show what a guest will get. */
+ * `executors` vCPUs under `memory_limit` bytes (zero for none, which gives the
+ * guest's RAM) with `set`, and whether the limit leaves it less than its
+ * floor. It is the evaluation the run makes (emulator/src/gpu_budget_plan.hpp)
+ * when the launch states no gadget cache budget of its own, so the settings can
+ * show what a guest will get. */
 [[nodiscard]] constexpr ::uml::platform::GpuBudget gpu_budget(
 	std::uint64_t memory_limit, std::uint32_t guest_mib, unsigned executors,
 	const LaunchMemorySet &set = launch_memory_set) noexcept
@@ -334,16 +335,17 @@ namespace detail {
 		maximum);
 }
 
-/* The most guest RAM, a multiple of 512 MiB within the range, for which `set`
- * leaves the host GPU a budget of at least default_gpu_budget_minimum_mib;
- * zero where no such RAM exists. B is at most half the guest's RAM, so none
- * below 2048 MiB qualifies. */
+/* The most guest RAM, a multiple of 512 MiB within the range a new guest's RAM
+ * is held to (default_guest_memory_minimum_mib through
+ * default_guest_memory_maximum_mib), for which `set` leaves the host GPU a
+ * budget of at least default_gpu_budget_minimum_mib; zero where no such RAM
+ * exists. */
 [[nodiscard]] constexpr std::uint32_t graphics_guest_memory_mib(
 	std::uint64_t memory_limit, unsigned executors,
 	const LaunchMemorySet &set = launch_memory_set) noexcept
 {
 	for (auto mib = default_guest_memory_maximum_mib;
-	     mib >= default_gpu_budget_minimum_mib * 2U;
+	     mib >= default_guest_memory_minimum_mib;
 	     mib -= default_guest_memory_step_mib)
 		if (gpu_budget(memory_limit, mib, executors, set).bytes >=
 			default_gpu_budget_minimum_mib * mebibyte)
@@ -362,11 +364,11 @@ namespace detail {
  * does too. That bound is never under 2048 MiB with the launch set, since
  * every limit that offers 4096 MiB at one vCPU leaves a guest of 2048 more
  * than 1024 for the GPU at every count the applications offer; for a set that
- * leaves none, or for a limit that offers less than 4096 MiB or none at all,
- * the default is the conservative one. A guest above the conservative one is
- * likely to be ended by the system; one between the two is likely to run out
- * of graphics memory. The rules read the range as ending at 4096 MiB, so a
- * larger ceiling changes none of the defaults.
+ * leaves none in the range, or for a limit that offers less than 4096 MiB or
+ * none at all, the default is the conservative one. A guest above the
+ * conservative one is likely to be ended by the system; one between the two is
+ * likely to run out of graphics memory. The rules read the range as ending at
+ * 4096 MiB, so a larger ceiling changes none of the defaults.
  *
  * holds_gpu_budget is true where the graphics rule is what lowered the
  * default, below the conservative size the default would be otherwise. Above

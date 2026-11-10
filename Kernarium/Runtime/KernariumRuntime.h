@@ -61,14 +61,14 @@ enum {
  * android_data_gib GiB when that is larger; it never shrinks one. The guest
  * has exactly these two disks. The kernel is carried by the runtime.
  *
- * The host GPU's budget is B = clamp(L - A - G - E - S, 384 MiB, G / 2),
- * evaluated once at launch (see the architecture document): L is the
- * application's memory limit, G the guest's memory, and E the gadget cache
- * plus the other memory the guest side of the process uses. The request states
- * the three launch parameters: A, the application's own expected ceiling;
- * E_rest, the guest side's memory beyond the gadget cache; and S, the headroom
- * left unused. Zero, which is what the application states until their values
- * are chosen, adds nothing to the sum.
+ * The host GPU's budget is B = max(L - A - G - E - S, 384 MiB), evaluated
+ * once at launch (see the architecture document): L is the application's
+ * memory limit, G the guest's memory, and E the gadget cache plus the other
+ * memory the guest side of the process uses. Without a limit B is G. The
+ * request states the three launch parameters: A, the application's own
+ * expected ceiling; E_rest, the guest side's memory beyond the gadget cache;
+ * and S, the headroom left unused. Zero, which is what the application states
+ * until their values are chosen, adds nothing to the sum.
  *
  * An Android guest authorizes one adb host key for this boot without asking
  * its user: android_adb_public_key is the key as adb writes it, base64 of the
