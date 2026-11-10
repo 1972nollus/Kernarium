@@ -203,6 +203,43 @@ def stop_console(process: subprocess.Popen[bytes]) -> None:
         process.wait(timeout=10)
 
 
+def launched_pid(report: object) -> int | None:
+    """The pid of the process a ``devicectl device process launch`` started,
+    from the report it writes with ``--json-output``
+    (``result.process.processIdentifier``), or None while the report does not
+    name one."""
+    result = report.get("result") if isinstance(report, dict) else None
+    process = result.get("process") if isinstance(result, dict) else None
+    pid = process.get("processIdentifier") if isinstance(process, dict) else None
+    return pid if isinstance(pid, int) and not isinstance(pid, bool) else None
+
+
+def wait_for_launched_pid(
+    report: pathlib.Path, launch: subprocess.Popen[bytes], timeout: float
+) -> int:
+    """The pid ``launch`` (a devicectl launch started with ``--json-output
+    report``) started, polled until the report names it. The device's list of
+    processes is never consulted: it can still hold an older instance of the
+    application that is on its way out, and attaching to that one is attaching
+    to the wrong process."""
+    deadline = time.monotonic() + timeout
+    while True:
+        if report.exists():
+            try:
+                pid = launched_pid(json.loads(report.read_text(encoding="utf-8")))
+            except ValueError:
+                pid = None  # the report is being written
+            if pid is not None:
+                return pid
+        if launch.poll() is not None and not report.exists():
+            raise DeviceError("devicectl ended without reporting the launched process")
+        if time.monotonic() >= deadline:
+            raise DeviceError(
+                f"devicectl reported no launched process within {timeout:.0f} seconds"
+            )
+        time.sleep(0.5)
+
+
 def runtime_result(application: Application, transcript: str) -> int | None:
     results = application.runtime_result.findall(transcript)
     return int(results[-1]) if results else None
@@ -214,7 +251,8 @@ class Console:
     ``devicectl device process launch --console`` stays attached for as long
     as the application runs and writes what it prints to ``log``; leaving the
     block interrupts it. ``start_stopped`` launches it stopped, for a debugger
-    to attach to before it runs (tests/integration/support/ios_jit_debugger.py).
+    to attach to before it runs (tests/integration/support/ios_jit_debugger.py);
+    ``launched_pid`` then says which process that launch made.
     """
 
     def __init__(
@@ -227,10 +265,13 @@ class Console:
         start_stopped: bool = False,
     ) -> None:
         self.log = log
+        # The launch's own report names the process it made.
+        self.report = log.with_name(log.name + ".launch.json")
         self._command = device_command(
             "device", "process", "launch", "--device", device,
             "--console", "--terminate-existing",
-            *(["--start-stopped"] if start_stopped else []),
+            *(["--start-stopped", "--json-output", str(self.report)]
+              if start_stopped else []),
             application.bundle_id,
         )
         self._environment = device_launch_environment(application, settings)
@@ -238,6 +279,8 @@ class Console:
         self._process: subprocess.Popen[bytes] | None = None
 
     def __enter__(self) -> "Console":
+        # A report left by an earlier launch names another process.
+        self.report.unlink(missing_ok=True)
         self._output = self.log.open("wb")
         try:
             self._process = subprocess.Popen(
@@ -258,6 +301,11 @@ class Console:
             stop_console(self._process)
         finally:
             self._output.close()
+
+    def launched_pid(self, timeout: float) -> int:
+        """The pid of the process this launch made (``start_stopped`` only)."""
+        assert self._process is not None
+        return wait_for_launched_pid(self.report, self._process, timeout)
 
     def transcript(self) -> str:
         return self.log.read_text(encoding="utf-8", errors="replace")

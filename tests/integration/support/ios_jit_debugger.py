@@ -19,10 +19,16 @@ process asks with ``brk #0xf00d`` and registers ``x16`` (the command), ``x0``
 This module is that debugger for a harness, in two parts. ``JitService``
 decides each request and touches nothing but what it is given, so a test can
 drive it. ``serve`` is the command lldb runs once attached (``jit_serve``).
-``main`` launches the application on a device stopped, attaches lldb to it,
-serves it until it detaches and then holds the console; the lease on the
-device, the application's install and everything else a run needs stay with
-the caller. It writes nothing into the application's container.
+``main`` launches the application on a device stopped, attaches lldb to the
+process that launch made (the pid devicectl reports for it, never one found in
+a listing, which can still hold an older instance), serves it until it detaches
+and then holds the console; the lease on the device, the application's install
+and everything else a run needs stay with the caller. It writes nothing into
+the application's container.
+
+Andarium makes its request as soon as it opens, so the debugger is attached
+and serving before the application's first line runs: the process is launched
+stopped, and lldb continues it.
 """
 
 from __future__ import annotations
@@ -32,7 +38,6 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 from collections.abc import Callable
 from dataclasses import dataclass
-import json
 import os
 import pathlib
 import re
@@ -40,7 +45,6 @@ import shlex
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 
 # ``brk #0xf00d``.
@@ -54,6 +58,8 @@ ADDRESS_LIMIT = 1 << 40
 # The byte the debugger writes into each page.
 BLESSING_BYTE = 0x69
 PACKET_RETRIES = 3
+# How long to wait for devicectl to report the process it launched.
+PID_TIMEOUT = 90
 
 
 @dataclass(frozen=True)
@@ -256,52 +262,6 @@ def device_command(*arguments: str) -> list[str]:
     return ["xcrun", "devicectl", *arguments]
 
 
-def find_pid(listing: object, process_name: str) -> int | None:
-    """The pid of the process whose executable is ``<process_name>.app`` in a
-    ``devicectl device info processes`` listing, however it is nested."""
-    found: list[int] = []
-
-    def walk(node: object) -> None:
-        if isinstance(node, dict):
-            executable = node.get("executable")
-            pid = node.get("processIdentifier")
-            if (isinstance(executable, str) and isinstance(pid, int)
-                    and f"/{process_name}.app/" in executable):
-                found.append(pid)
-            for value in node.values():
-                walk(value)
-        elif isinstance(node, list):
-            for value in node:
-                walk(value)
-
-    walk(listing)
-    return max(found) if found else None
-
-
-def wait_for_pid(device: str, process_name: str, timeout: float) -> int:
-    """The newest pid of the application, polled until it appears."""
-    deadline = time.monotonic() + timeout
-    while True:
-        with tempfile.TemporaryDirectory(prefix="ios-jit-processes-") as name:
-            report = pathlib.Path(name) / "processes.json"
-            subprocess.run(
-                device_command(
-                    "device", "info", "processes", "--device", device,
-                    "--json-output", str(report), "--quiet", "--timeout", "30",
-                ),
-                check=False, stdin=subprocess.DEVNULL, timeout=60,
-            )
-            if report.exists():
-                pid = find_pid(json.loads(report.read_text(encoding="utf-8")),
-                               process_name)
-                if pid is not None:
-                    return pid
-        if time.monotonic() >= deadline:
-            raise DebuggerError(
-                f"no {process_name} process on the device within {timeout:.0f} seconds")
-        time.sleep(1.0)
-
-
 def attach_command(device: str, pid: int, log: pathlib.Path,
                    timeout: float) -> list[str]:
     """lldb, attached to the process, serving it as this file's ``jit_serve``."""
@@ -314,13 +274,22 @@ def attach_command(device: str, pid: int, log: pathlib.Path,
     ]
 
 
-def start_serving(device: str, process_name: str, log: pathlib.Path, *,
-                  pid_timeout: float = 90, serve_timeout: float = 900,
+def launch_command(device: str, bundle_id: str,
+                   report: pathlib.Path) -> list[str]:
+    """devicectl, launching the application stopped for a debugger, holding its
+    console, and writing the launch's own report (which names the process)."""
+    return device_command(
+        "device", "process", "launch", "--device", device,
+        "--terminate-existing", "--start-stopped", "--console",
+        "--json-output", str(report), bundle_id)
+
+
+def start_serving(device: str, pid: int, log: pathlib.Path, *,
+                  serve_timeout: float = 900,
                   output: pathlib.Path | None = None) -> subprocess.Popen[bytes]:
-    """Finds the stopped application and starts lldb serving it; the caller
-    waits for the returned process, which ends once the application has
-    detached (or the time is up), and reads ``log``."""
-    pid = wait_for_pid(device, process_name, pid_timeout)
+    """Starts lldb serving the stopped process ``pid``; the caller waits for
+    the returned process, which ends once the application has detached (or the
+    time is up), and reads ``log``."""
     sink = output.open("wb") if output is not None else subprocess.DEVNULL
     return subprocess.Popen(
         attach_command(device, pid, log, serve_timeout),
@@ -332,36 +301,41 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", required=True, help="devicectl identifier or UDID")
     parser.add_argument("--bundle-id", required=True)
-    parser.add_argument("--process-name", required=True,
-                        help="the application's name, as in <name>.app")
     parser.add_argument("--env", action="append", default=[], metavar="NAME=VALUE",
                         help="a launch setting for the application")
     parser.add_argument("--log", type=pathlib.Path, required=True,
                         help="where the console and the debugger's log go (a directory)")
     parser.add_argument("--until", default=None, metavar="REGEX",
                         help="stop holding the console at the first line that matches")
+    parser.add_argument("--pid-timeout", type=float, default=PID_TIMEOUT,
+                        help="how long to wait for devicectl to report the launch")
     parser.add_argument("--hold-seconds", type=float, default=600)
     parser.add_argument("--serve-timeout", type=float, default=900)
     options = parser.parse_args(argv)
+    # Imported here: lldb imports this file for ``jit_serve`` without this
+    # directory on its path.
+    import ios_device
 
     options.log.mkdir(parents=True, exist_ok=True)
     console_log = options.log / "console.log"
     serve_log = options.log / "jit-debugger.log"
+    report = options.log / "launch.json"
+    # A report left by an earlier launch names another process.
+    report.unlink(missing_ok=True)
     environment = dict(os.environ)
     for setting in options.env:
         name, _, value = setting.partition("=")
         environment[f"DEVICECTL_CHILD_{name}"] = value
     with console_log.open("wb") as console:
         launch = subprocess.Popen(
-            device_command(
-                "device", "process", "launch", "--device", options.device,
-                "--terminate-existing", "--start-stopped", "--console",
-                options.bundle_id),
+            launch_command(options.device, options.bundle_id, report),
             stdin=subprocess.DEVNULL, stdout=console, stderr=subprocess.STDOUT,
             env=environment)
         try:
+            pid = ios_device.wait_for_launched_pid(
+                report, launch, options.pid_timeout)
             debugger = start_serving(
-                options.device, options.process_name, serve_log,
+                options.device, pid, serve_log,
                 serve_timeout=options.serve_timeout,
                 output=options.log / "lldb.log")
             debugger.wait(timeout=options.serve_timeout + 60)

@@ -660,8 +660,12 @@ class Run:
             ) as console:
                 try:
                     if self.serves_jit:
+                        # The process this launch made, not one the device
+                        # lists: an older instance may still be on its way
+                        # out.
                         debugger = ios_jit_debugger.start_serving(
-                            options.device, "Andarium",
+                            options.device,
+                            console.launched_pid(ios_jit_debugger.PID_TIMEOUT),
                             self.artifact / "jit-debugger.log",
                             output=self.artifact / "lldb.log")
                     with Iproxy(self.iproxy_program, options.device,
