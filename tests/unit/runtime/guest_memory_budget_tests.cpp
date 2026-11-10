@@ -11,9 +11,9 @@
  * theConservativeDefaultIsTheLargestStepThatLeavesTheFloor and
  * onADeviceThatOffers4GiBTheDefaultKeepsAGibibyteForTheGpu. The range has no
  * top of 4 GiB, and B has no cap of half the guest's RAM:
- * aLargerCeilingChangesNoDefaultAndNoSizeUnder4GiB holds every default, and
- * every size below 4 GiB, to the rules of the range that ended there and of
- * the cap, copied below.
+ * aLargerCeilingAndNoHalfCapChangeNoDefaultAndNoSizeUnder4GiB holds every
+ * default, and every size below 4 GiB, to the rules of the range that ended
+ * there and of the cap, copied below.
  */
 #include "named_tests.hpp"
 #include "require.hpp"
