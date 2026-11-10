@@ -34,6 +34,9 @@ struct AppEntry {
     var device: String?
     /// The guest's memory, in MiB, instead of the default a new guest gets.
     var memoryMiB: Int?
+    /// "light" or "dark" draws the preview in that appearance whatever the
+    /// Simulator's own, so a capture leaves the device's setting alone.
+    var colorScheme: String?
 
     static func fromArguments() -> AppEntry {
         let defaults = UserDefaults.standard
@@ -47,7 +50,8 @@ struct AppEntry {
             statsReadings: defaults.string(forKey: "statsReadings").flatMap { Int($0) },
             statsVramMiB: defaults.string(forKey: "statsVramMiB").flatMap { Int($0) },
             device: defaults.string(forKey: "device"),
-            memoryMiB: defaults.string(forKey: "memoryMiB").flatMap { Int($0) }
+            memoryMiB: defaults.string(forKey: "memoryMiB").flatMap { Int($0) },
+            colorScheme: defaults.string(forKey: "colorScheme")
         )
     }
 
@@ -72,6 +76,7 @@ struct AppEntry {
         "info-acknowledgements": .acknowledgements,
         "info-license": .license("mesa"),
         "info-license-gpl": .license("linux"),
+        "whatsnew-history": .whatsNew,
     ]
 
     var hints: ScreenHints {
@@ -97,8 +102,9 @@ struct AppEntry {
 
     func makeModel() -> AppModel {
         CaptureState.begin(screen: screen)
+        applyColorScheme()
         let lowSpace = lowSpace || ["create-low-space", "start-low-space", "home-low-space"].contains(screen)
-        let host = PreviewData.host(lowSpace: lowSpace, device: device)
+        let host = WhatsNewPreview.host(for: screen) ?? PreviewData.host(lowSpace: lowSpace, device: device)
         var guest: Guest? = PreviewData.sampleGuest(on: host)
         if let memoryMiB { guest?.memoryMiB = memoryMiB }
         if ["welcome", "create", "create-low-space"].contains(screen) { guest = nil }
@@ -266,6 +272,7 @@ struct AppEntry {
         default:
             break
         }
+        WhatsNewPreview.apply(screen: screen, to: model)
         if let statsReadings {
             model.session.readout = Readout(
                 previewReadings: statsReadings, memoryMiB: model.guest?.memoryMiB ?? Limits.defaultMemoryRangeMiB.lowerBound
@@ -328,6 +335,26 @@ struct AppEntry {
         }
     }
 
+    /// Every window of the process takes `colorScheme`'s appearance as it
+    /// becomes key, before its first frame.
+    private func applyColorScheme() {
+        let style: UIUserInterfaceStyle
+        switch colorScheme {
+        case "dark": style = .dark
+        case "light": style = .light
+        default: return
+        }
+        NotificationCenter.default.addObserver(
+            forName: UIWindow.didBecomeKeyNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated {
+                for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
+                    for window in scene.windows { window.overrideUserInterfaceStyle = style }
+                }
+            }
+        }
+    }
+
     /// The device's microphone conversation against the Simulator's
     /// permission, which is read again whenever the app becomes active.
     private func useSystemMicrophone(in model: AppModel) {
@@ -355,8 +382,11 @@ struct AppEntry {
             model.setMicrophone(true)
         case "erase":
             model.confirmingErase = true
-        case "info", "info-acknowledgements", "info-license", "info-license-gpl":
+        case "info", "info-acknowledgements", "info-license", "info-license-gpl", "whatsnew-info",
+             "whatsnew-history":
             model.sheet = .info
+        case "whatsnew-open", "whatsnew-skipped-open":
+            model.sheet = .whatsNew
         case "start-low-space":
             model.start(.normal)
         case "files-review":

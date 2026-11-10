@@ -13,7 +13,7 @@ enum StatisticsViewer: Hashable {
 }
 
 enum SheetKind: String, Identifiable, Hashable {
-    case create, resize, info, system
+    case create, resize, info, system, whatsNew
 
     var id: String { rawValue }
 }
@@ -151,6 +151,9 @@ final class AppModel {
 
     var sessionPreset = SessionPreset()
     var session = SessionState()
+    /// The release notes: Info's history and the ribbon above Start after an
+    /// update.
+    var whatsNew = WhatsNewModel()
     /// The launch decided whether the statistics show (automation, see
     /// `StatsPreference.launch`): the value belongs to that run and is not kept.
     var statsDecidedByLaunch = false
