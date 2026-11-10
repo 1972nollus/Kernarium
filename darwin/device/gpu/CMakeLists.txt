@@ -55,6 +55,12 @@ add_library(uml_gpu_memory_pressure STATIC memory_pressure.cpp)
 add_library(UML::GpuMemoryPressure ALIAS uml_gpu_memory_pressure)
 uml_configure_gpu_component(uml_gpu_memory_pressure)
 
+# Whether a refused Venus allocation waits for the guest's reclaimer; see
+# reclaim_wait.hpp. The display keeps one for the device.
+add_library(uml_gpu_reclaim_wait STATIC reclaim_wait.cpp)
+add_library(UML::GpuReclaimWait ALIAS uml_gpu_reclaim_wait)
+uml_configure_gpu_component(uml_gpu_reclaim_wait)
+
 # Finds the guest contexts that have gone quiet, for the renderer to trim.
 add_library(uml_gpu_context_idle_tracker STATIC context_idle_tracker.cpp)
 add_library(UML::GpuContextIdleTracker ALIAS uml_gpu_context_idle_tracker)
@@ -111,7 +117,8 @@ target_compile_definitions(uml_gpu_display PRIVATE
 target_include_directories(uml_gpu_display PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/device/input/vnc)
 target_link_libraries(uml_gpu_display PUBLIC
-    UML::Descriptor UML::VncInput UML::GpuContextMemoryLedger)
+    UML::Descriptor UML::VncInput UML::GpuContextMemoryLedger
+    UML::GpuReclaimWait)
 target_link_libraries(uml_gpu_display PRIVATE UML::GuestTimerMask)
 if(UML_TARGET_MACOS)
     target_link_libraries(uml_gpu_display PRIVATE
@@ -147,7 +154,7 @@ if(UML_BUILD_UNIT_TESTS AND UML_TARGET_MACOS)
     target_include_directories(uml_gpu_display_test_variant PUBLIC
         ${PROJECT_SOURCE_DIR}/darwin/device/input/vnc)
     target_link_libraries(uml_gpu_display_test_variant PUBLIC
-        UML::VncInput UML::GpuContextMemoryLedger)
+        UML::VncInput UML::GpuContextMemoryLedger UML::GpuReclaimWait)
     target_link_libraries(uml_gpu_display_test_variant PRIVATE
         UML::ThirdPartyVncServer
         "-framework Accelerate"
@@ -220,7 +227,8 @@ if(UML_BUILD_UNIT_TESTS)
         UML_GPU_DEVICE_TESTING=1)
     target_link_libraries(uml_gpu_protocol_device_test_variant PUBLIC
         UML::GpuContextMemoryLedger
-        UML::GpuMemoryPressure)
+        UML::GpuMemoryPressure
+        UML::GpuReclaimWait)
 endif()
 
 add_library(uml_gpu_device INTERFACE)

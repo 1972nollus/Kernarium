@@ -29,12 +29,15 @@ namespace uml::gpu {
  * The usage is the counter less imports, plus what the ledger holds beyond
  * the resident heaps, so the IOSurfaces and the command storage both count;
  * it is never less than either estimate alone. A heap enters `residentHeaps`
- * only once the ledger holds it and leaves before Metal drops it, so reading
- * `residentHeaps` last can count a heap twice for a moment but never leave it
- * out; a heap made between the readings is still reserved. Other memory that
- * both hold, the host's own Metal textures and buffers, counts twice. An
- * import larger than the counter (the two are read at different instants)
- * reads as nothing made.
+ * as its pages are made resident, while its reservation is held, and leaves
+ * before Metal drops it, so reading `residentHeaps` last can count a heap
+ * twice for a moment but never leave it out; a heap made between the readings
+ * is still reserved, and the reservation covers the pages the ledger has not
+ * counted yet. While a heap is made resident its reservation and Metal's
+ * count both hold it, so the usage is over by at most the heap's size. Other
+ * memory that both hold, the host's own Metal textures and buffers, counts
+ * twice. An import larger than the counter (the two are read at different
+ * instants) reads as nothing made.
  *
  * Read `imported` before `metalAllocated`: an import that lands between the
  * two readings is then counted a moment too long and never too short.
