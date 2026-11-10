@@ -197,7 +197,7 @@ SHOTS: list[Shot] = [
     s("recovery", "Guest", "recovery", "Recovery running."),
     s("recovery-side-keys", "Guest", "recovery-open", "Recovery with the side keys open."),
     # Settings during a session
-    s("settings", "Settings", "settings", "Settings at full height: Stats, Apps, Developer and Diagnostics.", dark=True),
+    s("settings", "Settings", "settings", "Settings at full height: Stats, Apps, File browser, Developer and Diagnostics.", dark=True),
     s("settings-stats", "Settings", "settings-stats", "Settings scrolled to Stats: CPU, Memory and VRAM with bars of their share, and Frame rate.", dark=True),
     s("settings-stats-short", "Settings", "settings-stats", "Settings scrolled to Stats after three CPU readings: the bars fill from the right.", "-statsReadings", "3"),
     system_mic("home-mic-system-prompt", "Capabilities", "home-mic-alert", "The system's own question when Microphone is turned on for the first time (the Simulator's alert).", "reset"),
