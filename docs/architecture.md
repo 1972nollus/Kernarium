@@ -634,8 +634,10 @@ flushed, quiescing holds every thread that can run the guest and releases the
 disk locks. The hold keeps the unlocked disks unwritten; a hold that cannot be
 taken leaves the locks in place. Resume and stop reacquire every lock before
 restoring guest RAM, releasing a thread or waking the guest, and verify the
-disk's identity, size and times; contention, a replaced descriptor or changed
-storage ends the process without resuming the guest.
+disk's identity, size, links and modification time, and on macOS its change
+time (an iOS-family application's own metadata writes move it); contention, a
+replaced descriptor or changed storage ends the process without resuming the
+guest.
 
 The guest binds the management console as a Unix datagram socket under a
 per-run `uml-kern<pid>` directory (mode 0700) that the host passes as `uml_dir=`.
