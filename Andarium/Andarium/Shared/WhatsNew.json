@@ -1,0 +1,28 @@
+[
+  {
+    "build": 6,
+    "version": "1.0 (6)",
+    "entries": [
+      {
+        "id": "file-browser",
+        "title": "File browser",
+        "text": "Browse Android’s internal storage, and import or export files and folders.",
+        "symbol": "folder.fill",
+        "place": "sessionSettings"
+      },
+      {
+        "id": "more-memory",
+        "title": "More memory",
+        "text": "On devices that allow it, Android’s RAM can now go above 4 GiB.",
+        "symbol": "memorychip.fill",
+        "requirement": { "memoryAboveMiB": 4096 }
+      },
+      {
+        "id": "graphics-memory",
+        "title": "Graphics memory",
+        "text": "Games free and reuse graphics memory better, so heavy games are less likely to be stopped.",
+        "symbol": "gamecontroller.fill"
+      }
+    ]
+  }
+]

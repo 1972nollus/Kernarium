@@ -4,7 +4,7 @@ import Foundation
 import Testing
 @testable import Andarium
 
-/// The Files browser waits for Android's storage: Android reports its boot
+/// The file browser waits for Android's storage: Android reports its boot
 /// done before `/storage/emulated/0` is mounted, and until then an empty root
 /// and a refused write would be false.
 @MainActor

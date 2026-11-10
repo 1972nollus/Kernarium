@@ -226,6 +226,12 @@ control out.
   the snapshot and the adb key included.
 - **Backup.** The guest is left out of iCloud and computer backups unless the
   user turns on Back up guest data.
+- **Release notes.** `Shared/WhatsNew.json` bundles the notes per build,
+  from build 6 (the first public release, build 5, has none). The first
+  launch of an update that carries notes shows a ribbon above Start, on at most
+  three launches, that opens them; Info keeps every release's notes
+  (`WhatsNewRules`, `WhatsNewStore`). A launch with a launch setting, or one a
+  test runs, shows no ribbon and keeps no record.
 
 ## Runtime
 
@@ -353,7 +359,7 @@ is on. `AndariumCore/Adb` speaks the protocol.
   MetricKit reports added under `andarium/`, the application's container paths
   taken out (`BugReportAttachments`); a zip that cannot be amended safely is
   shared as Android made it.
-- **Files** in Settings browses the guest's internal storage
+- **File browser** in Settings browses the guest's internal storage
   (`/storage/emulated/0/`, the guest Files app's root) and imports and exports
   files over the same channel, in a normal session and while USB debugging is
   on (`Live/LiveGuestFiles.swift`, `AdbSync`, `GuestFiles`). One transfer runs
@@ -374,10 +380,10 @@ is on. `AndariumCore/Adb` speaks the protocol.
   `NSLocalNetworkUsageDescription`. Nothing listens before the toggle.
 - **Privacy.** The adb features add no required-reason API beyond the
   disk-space API with reason E174.1 (the start's own space check already uses
-  it) and, for Files, the file-timestamp API: an import reads the date of a
-  file the person picked (3B52.1) and an export sets the date of its staged
-  copy inside the application's container (C617.1), so both keep the file's
-  own date.
+  it) and, for the file browser, the file-timestamp API: an import reads the
+  date of a file the person picked (3B52.1) and an export sets the date of its
+  staged copy inside the application's container (C617.1), so both keep the
+  file's own date.
 
 ## Acknowledgements
 
