@@ -179,6 +179,16 @@ struct AppEntry {
             // Access the person took away while Andarium was closed takes the
             // Microphone choice with it.
             model.microphone?.refresh()
+            #if !APP_STORE
+            // A debugger attached at launch (StikDebug) is asked for what the
+            // JIT row says at once: it spins until it is served, and the
+            // system ends it within a minute. A guest the launch is about to
+            // make is the one the memory is prepared for.
+            let offered = Self.launchGuest(launch, on: model)
+            model.prepareJitAtLaunch(
+                standard: JitShape(memoryMiB: offered.memoryMiB, processorCount: offered.cores),
+                replacingGuest: launch.erase)
+            #endif
         }
         announceWhatsNew(
             on: model, hasGuest: guest != nil, vCPUs: guest?.cores ?? host.processorCount)

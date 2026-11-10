@@ -54,8 +54,9 @@ struct JitPreference {
 }
 
 /// The guest memory and vCPU count the JIT's executable memory is prepared
-/// for. The runtime prepares it once per process, for the guest of that
-/// start, so a guest changed after that waits for the next process.
+/// for. The runtime prepares it once per process, for the guest at the time
+/// (when Andarium opens, or at the first start if it did not), so a guest
+/// changed after that waits for the next process.
 nonisolated struct JitShape: Equatable, Sendable {
     var memoryMiB: Int
     var processorCount: Int
@@ -63,6 +64,29 @@ nonisolated struct JitShape: Equatable, Sendable {
     init(memoryMiB: Int, processorCount: Int) {
         self.memoryMiB = memoryMiB
         self.processorCount = processorCount
+    }
+}
+
+/// What Andarium asks of a debugger that is attached when it opens. StikDebug
+/// spins while it waits and the system ends it within a minute, so the
+/// request is made at once and not when the person gets to Start.
+enum JitLaunchRequest: Equatable, Sendable {
+    /// Prepare the executable memory for this guest.
+    case prepare(JitShape)
+    /// The JIT is off: tell the debugger to go, so the guest never runs
+    /// under it.
+    case detach
+
+    /// What the launch asks, or nil when there is no debugger to ask.
+    /// `guest` is the guest the next start boots; with none yet, the memory
+    /// is prepared for `standard`, the guest Create offers, so that a guest
+    /// made as offered finds it ready and any other waits for the next
+    /// process.
+    static func atLaunch(
+        wanted: Bool, debuggerAttached: Bool, guest: JitShape?, standard: JitShape
+    ) -> JitLaunchRequest? {
+        guard debuggerAttached else { return nil }
+        return wanted ? .prepare(guest ?? standard) : .detach
     }
 }
 
@@ -120,20 +144,27 @@ struct JitStatus: Equatable, Sendable {
     /// How the last start of this process answered, when it ran without the
     /// JIT it was asked for. A new start clears it.
     var lastStart: JitAnswer?
+    /// How the attempt made when Andarium opened ended, when it left the
+    /// memory unprepared. The process makes one attempt.
+    var launch: JitAnswer?
 
     init(
-        debuggerAttached: Bool, prepared: JitShape? = nil, guest: JitShape? = nil, lastStart: JitAnswer? = nil
+        debuggerAttached: Bool, prepared: JitShape? = nil, guest: JitShape? = nil, lastStart: JitAnswer? = nil,
+        launch: JitAnswer? = nil
     ) {
         self.debuggerAttached = debuggerAttached
         self.prepared = prepared
         self.guest = guest
         self.lastStart = lastStart
+        self.launch = launch
     }
 
     /// The next start can use the JIT when it is on: the memory is prepared
-    /// for this guest, or a debugger is here to prepare it.
+    /// for this guest, or a debugger is here to prepare it. A debugger that
+    /// failed its one attempt is no use.
     var usable: Bool {
         if let prepared { return prepared == guest }
+        if launch?.fallbackSentence != nil { return false }
         return debuggerAttached
     }
 

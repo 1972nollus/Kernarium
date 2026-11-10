@@ -268,18 +268,26 @@ requires reopening Andarium.
   device gives the JIT its executable memory only through a debugger attached to
   the process ([`docs/architecture.md`](../docs/architecture.md#executable-code)):
   the person assigns StikDebug's universal script to Andarium once in StikDebug
-  and opens Andarium from it. With the row on, a start prepares the memory while
-  the boot screen says "Preparing JIT" and boots on the JIT engine; without a
-  debugger, or if the preparation fails, it boots on gadgets and says why on
-  the boot screen and under the row. With the row off, a start lets an attached
-  debugger go, so the guest never runs under it. The memory is prepared once per
-  process for the guest's memory and vCPUs at that start; a guest changed after
-  it needs Andarium opened from StikDebug again. Starting a Debug build from
-  Xcode attaches lldb, which would stop at the request, so Debug serves the
-  request only when the launch says a servicing debugger is attached
-  (`ANDARIUM_JIT_DEBUGGER=1`). `ANDARIUM_JIT` (`1` or `0`) states the row for a
-  harness launch, which keeps nothing; a launch with another setting starts it
-  off. The JIT compiles every process's code again for itself
+  and opens Andarium from it. StikDebug spins until its request is served and
+  the system ends it within a minute, so Andarium asks as it opens
+  (`AppModel.prepareJitAtLaunch`), on a worker, and Home does not wait for it.
+  With the row on it prepares the memory for the guest, or for the guest Create
+  offers when there is none yet, and the debugger leaves within seconds; with
+  the row off it tells the debugger to leave at once, and turning the row on
+  later in that process says to open Andarium from StikDebug. A start uses the
+  memory prepared at launch (or waits for the attempt, with "Preparing JIT" on
+  the boot screen) and boots on the JIT engine; without a debugger, or if the
+  preparation fails, it boots on gadgets and says why on the boot screen and
+  under the row. A guest changed after the memory was prepared needs Andarium
+  opened from StikDebug again, and the memory stays wired for the process
+  whether the start uses it or not (the runtime's GPU plan counts it). No
+  debugger request is made while none is attached, and one that goes unanswered
+  because the debugger vanished is a start on gadgets, never a crash. Starting a
+  Debug build from Xcode attaches lldb, which would stop at the request, so
+  Debug serves the request only when the launch says a servicing debugger is
+  attached (`ANDARIUM_JIT_DEBUGGER=1`). `ANDARIUM_JIT` (`1` or `0`) states the
+  row for a harness launch, which keeps nothing; a launch with another setting
+  starts it off. The JIT compiles every process's code again for itself
   ([cold code](../darwin/cpu/arm64/jit/README.md#cold-code)), so an Android
   guest's boot, application launches and background work run several times
   slower than on gadgets, and a long single-process computation runs faster. An

@@ -54,6 +54,10 @@ void release_translation_cache_run_session() noexcept;
  * process that will not use JIT does not stay under it. */
 [[nodiscard]] bool jit_debugger_attached() noexcept;
 void release_jit_debugger() noexcept;
+
+/* The bytes of executable memory that preparation left wired in this process,
+ * zero before one did. */
+[[nodiscard]] std::size_t prepared_jit_region_bytes() noexcept;
 #endif
 
 /* Materialize any lazily resident architectural state before runtime exports
