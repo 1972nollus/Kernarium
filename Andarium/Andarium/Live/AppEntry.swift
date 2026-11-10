@@ -342,7 +342,9 @@ struct AppEntry {
         )
     }
 
-    static func freeStorageBytes() -> UInt64 {
+    /// The device's free space. It touches no state of the entry, and the
+    /// run's space watch reads it off the main actor.
+    nonisolated static func freeStorageBytes() -> UInt64 {
         HostStorage.freeBytes()
     }
 }
