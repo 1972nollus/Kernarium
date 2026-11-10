@@ -4,12 +4,15 @@ import AndariumCore
 import SwiftUI
 
 /// The ribbon in Home's Start bar, just above Start, after an update with
-/// notes: the new features' tiles and names on one line of glass. A tap opens
-/// the notes; the close button, or a swipe down, puts it away. Start stays
-/// where it always is and is never covered.
+/// notes: the new features' tiles and names on one line of glass tinted with
+/// the accent, so it reads with Start rather than with the gray sections
+/// above. A light sweeps across it once, the first time Home shows it in a
+/// launch. A tap opens the notes; the close button, or a swipe down, puts it
+/// away. Start stays where it always is and is never covered.
 struct WhatsNewRibbon: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
 
     let entries: [WhatsNewEntry]
     let open: () -> Void
@@ -17,6 +20,13 @@ struct WhatsNewRibbon: View {
 
     /// How far a swipe has pulled the ribbon down.
     @State private var pull: CGFloat = 0
+    /// The arrival's light is crossing the ribbon, and how far, from 0 to 1.
+    @State private var sweeping = false
+    @State private var sweep: CGFloat = 0
+    /// The sparkle bounces once, with the sweep.
+    @State private var sparkle = 0
+    /// The light has swept the ribbon in this launch; it does not again.
+    @MainActor private static var swept = false
     /// The close button's circle, which grows with the text.
     @ScaledMetric(relativeTo: .footnote) private var closeSize: CGFloat = 30
 
@@ -32,9 +42,18 @@ struct WhatsNewRibbon: View {
                             .accessibilityHidden(true)
                     }
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("What\u{2019}s New")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
+                        HStack(spacing: 5) {
+                            // Left out at the accessibility sizes, as the
+                            // deck is: there it wraps the title.
+                            if !typeSize.isAccessibilitySize {
+                                Image(systemName: "sparkles")
+                                    .foregroundStyle(Color.accentColor)
+                                    .symbolEffect(.bounce, value: sparkle)
+                            }
+                            Text("What\u{2019}s New")
+                                .foregroundStyle(.primary)
+                        }
+                        .font(.subheadline.weight(.semibold))
                         summary
                             .font(.footnote)
                             .foregroundStyle(.secondary)
@@ -68,10 +87,53 @@ struct WhatsNewRibbon: View {
         .padding(.trailing, 10)
         .padding(.vertical, 9)
         .frame(minHeight: 52)
-        .glassEffect(.regular.interactive(), in: shape)
+        .overlay { light }
+        // On a dark ground the tint needs more of the accent to read as jade.
+        .glassEffect(
+            .regular.tint(Color.accentColor.opacity(colorScheme == .dark ? 0.42 : 0.24)).interactive(), in: shape)
         .offset(y: pull)
         // A swipe that moves the ribbon is not also a tap on it.
         .highPriorityGesture(swipe)
+        .onAppear(perform: arrive)
+    }
+
+    /// The arrival's light: a soft band that crosses the ribbon once from
+    /// the leading edge. Without motion there is none.
+    @ViewBuilder private var light: some View {
+        if sweeping {
+            GeometryReader { geo in
+                let band = geo.size.width * 0.4
+                LinearGradient(
+                    colors: [.white.opacity(0), .white.opacity(0.55), .white.opacity(0)],
+                    startPoint: .leading, endPoint: .trailing
+                )
+                .frame(width: band)
+                .offset(x: -band + sweep * (geo.size.width + band))
+            }
+            .blendMode(.plusLighter)
+            .clipShape(shape)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+    }
+
+    /// The first time Home shows the ribbon in a launch, a light crosses it
+    /// once and the sparkle bounces, a moment after Home appears.
+    private func arrive() {
+        guard !Self.swept else { return }
+        Self.swept = true
+        guard !reduceMotion else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(600))
+            sweeping = true
+            sparkle += 1
+            try? await Task.sleep(for: .milliseconds(20))
+            withAnimation(.easeInOut(duration: 1.0)) {
+                sweep = 1
+            } completion: {
+                sweeping = false
+            }
+        }
     }
 
     private var shape: AnyShape {
