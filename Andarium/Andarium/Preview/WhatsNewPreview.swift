@@ -4,13 +4,13 @@ import AndariumCore
 import UIKit
 
 /// The release notes and the stored record of the preview's What's New
-/// screens. The notes of build 6 are the bundled ones; those of builds 5 and
+/// screens. The notes of build 7 are the bundled ones; those of builds 5 and
 /// 4 are made up, to stand in for releases a person skipped (the application
-/// bundles notes from build 6 on). A device keeps the record in its defaults.
+/// bundles notes from build 7 on). A device keeps the record in its defaults.
 enum WhatsNewPreview {
     /// The build the preview's What's New screens run, the first with notes.
-    static let currentBuild = 6
-    static let appVersion = "1.0 (6)"
+    static let currentBuild = 7
+    static let appVersion = "1.0 (7)"
 
     static let releases: [WhatsNewRelease] = WhatsNewCatalog.load() + [
         WhatsNewRelease(build: 5, version: "1.0 (5)", date: "2026-11-09", entries: [
@@ -41,7 +41,7 @@ enum WhatsNewPreview {
 
     /// The screens of the design, and what each one stands for.
     static let screens: Set<String> = [
-        "whatsnew",                // first launch after the update to build 6
+        "whatsnew",                // first launch after the update to build 7
         "whatsnew-open",           // its notes, opened from the ribbon
         "whatsnew-skipped",        // first launch after skipping builds 4 and 5
         "whatsnew-skipped-open",   // the notes of all three
@@ -54,7 +54,7 @@ enum WhatsNewPreview {
     ]
 
     /// The record a screen's launch finds, and whether the install has a
-    /// guest: a record of build 5 is the update to 6, of build 3 an update
+    /// guest: a record of build 5 is the update to 7, of build 3 an update
     /// that skipped two releases.
     private static func stored(for screen: String) -> WhatsNewRecord? {
         switch screen {
