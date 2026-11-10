@@ -334,6 +334,10 @@ it. The bridge fields used below are defined by the comments in
   fit Darwin's 104-byte `sun_path` is refused, never truncated.
 - The console's `mem` replies `total=<n> available=<n> free=<n>` in decimal
   bytes, so it answers where a policy keeps the console from `/proc/meminfo`.
+- A command that answers with what the kernel prints (`sysrq`, `stack`)
+  sends its client what the consoles write while it runs, whichever vCPU
+  writes it, and nothing after its final reply
+  (`guest-mconsole-console-clients`).
 - The management console, the UML RTC alarm, VNC input, and a vhost-user device
   whose wakeup is enabled in sysfs wake any suspend. The Darwin network
   interface wakes only a suspend the guest started itself, as a phone's wireless

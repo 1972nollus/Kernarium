@@ -118,3 +118,4 @@ patch	um-deliver-a-line-s-queued-output-before-console-text-and-at-exit.patch
 patch	drm-virtio-report-the-host-s-graphics-memory-pressure-and-holders.patch
 patch	ALSA-virtio-run-the-elapsed-period-work-on-a-real-time-worker.patch
 patch	uml-virtio_uml-kick-GPU-and-sound-devices-without-an-acknowledgement.patch
+patch	um-walk-the-mconsole-s-console-clients-under-their-lock.patch
