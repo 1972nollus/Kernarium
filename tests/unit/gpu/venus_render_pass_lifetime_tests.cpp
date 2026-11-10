@@ -9,6 +9,10 @@
 // transition_attachment. The renderer must instead mark the context lost and
 // keep running.
 //
+// The same holds for a command the device does not expose. The driver leaves
+// the entry points of a version the instance did not ask for NULL, and the
+// renderer used to call through NULL when a guest sent such a command.
+//
 // This test drives the real vkr renderer in-process against the real host
 // Vulkan driver and submits a hand-encoded Venus command stream. The guest
 // chooses every Venus object id, so no reply stream is needed. Each case runs
@@ -16,12 +20,15 @@
 //
 //  - a render pass begun with every attachment intact, through both
 //    vkCmdBeginRenderPass and vkCmdBeginRenderPass2, leaves the context live
-//    (the controls); and
+//    (the controls);
 //  - a render pass begun after the attachment's view or its image was
-//    destroyed marks the context lost and does not crash the host.
+//    destroyed marks the context lost and does not crash the host; and
+//  - vkCmdBeginRenderPass2 sent to a Vulkan 1.1 device, where it is not core
+//    and no extension enabled it, marks the context lost and does not crash
+//    the host.
 //
-// On a renderer without the defensive check the view case crashes this
-// process in the driver, which fails the test.
+// On a renderer without the defensive checks the view case and the 1.1 case
+// crash this process, which fails the test.
 
 #include "require.hpp"
 
@@ -95,7 +102,7 @@ private:
     std::vector<std::uint8_t> bytes_;
 };
 
-void encodeSetup(Stream& s)
+void encodeSetup(Stream& s, std::uint32_t apiVersion)
 {
     s.command(createInstance);
     s.ptr(true);
@@ -104,7 +111,7 @@ void encodeSetup(Stream& s)
     s.ptr(true);                    // pApplicationInfo
     s.u32(VK_STRUCTURE_TYPE_APPLICATION_INFO); s.u64(0);
     s.arraySize(0); s.u32(0); s.arraySize(0); s.u32(0);
-    s.u32(VK_API_VERSION_1_2);      // vkCmdBeginRenderPass2 is core
+    s.u32(apiVersion);
     s.u32(0); s.arraySize(0);       // layers
     s.u32(0); s.arraySize(0);       // extensions
     s.ptr(false);                   // pAllocator
@@ -297,14 +304,15 @@ void contextFatal(std::uint32_t) {}
 
 // Brings a context up through setup, records a render pass as scenario says,
 // and returns whether the context stayed live.
-[[nodiscard]] bool runContext(std::uint32_t ctxId, Scenario scenario)
+[[nodiscard]] bool runContext(
+    std::uint32_t ctxId, Scenario scenario, std::uint32_t apiVersion)
 {
     require(vkr_renderer_create_context(
                 ctxId, virtgpuDrmCapsetVenus, 4, "test"),
         "the Venus context could not be created");
 
     Stream setup;
-    encodeSetup(setup);
+    encodeSetup(setup, apiVersion);
     require(vkr_renderer_submit_cmd(ctxId, setup.bytes().data(),
                 static_cast<std::uint32_t>(setup.bytes().size())),
         "the context was lost bringing the device up; the host driver may be "
@@ -323,6 +331,9 @@ void contextFatal(std::uint32_t) {}
 struct Case {
     const char* name;
     Scenario scenario;
+    // The Vulkan version the guest's instance asks for. vkCmdBeginRenderPass2
+    // is core from 1.2.
+    std::uint32_t apiVersion;
     // Whether the context stays live. Every case that is not a control must
     // lose it.
     bool live;
@@ -334,22 +345,30 @@ constexpr Case cases[] = {
     // through either begin command and the context stays live. They also show
     // that the wire encoding of both commands is accepted, so a lost context
     // in the cases below is the check's doing.
-    {"intact", Scenario::intact, true,
+    {"intact", Scenario::intact, VK_API_VERSION_1_2, true,
         "recording a render pass with live attachments lost the context"},
-    {"intact-begin2", Scenario::intactBegin2, true,
+    {"intact-begin2", Scenario::intactBegin2, VK_API_VERSION_1_2, true,
         "recording a render pass 2 with live attachments lost the context"},
     // The regression: the attachment's view is destroyed before the render
     // pass begins. The renderer must mark the context lost rather than read
     // the freed view and crash the host.
-    {"destroyed-view", Scenario::destroyView, false,
+    {"destroyed-view", Scenario::destroyView, VK_API_VERSION_1_2, false,
         "a render pass whose attachment view was destroyed did not lose the "
         "context"},
-    {"destroyed-view-begin2", Scenario::destroyViewBegin2, false,
+    {"destroyed-view-begin2", Scenario::destroyViewBegin2, VK_API_VERSION_1_2,
+        false,
         "a render pass 2 whose attachment view was destroyed did not lose the "
         "context"},
     // The image of a live view is as much a use of freed host memory.
-    {"destroyed-image", Scenario::destroyImage, false,
+    {"destroyed-image", Scenario::destroyImage, VK_API_VERSION_1_2, false,
         "a render pass whose attachment image was destroyed did not lose the "
+        "context"},
+    // A command the device does not expose. The control shows the 1.1 device
+    // records a render pass through the command it does expose.
+    {"api-1.1-intact", Scenario::intact, VK_API_VERSION_1_1, true,
+        "recording a render pass on a Vulkan 1.1 device lost the context"},
+    {"api-1.1-begin2", Scenario::intactBegin2, VK_API_VERSION_1_1, false,
+        "vkCmdBeginRenderPass2 on a Vulkan 1.1 device did not lose the "
         "context"},
 };
 
@@ -374,7 +393,8 @@ int main(int argc, char** argv)
             continue;
         ran = true;
         std::fprintf(stderr, "render pass case: %s\n", c.name);
-        require(runContext(ctxId++, c.scenario) == c.live, c.failure);
+        require(runContext(ctxId++, c.scenario, c.apiVersion) == c.live,
+            c.failure);
     }
     require(ran, "no case has the name given");
 
