@@ -116,30 +116,42 @@ c(v, G) = min(derive_budget(G, L), cap(v))      where L is set; derive_budget(G,
 ```
 
 `cap(v)` is a table of the gadget cache's ceiling per vCPU count. The largest
-guest RAM a limit leaves, `G_max(v)`, is the largest G (in 64 MiB steps, within
-the bounds in the header) that keeps B at its floor or above. The settings of
-Kernarium and Andarium offer no more than `G_max(v)` under a set that counts
-none of A, E_rest and S (`maximum_memory_set`). The conservative size is
-`G_max(v)` under the conservative launch set, in 0.5 GiB steps within 1.5 to 4
-GiB and never above that maximum (`conservative_guest_memory_mib`); a guest with
-more is likely to be ended by the system, and Andarium says so on Home and
-beside its memory picker ([Andarium](../Andarium/README.md)). A new guest's RAM
-is the conservative size (`default_guest_memory_mib`), and on a device whose
-maximum at one vCPU is the top of the range, 4 GiB, at every vCPU count also no
-more than the largest 0.5 GiB step that leaves B at 1 GiB or more, since a 4 GiB
-guest otherwise runs the host GPU short long before it runs the process short;
-that step is never under 2 GiB, because B is at most half of G and every limit
-that offers 4 GiB at one vCPU leaves a 2 GiB guest more than 1 GiB at every
-count. A guest with more than the default but no more than the conservative size
-is likely to run out of graphics memory, and Andarium's System sheet says so
-beside its estimate of B for the chosen RAM and vCPUs (`gpu_budget`). The macOS
-launchers take the same default for a launch that states a memory limit. The
-applications' vCPU limit is the rule `application_vcpu_limit` in the same
-header: the host's physical cores, at most 8. It is the default and the maximum
-of Kernarium, Andarium and the macOS launchers (`emulator/src/options.hpp`); an
-explicit `ncpus=` on a launcher keeps the runtime's own range. Every iOS memory
-control has a macOS counterpart, so a Mac run stays an accurate ground for
-measuring the device.
+guest RAM a limit leaves, `G_max(v)`, is the largest G (in 64 MiB steps, from
+512 MiB) that keeps B at its floor or above, up to the host's ceiling, C
+(`guest_memory_ceiling_mib`): the RAM the product's native kernel window holds
+and no more than the host's own RAM. Nothing else bounds it, so the offered
+maximum is what the budget gives the device at the vCPU count. C is 9152 MiB
+on an iOS device and in the Simulator, where the window is packed into the
+signed 14 GiB envelope (`device_window_guest_memory_maximum_mib`, pinned by the
+layout tests against `runtime/native_kernel_layout.hpp`), and the host's RAM
+(at most 1 TiB, the largest limit a launch states) in a macOS window, which a
+Mac and an iOS application on a Mac use; where the host sets no limit `G_max`
+is C. The settings of Kernarium and Andarium offer no more than `G_max(v)`
+under a set that counts none of A, E_rest and S (`maximum_memory_set`). The
+conservative size is `G_max(v)` under the conservative launch set, in 0.5 GiB
+steps from 1.5 GiB and never above that maximum
+(`conservative_guest_memory_mib`); a guest with more is likely to be ended by
+the system, and Andarium says so on Home and beside its memory picker
+([Andarium](../Andarium/README.md)). A new guest's RAM is the conservative
+size held to 4 GiB (`default_guest_memory_mib`), however much the host offers,
+and on a device whose maximum at one vCPU reaches 4 GiB at every vCPU count
+also no more than the largest 0.5 GiB step that leaves B at 1 GiB or more,
+since a 4 GiB guest otherwise runs the host GPU short long before it runs the
+process short; that step is never under 2 GiB, because B is at most half of G
+and every limit that offers 4 GiB at one vCPU leaves a 2 GiB guest more than 1
+GiB at every count. A guest with more than the default but no more than the
+conservative size is likely to run out of graphics memory, and Andarium's
+System sheet says so beside its estimate of B for the chosen RAM and vCPUs
+(`gpu_budget`), from the default where the graphics rule lowered it
+(`default_guest_memory`, `holds_gpu_budget`) and otherwise, where the cap of
+4 GiB or the limit holds the default, only from the size at which B falls
+under 1 GiB. The macOS launchers take the same default for a launch that
+states a memory limit. The applications' vCPU limit is the rule
+`application_vcpu_limit` in the same header: the host's physical cores, at most
+8. It is the default and the maximum of Kernarium, Andarium and the macOS
+launchers (`emulator/src/options.hpp`); an explicit `ncpus=` on a launcher
+keeps the runtime's own range. Every iOS memory control has a macOS
+counterpart, so a Mac run stays an accurate ground for measuring the device.
 
 A kernel-range flush completes or the kernel stops: `flush_cache_vmap()` and
 `flush_cache_vunmap()` are both `flush_tlb_kernel_range()`, its result is never
@@ -174,6 +186,30 @@ packaging reject it in the macOS and iOS device slices. On macOS the owner serve
 JIT memory from a window near the host image, because generated code calls into
 it and a far buffer made x87-heavy FEXCore code about a third slower; memory
 served again may hold its old bytes.
+
+An iOS device has no `MAP_JIT` for a process that no debugger launched, so the
+owner makes executable memory there from one region that a debugger the user
+attached blesses once per process (`prepare_debugger_region`). The owner maps
+the region read-execute below 1 TiB near the image, makes a writable alias of
+it, and executes `brk #0xf00d` with `x16` 1, `x0` the address and `x1` the
+length; the debugger writes one byte into each 16 KiB page of it, and a second
+request (`x16` 0) makes it detach. The pages stay executable with no debugger,
+the owner proves them by running a stub in the first and the last granule under
+a fault guard, and wires the region through the alias. It serves allocations
+from the region in 16 KiB granules; the JIT arena writes through
+`writable_alias` and publishes the instruction cache at the executable address.
+The region is sized from the process's JIT cache budget, which is the gadget
+cache's term of the guest memory budget (executors times the arena, the tracked
+store and the single-instruction arena), so the GPU budget and the memory limit
+do not move; a process prepares it once, for the guest memory and vCPU count of
+its first run. Only the development configurations compile it
+(`UML_IOS_DEBUGGER_JIT`): the App Store runtime has no JIT engine, no owner and
+no entry, Andarium's JIT row and the loader's preparation entries are compiled
+out of its application, and `check-app-store-bundle.py` refuses the symbols,
+text and the `brk` instruction. A start that cannot have the JIT runs on
+gadgets and says why; it never fails. Andarium asks for the preparation through
+runtime API 30 (`prepare_jit`, `use_jit`), with StikDebug as the debugger and
+`tests/integration/support/ios_jit_debugger.py` as the harness's.
 
 Every product that embeds a kernel carries its ELF as a host-page-aligned
 Mach-O `__TEXT,__uml_elf` section, which the emulator runs in place: the loader

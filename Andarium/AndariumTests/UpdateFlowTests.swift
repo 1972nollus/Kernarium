@@ -57,6 +57,8 @@ final class StubDriver: RuntimeDriver {
         guard !memories.isEmpty else { return nil }
         return memories[min(memoryAsked, memories.count - 1)]
     }
+    var debuggerAttached = false
+    func jitDebuggerAttached() -> Bool { debuggerAttached }
 
     /// What the refusal-count readings answer, in turn, the last one
     /// repeating; nothing until a test scripts them.
@@ -137,6 +139,9 @@ final class StubDriver: RuntimeDriver {
     var connectedComputers = 0
     private(set) var closedComputers = 0
     func usbDebugging() async -> Bool? { debugging }
+    /// What Android's storage reads as; a test sets it as a boot would.
+    var storage: Bool? = true
+    func storageReady() async -> Bool? { storage }
     func startAdbOverNetwork() throws {
         if let startError { throw startError }
         listening = true

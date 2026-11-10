@@ -29,6 +29,18 @@ extension LaunchOverrides {
     }
 }
 
+extension JitPreference {
+    /// What a harness launch states about the JIT: "1" asks for the JIT
+    /// engine, "0" for the gadget engine, and anything else is no setting.
+    static func stated(in environment: [String: String]) -> Bool? {
+        switch environment["ANDARIUM_JIT"] {
+        case "1"?: true
+        case "0"?: false
+        default: nil
+        }
+    }
+}
+
 extension AppEntry {
     /// The file in an isolated guest instance's directory whose number, in
     /// mebibytes, stands for the device's free space while it exists, so that
