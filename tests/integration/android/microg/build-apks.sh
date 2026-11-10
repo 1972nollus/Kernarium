@@ -12,12 +12,12 @@
 # package names of what it built. Usage: build-apks.sh ANDROID_ROOT OUTPUT_DIR
 set -euo pipefail
 export LC_ALL=C
-HERE=$(cd "$(dirname "$0")" && pwd)
+HERE=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 ROOT=${1:?the Android source tree (its prebuilts are the SDK)}
 OUT=${2:?the output directory (outside the source tree)}
-ROOT=$(cd "$ROOT" && pwd)
+ROOT=$(CDPATH= cd -- "$ROOT" && pwd)
 mkdir -p "$OUT"
-OUT=$(cd "$OUT" && pwd)
+OUT=$(CDPATH= cd -- "$OUT" && pwd)
 case "$OUT/" in "$ROOT"/*) echo "the output directory must be outside the source tree" >&2; exit 2 ;; esac
 
 TOOLS=$ROOT/prebuilts/sdk/tools/linux
@@ -53,7 +53,7 @@ mkdir "$work/classes" "$work/dex"
 "$JDK/java" -cp "$D8" com.android.tools.r8.D8 --lib "$ANDROID_JAR" --min-api 24 --release --output "$work/dex" \
 	$(find "$work/classes" -name '*.class' | LC_ALL=C sort)
 "$TOOLS/bin/aapt2" link --manifest "$HERE/AndroidManifest.xml" -I "$ANDROID_JAR" -o "$work/AndariumMicrogTests.unsigned.apk"
-(cd "$work/dex" && zip -q "$work/AndariumMicrogTests.unsigned.apk" classes.dex)
+(CDPATH= cd -- "$work/dex" && zip -q "$work/AndariumMicrogTests.unsigned.apk" classes.dex)
 sign "$work/AndariumMicrogTests.unsigned.apk" "$OUT/AndariumMicrogTests.apk"
 
 # What was built: the package names and the signer (the AOSP test key's certificate).
@@ -68,4 +68,4 @@ for pair in "AndariumMicrogTests:com.android.frameworks.andariummicrog.tests" "A
 	[ "$got" = "$want" ] || { echo "$name.apk is not signed with the AOSP test key ($got, expected $want)" >&2; exit 3; }
 	echo "$name.apk: package $package, signed by the AOSP test key $want"
 done
-(cd "$OUT" && sha256sum AndariumMicrogTests.apk AndariumMicrogDecoyServices.apk AndariumMicrogDecoyStore.apk)
+(CDPATH= cd -- "$OUT" && sha256sum AndariumMicrogTests.apk AndariumMicrogDecoyServices.apk AndariumMicrogDecoyStore.apk)
