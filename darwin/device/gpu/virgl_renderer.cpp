@@ -3,6 +3,7 @@
 #include "virgl_renderer.hpp"
 
 #include "device_memory_pool.hpp"
+#include "freed_memory_watch.hpp"
 #include "host_gl_provider.hpp"
 #include "gpu_memory_figures.hpp"
 #include "host_gpu_memory.hpp"
@@ -141,9 +142,14 @@ void deviceMemoryWaited(void*, std::uint32_t, bool admitted) noexcept
     }
 }
 
+/* The guest's frees since the renderer began, for the pool's reclaim hook. */
+FreedMemoryWatch guestFrees;
+
 void deviceMemoryAccounted(
     void*, std::uint32_t contextId, std::int64_t delta) noexcept
 {
+    if (delta < 0)
+        guestFrees.noteFreed(static_cast<std::uint64_t>(-delta));
     if (const auto observer =
             memoryAccountObserver.load(std::memory_order_acquire)) {
         observer(
@@ -441,14 +447,20 @@ VirglRenderer::VirglRenderer()
              * caches, and has Metal give back the footprint of the heaps that
              * were freed. The hook reaches this renderer's provider, so it is
              * cleared before the provider goes. */
+            guestFrees.reset();
             deviceMemoryPool->setReclaim(
                 [provider = provider_.get()]() -> std::uint64_t {
                     const std::uint64_t released =
                         provider->releaseCachedMemory();
                     /* The decision that follows reads the footprint at once,
-                     * so the retire is given the moment it takes. */
+                     * so when something was freed the retire is given the
+                     * moment it takes; a refusal with nothing to give back
+                     * fails at once. */
+                    const bool freed = guestFrees.freedSinceLastCall(
+                        released, virgl_renderer_get_resident_heap_memory());
                     uml::platform::retireFreedGpuMemory(
-                        std::chrono::milliseconds {10});
+                        freed ? std::chrono::milliseconds {10}
+                              : std::chrono::milliseconds {});
                     return released;
                 });
         }

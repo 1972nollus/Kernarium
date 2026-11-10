@@ -119,6 +119,13 @@ if(TARGET uml_gpu_device_memory_pool)
         TIMEOUT 60)
 endif()
 
+# Whether the pool's reclaim hook has a free to wait for.
+if(TARGET uml_gpu_freed_memory_watch)
+    uml_add_gpu_unit_test(gpu-freed-memory-watch
+        uml_gpu_freed_memory_watch_tests freed_memory_watch_tests.cpp
+        LIBRARIES UML::GpuFreedMemoryWatch Threads::Threads)
+endif()
+
 # The graphics footprint counts host GPU memory that Metal's allocated size
 # omits.
 uml_add_gpu_unit_test(gpu-host-graphics-footprint

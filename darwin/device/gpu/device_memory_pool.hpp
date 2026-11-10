@@ -91,9 +91,9 @@ namespace uml::gpu {
  * driver releases it only when a client of that driver is refused, never for
  * another consumer's refusal. So the pool takes one reclaim hook, which frees
  * what the host drivers cache, has Metal return the graphics footprint of the
- * heaps freed, and reports how many cached allocations it freed, and calls it
- * before it refuses: a reservation that does not fit runs the hook and is
- * decided once more.
+ * heaps freed (waiting for it only when something was freed), and reports how
+ * many cached allocations it freed, and calls it before it refuses: a
+ * reservation that does not fit runs the hook and is decided once more.
  *
  * What `allocated` reports does not all follow a release at once. Metal's
  * counter drops the moment a heap is freed, and the graphics ledger beside it

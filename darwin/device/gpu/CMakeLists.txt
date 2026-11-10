@@ -42,6 +42,12 @@ add_library(uml_gpu_device_memory_pool STATIC device_memory_pool.cpp)
 add_library(UML::GpuDeviceMemoryPool ALIAS uml_gpu_device_memory_pool)
 uml_configure_gpu_component(uml_gpu_device_memory_pool)
 
+# Whether the pool's reclaim hook has a free to wait for; see
+# freed_memory_watch.hpp.
+add_library(uml_gpu_freed_memory_watch STATIC freed_memory_watch.cpp)
+add_library(UML::GpuFreedMemoryWatch ALIAS uml_gpu_freed_memory_watch)
+uml_configure_gpu_component(uml_gpu_freed_memory_watch)
+
 # What the guest's contexts hold of the host GPU's memory, by process; see
 # context_memory_ledger.hpp. The display keeps one for the device and the
 # service.
@@ -76,6 +82,7 @@ target_compile_definitions(uml_gpu_renderer PRIVATE
     VIRGL_RENDERER_UNSTABLE_APIS)
 target_link_libraries(uml_gpu_renderer PRIVATE
     UML::GpuDeviceMemoryPool
+    UML::GpuFreedMemoryWatch
     UML::ThirdPartyVirglrenderer
     UML::HostGpuMemory)
 target_link_libraries(uml_gpu_renderer PRIVATE

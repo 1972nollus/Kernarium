@@ -287,12 +287,13 @@ unused for a while, and is decided again. Memory the host frees leaves Metal's
 counter at once but the ledger only later, within milliseconds or at its next
 sweep. A freed heap that was made resident stays in the ledger until the process
 next asks Metal to make an allocation resident. The reclaim makes that request
-for a small buffer of its own and waits up to 10 ms for the ledger to fall, and
-the release after a guest context is destroyed makes it without waiting
-(`retireFreedGpuMemory`). The pool sees the release in Metal's counter, and when
-the request would fit once the ledger had caught up with it, waits for the
-ledger (re-reading it every millisecond, for 300 ms at most) rather than
-refuse. A request that
+for a small buffer of its own and, when memory was freed since its last run,
+waits up to 10 ms for the ledger to fall, so a refusal with nothing to give back
+fails at once; the release after a guest context is destroyed makes the request
+without waiting (`retireFreedGpuMemory`, `freed_memory_watch.hpp`). The pool
+sees the release in Metal's counter, and when the request would fit once the
+ledger had caught up with it, waits for the ledger (re-reading it every
+millisecond, for 300 ms at most) rather than refuse. A request that
 follows no release, or would not fit even then, is refused at once, and a wait
 that reached its bound is not repeated until Metal's counter falls again.
 
