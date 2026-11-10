@@ -228,7 +228,9 @@ declared, and the driver bounds a transform feedback store by the buffer range
 bound for it. Nor can a guest make the host read freed memory: a render pass
 begun on a framebuffer whose attachment view, or the view's image, the guest
 has destroyed marks the context lost before the command reaches the driver
-(`gpu-venus-render-pass-lifetime`).
+(`gpu-venus-render-pass-lifetime`). Nor can it make the host call a driver
+entry point that is not there: a command the device's version and enabled
+extensions do not expose marks the context lost (same test).
 
 ### Host-visible memory is bounded by the blob aperture
 
