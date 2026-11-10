@@ -6,22 +6,18 @@
 blessing byte through a function it is given, so the decisions run here with
 a fake memory: one byte per 16 KiB page of a region the process mapped, a
 refusal for anything else, and a detach on command. The host side's parts
-that need no device are checked too: the pid of the launch a debugger attaches
-to (the one ``devicectl`` reports for it, never one found in a listing), the
-lldb command line, and how the Android runner records a run's JIT.
+that need no device are checked too: which listed process is the launch a
+debugger attaches to (never an older instance still listed), the lldb command
+line, and how the Android runner records a run's JIT.
 """
 
 from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
-import json
 import pathlib
-import re
-import subprocess
 import sys
 import tempfile
-import threading
 import unittest
 from unittest import mock
 
@@ -30,7 +26,6 @@ sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 sys.path.insert(0, str(REPOSITORY / "tests" / "perf"))
 sys.path.insert(0, str(REPOSITORY / "tools"))
 import andarium  # noqa: E402
-import ios_device  # noqa: E402
 import ios_jit_debugger as debugger  # noqa: E402
 import run_ios_device_android as runner  # noqa: E402
 
@@ -114,85 +109,74 @@ class ServiceTests(unittest.TestCase):
 
 
 class HostSideTests(unittest.TestCase):
-    """The launch names the process the debugger attaches to. The device's
+    """The debugger attaches to the process of its own launch. The device's
     list of processes can still hold an older instance of the application, and
-    attaching to that one would leave the new process stopped for ever."""
+    attaching to that one leaves the new process stopped for ever; devicectl
+    writes no report of the launch while it holds the console."""
 
-    REPORT = {"result": {"launchOptions": {"startStopped": True}, "process": {
-        "executable": "file:///private/var/containers/Bundle/Application/X/Andarium.app/Andarium",
-        "processIdentifier": 2345}}}
+    LISTING = {"result": {"runningProcesses": [
+        {"executable": "file:///usr/libexec/other", "processIdentifier": 90},
+        {"executable": "file:///private/var/containers/Bundle/Application/X/Andarium.app/Andarium",
+         "processIdentifier": 1234},
+        {"executable": "file:///private/var/containers/Bundle/Application/Y/Andarium.app/Andarium",
+         "processIdentifier": 2345},
+        {"executable": "file:///private/var/containers/Bundle/Application/Z/AndariumPreview.app/AndariumPreview",
+         "processIdentifier": 3456},
+    ]}}
 
-    def test_the_pid_is_the_one_the_launch_reports(self) -> None:
-        self.assertEqual(ios_device.launched_pid(self.REPORT), 2345)
+    def test_every_pid_of_the_application_is_found(self) -> None:
+        self.assertEqual(debugger.find_pids(self.LISTING, "Andarium"), {1234, 2345})
+        self.assertEqual(debugger.find_pids(self.LISTING, "Absent"), set())
+        self.assertEqual(debugger.find_pids({}, "Andarium"), set())
 
-    def test_a_report_that_names_no_process_names_no_pid(self) -> None:
-        for report in ({}, [], None, {"result": {}}, {"result": {"process": {}}},
-                       {"result": {"process": {"processIdentifier": "1"}}},
-                       {"result": {"process": {"processIdentifier": True}}}):
-            with self.subTest(report=report):
-                self.assertIsNone(ios_device.launched_pid(report))
+    @staticmethod
+    def listings(*pid_sets: set[int]):
+        """``application_pids`` answering one set per call, the last one for
+        every call after."""
+        calls = iter(pid_sets)
+        last: list[set[int]] = [set()]
 
-    def test_the_wait_returns_the_pid_once_the_report_is_written(self) -> None:
-        with tempfile.TemporaryDirectory() as name:
-            report = pathlib.Path(name) / "launch.json"
-            launch = subprocess.Popen(["sleep", "30"])
-            try:
-                # A report half written is not a report yet.
-                report.write_text('{"result": {"pro', encoding="utf-8")
-                writer = threading.Timer(
-                    0.6, lambda: report.write_text(json.dumps(self.REPORT), encoding="utf-8"))
-                writer.start()
-                self.assertEqual(ios_device.wait_for_launched_pid(report, launch, 20), 2345)
-                writer.join()
-            finally:
-                launch.kill()
-                launch.wait()
+        def answer(_device: str, _name: str) -> set[int]:
+            last[0] = next(calls, last[0])
+            return last[0]
 
-    def test_the_wait_gives_up_when_devicectl_ended_without_a_report(self) -> None:
-        with tempfile.TemporaryDirectory() as name:
-            launch = subprocess.Popen(["true"])
-            launch.wait()
-            with self.assertRaises(ios_device.DeviceError):
-                ios_device.wait_for_launched_pid(pathlib.Path(name) / "none.json", launch, 20)
+        return mock.patch.object(debugger, "application_pids", side_effect=answer)
 
-    def test_the_wait_is_bounded(self) -> None:
-        with tempfile.TemporaryDirectory() as name:
-            launch = subprocess.Popen(["sleep", "30"])
-            try:
-                with self.assertRaises(ios_device.DeviceError):
-                    ios_device.wait_for_launched_pid(pathlib.Path(name) / "none.json", launch, 1)
-            finally:
-                launch.kill()
-                launch.wait()
+    def test_the_launch_s_process_is_the_one_not_listed_before_it(self) -> None:
+        # The older instance (1234) is still listed after the launch, and
+        # is the larger of the two pids this time.
+        with self.listings({1234, 9000}, {1234, 9000}, {1234, 9000, 8000}), \
+                mock.patch.object(debugger.time, "sleep"):
+            self.assertEqual(debugger.launched_pid("device", "Andarium", {1234, 9000}, 30), 8000)
 
-    def test_the_launch_is_stopped_and_writes_the_report_the_pid_is_read_from(self) -> None:
-        command = debugger.launch_command("device", "com.example.app", pathlib.Path("/work/launch.json"))
+    def test_an_older_instance_alone_is_not_the_launch(self) -> None:
+        clock = iter(range(0, 1000, 5))
+        with self.listings({1234}), \
+                mock.patch.object(debugger.time, "sleep"), \
+                mock.patch.object(debugger.time, "monotonic", side_effect=lambda: next(clock)):
+            with self.assertRaises(debugger.DebuggerError):
+                debugger.launched_pid("device", "Andarium", {1234}, 20)
+
+    def test_a_failed_listing_is_tried_again_until_the_bound(self) -> None:
+        clock = iter(range(0, 1000, 5))
+        failing = mock.patch.object(
+            debugger, "application_pids",
+            side_effect=[debugger.DebuggerError("no list"), {7}])
+        with failing, mock.patch.object(debugger.time, "sleep"), \
+                mock.patch.object(debugger.time, "monotonic", side_effect=lambda: next(clock)):
+            self.assertEqual(debugger.launched_pid("device", "Andarium", set(), 60), 7)
+
+    def test_a_listing_the_device_does_not_give_is_an_error_not_an_empty_baseline(self) -> None:
+        with mock.patch.object(debugger.subprocess, "run"):
+            with self.assertRaises(debugger.DebuggerError):
+                debugger.application_pids("device", "Andarium")
+
+    def test_the_launch_is_stopped_and_holds_the_console(self) -> None:
+        command = debugger.launch_command("device", "com.example.app")
         self.assertEqual(command[:4], ["xcrun", "devicectl", "device", "process"])
         for flag in ("--start-stopped", "--console", "--terminate-existing"):
             self.assertIn(flag, command)
-        self.assertEqual(command[command.index("--json-output") + 1], "/work/launch.json")
         self.assertEqual(command[-1], "com.example.app")
-
-    def test_the_runner_s_console_does_the_same_and_clears_an_old_report(self) -> None:
-        application = ios_device.Application(
-            bundle_id="com.example.app", setting_prefixes=(), runtime_result=re.compile("x"))
-        with tempfile.TemporaryDirectory() as name:
-            log = pathlib.Path(name) / "console.log"
-            stopped = ios_device.Console("device", application, {}, log, start_stopped=True)
-            self.assertIn("--start-stopped", stopped._command)
-            self.assertEqual(
-                stopped._command[stopped._command.index("--json-output") + 1], str(stopped.report))
-            plain = ios_device.Console("device", application, {}, log)
-            self.assertNotIn("--start-stopped", plain._command)
-            self.assertNotIn("--json-output", plain._command)
-            # The report of an earlier launch is gone before the next one.
-            stopped.report.write_text(json.dumps(self.REPORT), encoding="utf-8")
-            with mock.patch.object(ios_device.subprocess, "Popen") as popen:
-                popen.return_value.poll.return_value = None
-                with stopped:
-                    self.assertFalse(stopped.report.exists())
-                    self.assertIs(popen.call_args.kwargs["stdin"], subprocess.DEVNULL)
-            self.assertFalse(stopped.report.exists())
 
     def test_lldb_attaches_to_the_pid_and_serves_with_a_log_and_a_bound(self) -> None:
         command = debugger.attach_command(
@@ -205,12 +189,11 @@ class HostSideTests(unittest.TestCase):
         self.assertIn("jit_serve --log /work/serve.log --timeout 900", script)
 
     def test_serving_starts_lldb_on_the_given_pid_without_listing_processes(self) -> None:
-        with mock.patch.object(debugger.subprocess, "Popen") as popen:
+        with mock.patch.object(debugger.subprocess, "Popen") as popen, \
+                mock.patch.object(debugger.subprocess, "run") as run:
             debugger.start_serving("device", 4242, pathlib.Path("/work/serve.log"), serve_timeout=60)
-        command = popen.call_args.args[0]
-        self.assertIn("device process attach -p 4242", " ".join(command))
-        self.assertFalse(hasattr(debugger, "wait_for_pid"))
-        self.assertFalse(hasattr(debugger, "find_pid"))
+        self.assertIn("device process attach -p 4242", " ".join(popen.call_args.args[0]))
+        run.assert_not_called()
 
 
 class RunnerTests(unittest.TestCase):

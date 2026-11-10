@@ -654,18 +654,22 @@ class Run:
         started = time.monotonic()
         debugger: subprocess.Popen[bytes] | None = None
         try:
+            # What the device lists before the launch is not the launch's
+            # process.
+            before = (
+                ios_jit_debugger.application_pids(options.device, "Andarium")
+                if self.serves_jit else set())
             with ios_device.Console(
                 options.device, andarium.APPLICATION, self.settings, log,
                 start_stopped=self.serves_jit,
             ) as console:
                 try:
                     if self.serves_jit:
-                        # The process this launch made, not one the device
-                        # lists: an older instance may still be on its way
-                        # out.
                         debugger = ios_jit_debugger.start_serving(
                             options.device,
-                            console.launched_pid(ios_jit_debugger.PID_TIMEOUT),
+                            ios_jit_debugger.launched_pid(
+                                options.device, "Andarium", before,
+                                ios_jit_debugger.PID_TIMEOUT),
                             self.artifact / "jit-debugger.log",
                             output=self.artifact / "lldb.log")
                     with Iproxy(self.iproxy_program, options.device,
@@ -675,6 +679,8 @@ class Run:
                 except (ios_device.DeviceError, ios_jit_debugger.DebuggerError,
                         subprocess.SubprocessError, OSError) as error:
                     self.problems.append(str(error))
+        except ios_jit_debugger.DebuggerError as error:
+            self.problems.append(str(error))
         finally:
             self.summary["seconds"] = round(time.monotonic() - started, 1)
             if debugger is not None and debugger.poll() is None:
