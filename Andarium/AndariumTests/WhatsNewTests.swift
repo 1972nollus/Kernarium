@@ -27,7 +27,8 @@ struct WhatsNewTests {
     private func model(on host: HostDevice) -> AppModel {
         AppModel(
             guest: Guest.fresh(on: host), host: host,
-            system: SystemInfo(version: "17", release: "test", kernel: "Linux", architecture: "arm64", appVersion: "1.0 (6)"),
+            system: SystemInfo(
+                version: "17", release: "test", kernel: "Linux", architecture: "arm64", appVersion: "1.0 (6)"),
             capabilities: .device, createRequirementBytes: 1)
     }
 
@@ -187,9 +188,15 @@ struct WhatsNewTests {
         #expect(!announces(["XCTestConfigurationFilePath": "/tmp/x"]))
     }
 
+    /// The process's own model is the real `makeModel`'s: Info lists the notes
+    /// and the test run's launch announces none. (A test does not build a
+    /// model of its own here: a `LiveRuntime` that is released takes Core
+    /// Motion's device down with it, which crashes a Mac.)
     @Test func theTestRunsOwnLaunchIsAHarnessLaunch() {
         #expect(!AppEntry.fromArguments().announcesWhatsNew)
-        #expect(!AndariumProcess.shared.model.whatsNew.showsRibbon)
+        let model = AndariumProcess.shared.model
+        #expect(!model.whatsNew.showsRibbon)
+        #expect(model.whatsNew.releases.map(\.build) == [6])
     }
     #endif
 }
