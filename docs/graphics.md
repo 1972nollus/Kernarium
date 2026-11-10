@@ -225,7 +225,10 @@ only a resource's attached backing reaches guest RAM, a control-queue reply is
 never written past the descriptors the guest supplied (a command whose reply
 does not fit does not run), a Venus reply stream ends at the window the guest
 declared, and the driver bounds a transform feedback store by the buffer range
-bound for it.
+bound for it. Nor can a guest make the host read freed memory: a render pass
+begun on a framebuffer whose attachment view, or the view's image, the guest
+has destroyed marks the context lost before the command reaches the driver
+(`gpu-venus-render-pass-lifetime`).
 
 ### Host-visible memory is bounded by the blob aperture
 
