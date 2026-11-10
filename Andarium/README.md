@@ -3,11 +3,9 @@
 Andarium is the iOS application that runs one Android (LineageOS 24, Android
 17) guest on the Darwin runtime. Android ships inside the app; what the user
 creates, sizes and erases is the guest. [Kernarium](../Kernarium/README.md)
-stays the developer application for Linux guests and for Android bundles. In
-its development configurations Andarium also runs on an Apple silicon Mac in
-Designed for iPad mode (Xcode offers no Mac destination for the App Store
-configuration), and it builds for the iOS Simulator, where the guest renders
-on the CPU for UI tests
+stays the developer application for Linux guests and for Android bundles.
+Andarium also runs on an Apple silicon Mac in Designed for iPad mode, and it
+builds for the iOS Simulator, where the guest renders on the CPU for UI tests
 ([`graphics.md`](../docs/graphics.md#ios-simulator-software-renderer)).
 
 ## Ownership
@@ -37,15 +35,14 @@ no team.
 
 ## Targets
 
-`Andarium` is the device application (iPhone and iPad, and in Debug and
-Release an Apple silicon Mac in Designed for iPad mode). It embeds the Android
-runtime frameworks and carries the system image. It has no background mode:
-the guest runs while Andarium is in the foreground and is paused when it
-leaves. It runs one scene and one guest per process, and needs the increased
-memory limit and extended virtual addressing entitlements
-(`Config/Andarium.entitlements`). The model and the runtime belong to the
-process (`AndariumProcess`), so a scene that connects again shows the same
-ones.
+`Andarium` is the device application (iPhone and iPad, and an Apple silicon
+Mac in Designed for iPad mode). It embeds the Android runtime frameworks and
+carries the system image. It has no background mode: the guest runs while
+Andarium is in the foreground and is paused when it leaves. It runs one scene
+and one guest per process, and needs the increased memory limit and extended
+virtual addressing entitlements (`Config/Andarium.entitlements`). The model
+and the runtime belong to the process (`AndariumProcess`), so a scene that
+connects again shows the same ones.
 
 `AndariumPreview` is a Simulator-only target built from `Shared` and `Preview`
 with mock data. It embeds no runtime and boots nothing. Its launch arguments
@@ -63,11 +60,11 @@ The guest is drawn with Metal 4, which the A14 and later chips have. No
 capability key names the chip, so `UIRequiredDeviceCapabilities` names `metal`
 and the application asks the GPU for the Metal 4 family at launch
 (`HostDevice.runsGuestGraphics`), refusing to start a guest without it; the
-Simulator draws on the CPU and always passes. iPhone and iPad are supported;
-the AppStore configuration sets `SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD` to NO,
-which only removes Xcode's Mac destination: whether the App Store and
-TestFlight offer the uploaded build to Apple silicon Macs is the app's
-availability in App Store Connect.
+Simulator draws on the CPU and always passes. iPhone and iPad are supported,
+and so is an Apple silicon Mac in Designed for iPad mode: TestFlight and the
+App Store offer the application to Macs, and every configuration sets
+`SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD` to YES, which gives Xcode its Mac
+destination and adds nothing to the built application.
 `ITSAppUsesNonExemptEncryption` is NO in `Config/Info.plist`.
 
 The iPhone interface is portrait-only. On iPad, a guest session whose scene
@@ -141,7 +138,8 @@ everything that exists for automation or only pretends:
   no debugging or automation support (the `kernarium-ios-device-android-app-store`
   preset, packaged with `package-ios-frameworks.sh --app-store --runtimes
   android`; [`Kernarium/README.md`](../Kernarium/README.md#automation-runs)).
-- Xcode offers no Mac destination for it, and its Archive action uses it.
+- Its Archive action uses it, and the archive is the build TestFlight and the
+  App Store offer to Macs.
 - It refuses an embedded artifact that is behind the archived commit: a build
   phase runs [`scripts/check-embedded-artifacts.py`](../scripts/check-embedded-artifacts.py),
   which compares the accepted Android release and kernel descriptors with the

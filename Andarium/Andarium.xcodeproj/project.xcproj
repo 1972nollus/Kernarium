@@ -149,7 +149,7 @@
         "PRODUCT_NAME": "$(TARGET_NAME)",
         "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator",
         "SUPPORTS_MACCATALYST": "NO",
-        "SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD[config=AppStore]": "NO",
+        "SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD[config=AppStore]": "YES",
         "SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD[config=Debug]": "YES",
         "SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD[config=Release]": "YES",
         "SWIFT_APPROACHABLE_CONCURRENCY": "YES",
