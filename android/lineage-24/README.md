@@ -77,6 +77,13 @@ UML implementation. `Build.SOC_MANUFACTURER` and `SOC_MODEL` are `Kernarium` and
   restriction, Google or microG. Applications that need absent hardware or
   LineageOS cloud services are excluded by name in the product makefile, and the
   build and the verifier assert that list.
+- **Signature spoofing.** The image ships no Google or microG software, and
+  no guest or iOS interface names Google's services. LineageOS's restricted
+  spoofing is on in the `user` build as well as in debuggable ones (route
+  `p0007`): only `com.google.android.gms` and `com.android.vending`, signed with
+  microG's own key and carrying Google's certificate as their `fake-signature`
+  meta-data, present that certificate, and nothing else does. It has no
+  setting, permission or API.
 - **Settings.** Settings is the stock application apart from route `p0009`,
   which removes the pages for hardware the product lacks (the Connected devices
   entry, the Bluetooth developer option, the media output switcher, and the
