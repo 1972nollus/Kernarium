@@ -73,8 +73,9 @@ it. The bridge fields used below are defined by the comments in
 - A carrier reports each host signal it takes, with its pc and, for a fault,
   its address and ESR, except a fault a nofault accessor recovers
   (`guest-kernel-nofault`). A host thread that carries no vCPU takes the host's
-  default action for SIGSEGV and SIGBUS, and SIGALRM never runs a guest tick
-  there; embedders should keep SIGALRM blocked on their own threads.
+  default action for SIGSEGV, SIGBUS, SIGTRAP, SIGILL and SIGFPE, and SIGALRM
+  never runs a guest tick there (`guest-run-end-stop`); embedders should keep
+  SIGALRM blocked on their own threads.
 - An embedded run returns to its host only once no kernel thread can execute
   the image: the run end joins every carrier and stops the RTC alarm helper
   itself, since a host stop skips Linux exitcalls. A public stop reaches every
@@ -110,6 +111,10 @@ it. The bridge fields used below are defined by the comments in
 - A string copied from user memory is copied a page at a time and, as with
   `strncpy_from_user()`, leaves the destination past the terminator as it was.
   `guest-user-strings` checks it.
+- A system call's access to user memory reaches only guest RAM. One that names
+  a mapping of other memory, such as a host-visible Virtio-GPU blob in the
+  shared-memory aperture, fails with `EFAULT`; the process still reads and
+  writes the mapping itself (`guest-virtgpu-blob-uaccess`).
 
 ## arm64 task interface
 
@@ -334,6 +339,10 @@ it. The bridge fields used below are defined by the comments in
   fit Darwin's 104-byte `sun_path` is refused, never truncated.
 - The console's `mem` replies `total=<n> available=<n> free=<n>` in decimal
   bytes, so it answers where a policy keeps the console from `/proc/meminfo`.
+- A command that answers with what the kernel prints (`sysrq`, `stack`)
+  sends its client what the consoles write while it runs, whichever vCPU
+  writes it, and nothing after its final reply
+  (`guest-mconsole-console-clients`).
 - The management console, the UML RTC alarm, VNC input, and a vhost-user device
   whose wakeup is enabled in sysfs wake any suspend. The Darwin network
   interface wakes only a suspend the guest started itself, as a phone's wireless
