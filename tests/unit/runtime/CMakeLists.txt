@@ -52,6 +52,19 @@ uml_add_unit_test(
     NAME runtime-session-record
     COMMAND uml_runtime_session_record_tests)
 
+# The refusal to resume on a disk that changed: it ends the process, and the
+# session record says why.
+add_executable(uml_runtime_guest_resume_refusal_tests
+    guest_resume_refusal_tests.cpp)
+target_link_libraries(uml_runtime_guest_resume_refusal_tests PRIVATE
+    UML::GuestFiles
+    UML::RuntimeGuestStatistics
+    UML::RuntimeGuestSync
+    UML::RuntimeSessionRecord)
+uml_add_unit_test(
+    NAME runtime-guest-resume-refusal
+    COMMAND uml_runtime_guest_resume_refusal_tests)
+
 # The kernel a shared library links into itself is found through the library
 # that holds the lookup, not through the executable that loads it.
 add_library(uml_runtime_embedded_kernel_probe SHARED
