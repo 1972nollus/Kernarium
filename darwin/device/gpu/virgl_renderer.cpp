@@ -95,6 +95,9 @@ std::atomic<void*> memoryAccountObserverData;
 std::atomic<VirglRenderer::MemoryWaitObserver> memoryWaitObserver;
 std::atomic<VirglRenderer::MemoryWaitedObserver> memoryWaitedObserver;
 std::atomic<void*> memoryWaitObserverData;
+// What the guest has freed, for the pool's reclaim hook; the account callback
+// below feeds it.
+FreedMemoryWatch guestFrees;
 // Guards the pool's address for the readers of its figures: a statistics read
 // from any thread must not meet a renderer that is going.
 std::mutex deviceMemoryReadMutex;
@@ -141,9 +144,6 @@ void deviceMemoryWaited(void*, std::uint32_t, bool admitted) noexcept
             memoryWaitObserverData.load(std::memory_order_relaxed), admitted);
     }
 }
-
-/* The guest's frees since the renderer began, for the pool's reclaim hook. */
-FreedMemoryWatch guestFrees;
 
 void deviceMemoryAccounted(
     void*, std::uint32_t contextId, std::int64_t delta) noexcept
