@@ -438,11 +438,18 @@ VirglRenderer::VirglRenderer()
         }
         if (deviceMemoryPool) {
             /* A refused reservation first frees what the host GL driver
-             * caches. The hook reaches this renderer's provider, so it is
+             * caches, and has Metal give back the footprint of the heaps that
+             * were freed. The hook reaches this renderer's provider, so it is
              * cleared before the provider goes. */
             deviceMemoryPool->setReclaim(
                 [provider = provider_.get()]() -> std::uint64_t {
-                    return provider->releaseCachedMemory();
+                    const std::uint64_t released =
+                        provider->releaseCachedMemory();
+                    /* The decision that follows reads the footprint at once,
+                     * so the retire is given the moment it takes. */
+                    uml::platform::retireFreedGpuMemory(
+                        std::chrono::milliseconds {10});
+                    return released;
                 });
         }
 #ifndef UML_APP_STORE_RUNTIME
@@ -1306,9 +1313,12 @@ void VirglRenderer::trimIdleContexts() noexcept
         }
         // The contexts have released what a destroyed context's resources
         // held; the driver's caches keep it until they are asked, and no
-        // guest that is not allocating asks.
-        if (idleContexts_.takeRelease(now))
+        // guest that is not allocating asks. The footprint of the heaps the
+        // release freed stays until Metal is asked to retire it.
+        if (idleContexts_.takeRelease(now)) {
             (void)provider_->releaseCachedMemory();
+            uml::platform::retireFreedGpuMemory();
+        }
     } catch (...) {
         // Never carry a C++ exception through the C renderer API.
     }
