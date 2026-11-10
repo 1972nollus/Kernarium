@@ -76,10 +76,9 @@ struct SessionSettingsSheet: View {
             }
             Button("Keep Going", role: .cancel) {}
         }
-        // A browser wants the room. It stays half height while USB debugging
-        // is off, so the guest's own Settings can be reached behind it.
+        // A browser wants the room.
         .onChange(of: model.fileBrowser?.browsing) { _, browsing in
-            if browsing == true, model.adbOverNetworkAvailable { detent = .large }
+            if browsing == true { detent = .large }
         }
         .task { await model.watchSettings() }
         .onDisappear { model.fileBrowser?.sheetClosed() }

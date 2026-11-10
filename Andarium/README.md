@@ -364,17 +364,20 @@ is on. `AndariumCore/Adb` speaks the protocol.
   shared as Android made it.
 - **File browser** in Settings browses the guest's internal storage
   (`/storage/emulated/0/`, the guest Files app's root) and imports and exports
-  files over the same channel, in a normal session and while USB debugging is
-  on (`Live/LiveGuestFiles.swift`, `AdbSync`, `GuestFiles`). One transfer runs
+  files over the same channel, in a normal session and whatever the guest's USB
+  debugging setting is, since adbd serves the application's key either way
+  (`Live/LiveGuestFiles.swift`, `AdbSync`, `GuestFiles`). One transfer runs
   at a time; Install APK and Create bug report wait for it. An import is
   written to a hidden `.andarium-*.part` name beside its destination and moved
   into place, so a stopped or failed one leaves nothing and a Replace keeps the
   original until the new file is whole; the guest's media index is then told.
   A transfer stops when the application leaves the foreground, and its files
-  say so. Android reports its boot done before internal storage is mounted, so
-  the browser is unavailable, as it is with USB debugging off, until a check in
-  the guest finds the storage mounted, writable and holding a standard folder
-  (`InternalStorage`); nothing is imported or exported before then.
+  say so. Turning USB debugging off restarts adbd, which ends a transfer in
+  flight: it fails, and Try Again runs it whole. Android reports its boot done
+  before internal storage is mounted, so the browser is unavailable until a
+  check in the guest finds the storage mounted, writable and holding a
+  standard folder (`InternalStorage`); nothing is imported or exported before
+  then.
 - **ADB over network** is off at every run and never persisted, and is
   available only while the guest's USB debugging is on. `AdbNetworkBridge`
   listens on TCP 5555 and relays each computer to a fresh vsock stream, serving

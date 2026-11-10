@@ -6,7 +6,8 @@ import Testing
 
 /// The file browser waits for Android's storage: Android reports its boot
 /// done before `/storage/emulated/0` is mounted, and until then an empty root
-/// and a refused write would be false.
+/// and a refused write would be false. It waits for nothing else, and the
+/// guest's USB debugging setting is not its business.
 @MainActor
 struct FilesAvailabilityTests {
     private let host = HostDevice(
@@ -36,7 +37,6 @@ struct FilesAvailabilityTests {
 
     @Test func theBrowserWaitsUntilAndroidSaysItsStorageIsUp() async {
         let (model, driver, _) = await running()
-        model.session.usbDebugging = true
         // Not read yet, and read as starting: not available.
         #expect(!model.filesAvailable)
         driver.storage = false
@@ -52,17 +52,45 @@ struct FilesAvailabilityTests {
         #expect(model.session.storageReady == true && model.filesAvailable)
     }
 
-    @Test func usbDebuggingOffStillComesFirst() async {
+    @Test func usbDebuggingIsNotTheBrowsersBusiness() async {
         let (model, driver, _) = await running()
         driver.storage = true
         await model.refreshStorage()
+        for setting in [nil, false, true] as [Bool?] {
+            model.session.usbDebugging = setting
+            #expect(model.filesAvailable, "USB debugging \(String(describing: setting))")
+        }
+        // ADB over network keeps its gate: it exposes adb to other computers.
         model.session.usbDebugging = false
-        #expect(!model.filesAvailable)
+        #expect(!model.adbOverNetworkAvailable)
+        model.session.usbDebugging = true
+        #expect(model.adbOverNetworkAvailable)
+    }
+
+    @Test func theStorageReadingNeitherWaitsForUsbDebuggingNorNeedsItOn() async throws {
+        let (model, driver, _) = await running()
+        driver.debugging = false
+        driver.holdsUsbDebuggingReads = true
+        driver.storage = true
+        let watcher = Task { await model.watchSettings() }
+        defer { watcher.cancel() }
+        let deadline = ContinuousClock.now + .seconds(10)
+        while !model.filesAvailable, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        // The setting's reading is still waiting for an answer.
+        #expect(model.session.usbDebugging == nil)
+        #expect(model.session.storageReady == true && model.filesAvailable)
+        driver.holdsUsbDebuggingReads = false
+        while model.session.usbDebugging == nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        // Read as off, and the browser is available all the same.
+        #expect(model.session.usbDebugging == false && model.filesAvailable)
     }
 
     @Test func onceUpStorageIsNotAskedAgainAndTheRunEndingForgetsIt() async {
         let (model, driver, _) = await running()
-        model.session.usbDebugging = true
         driver.storage = true
         await model.refreshStorage()
         driver.storage = false
@@ -74,7 +102,6 @@ struct FilesAvailabilityTests {
 
     @Test func nothingIsImportedOrExportedWhileItIsStarting() async throws {
         let (model, driver, browser) = await running()
-        model.session.usbDebugging = true
         driver.storage = false
         await model.refreshStorage()
         let file = GuestFile(path: GuestPath.child("a.txt", of: download), isFolder: false, size: 1, modified: .now)

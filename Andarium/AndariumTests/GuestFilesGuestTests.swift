@@ -308,23 +308,90 @@ struct GuestFilesGuestTests {
             #expect(try Bench.sha256(of: try #require(transfer.staged.first)) == pulledHash)
             browser.closeTransfer()
 
-            // MARK: USB debugging off
-            // The channel is the application's own and works either way; the
-            // browser follows the setting the person sees in Settings.
-            _ = try? await operations.shell("settings put global adb_enabled 0; settings put global adb_wifi_enabled 0")
-            try await waitUntil("USB debugging reads as off", seconds: 90) {
-                await model.refreshUsbDebugging()
-                return model.session.usbDebugging == false
+            // MARK: USB debugging
+            // The channel is the application's own and works either way, so the
+            // browser does not follow the setting: it lists, imports and exports
+            // with USB debugging off, and ADB over network alone still needs it.
+            // Turning it off restarts adbd; turning it on does not.
+            func setUsbDebugging(_ on: Bool) async throws {
+                _ = try? await operations.shell(
+                    "settings put global adb_enabled \(on ? 1 : 0); settings put global adb_wifi_enabled 0", limit: .seconds(30))
+                try await waitUntil("USB debugging reads as \(on ? "on" : "off")", seconds: 90) {
+                    await model.refreshUsbDebugging()
+                    return model.session.usbDebugging == on
+                }
             }
-            #expect(!model.adbOverNetworkAvailable, "the browser is unavailable with USB debugging off")
-            _ = try? await operations.shell("settings put global adb_enabled 1")
-            try await waitUntil("USB debugging reads as on", seconds: 90) {
-                await model.refreshUsbDebugging()
-                return model.session.usbDebugging == true
+            func adbdPid() async -> String {
+                ((try? await guest.run("pidof adbd", seconds: 30).text) ?? "?").trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            #expect(model.adbOverNetworkAvailable)
+            try await setUsbDebugging(true)
+            #expect(model.filesAvailable && model.adbOverNetworkAvailable)
+
+            // Turning it off restarts adbd under an import in flight. The import
+            // fails in the words of AdbFailure and Try Again carries it out.
+            let flight = try bench.pick("flight.bin", bytes: 700 * Int(mib), seed: 62, modified: .now)
             await browser.load(work)
-            #expect(browser.entries(in: work).contains { $0.name == "blob.bin" })
+            browser.received([flight])
+            transfer = try #require(browser.transfer)
+            try await waitUntil("the import has moved 32 MiB", seconds: 120) { transfer.items[0].moved >= 32 * mib || !transfer.running }
+            #expect(transfer.running, "the import ran for long enough to be caught: \(transfer.detail)")
+            let adbdBefore = await adbdPid()
+            try await setUsbDebugging(false)
+            try await waitUntil("the import ends", seconds: 300) { !transfer.running }
+            note("turning USB debugging off: adbd \(adbdBefore) -> \(await adbdPid())")
+            if case let .failed(reason) = transfer.items[0].state {
+                note("the import under the restart failed: \(reason)")
+                #expect(reason.contains("debugging service restarted"), "the failure is told in AdbFailure's words: \(reason)")
+                var attempts = 0
+                while transfer.stage != .finished, attempts < 6 {
+                    attempts += 1
+                    browser.retryFailed()
+                    try await settle(transfer, seconds: 300)
+                    if transfer.stage != .finished { try await Task.sleep(for: .seconds(5)) }
+                }
+                note("Try Again took \(attempts) attempt(s)")
+            } else {
+                note("the import was not interrupted by the restart")
+            }
+            #expect(transfer.stage == .finished, "\(transfer.title) \(transfer.detail)")
+            #expect(try await guest.sha256(GuestPath.child(flight.name, of: work)) == bench.sha256(flight), "the import is whole")
+            await guest.expectNoPartials(work, "after the restart")
+            browser.closeTransfer()
+
+            // With USB debugging off, still: list, import and export.
+            #expect(model.filesAvailable, "the browser is available with USB debugging off")
+            #expect(!model.adbOverNetworkAvailable, "ADB over network still needs USB debugging")
+            await browser.load(work)
+            let offFolder = browser.entries(in: work)
+            #expect(offFolder.contains { $0.name == "blob.bin" }, "it lists with USB debugging off: \(offFolder.map(\.name))")
+            let offPick = try bench.pick("usb off.txt", bytes: 10_000, seed: 61, modified: Date(timeIntervalSince1970: 1_650_000_000))
+            browser.received([offPick])
+            transfer = try #require(browser.transfer)
+            try await settle(transfer, seconds: 120)
+            #expect(transfer.stage == .finished, "import, USB debugging off: \(transfer.title) \(transfer.detail)")
+            #expect(try await guest.sha256(GuestPath.child(offPick.name, of: work)) == bench.sha256(offPick))
+            browser.closeTransfer()
+            let offEntry = try #require(browser.entries(in: work).first { $0.name == "blob.bin" })
+            browser.export([offEntry])
+            transfer = try #require(browser.transfer)
+            try await waitUntil("the export is ready", seconds: 180) { transfer.stage != .running }
+            #expect(transfer.stage == .ready, "export, USB debugging off: \(transfer.title) \(transfer.detail)")
+            let offHash = try await guest.sha256(offEntry.path)
+            #expect(try Bench.sha256(of: try #require(transfer.staged.first)) == offHash)
+            browser.closeTransfer()
+            note("USB debugging off: listed, imported and exported")
+
+            // Turned back on, it works as it did.
+            try await setUsbDebugging(true)
+            #expect(model.filesAvailable && model.adbOverNetworkAvailable)
+            await browser.load(work)
+            #expect(browser.entries(in: work).contains { $0.name == "flight.bin" })
+            let onEntry = try #require(browser.entries(in: work).first { $0.name == "usb off.txt" })
+            browser.export([onEntry])
+            transfer = try #require(browser.transfer)
+            try await waitUntil("the export is ready", seconds: 180) { transfer.stage != .running }
+            #expect(transfer.stage == .ready, "export, USB debugging on: \(transfer.title) \(transfer.detail)")
+            browser.closeTransfer()
             browser.sheetClosed()
         }
     }
@@ -390,21 +457,16 @@ struct GuestFilesGuestTests {
                 var wasUp = false
                 var flippedBack = false
                 var unavailableTransfers = 0
-                // A fresh guest has USB debugging off, which keeps the browser
-                // unavailable too; it is turned on beside the first reading.
-                var turnOnUsbDebugging = true
                 while firstAvailable == nil, ContinuousClock.now - began < .seconds(240) {
                     let at = ContinuousClock.now - began
                     let reported = await operations.storageReady()
                     readings.append(reported)
                     let probe = try? await guest.run(
                         """
-                        \(turnOnUsbDebugging ? "settings put global adb_enabled 1" : "true")
                         w=no; mkdir /storage/emulated/0/.fxprobe 2>/dev/null && { rmdir /storage/emulated/0/.fxprobe; w=yes; }
                         echo "up=$(cut -d' ' -f1 /proc/uptime) write=$w entries=$(ls -A /storage/emulated/0 2>/dev/null | wc -l) \
                         folders=$(for d in Download DCIM Pictures; do [ -d /storage/emulated/0/$d ] && printf y || printf n; done)"
                         """, seconds: 20).text
-                    if probe != nil { turnOnUsbDebugging = false }
                     let wrote = probe?.contains("write=yes") == true
                     let folders = probe.map { !$0.contains("folders=nnn") } ?? false
                     if wrote, firstWrite == nil { firstWrite = at }
@@ -417,8 +479,7 @@ struct GuestFilesGuestTests {
                         flippedBack = true
                     }
                     note("\(boot): t=\(at) ready=\(String(describing: reported)) \(probe?.replacingOccurrences(of: "\n", with: " ") ?? "no answer") "
-                        + "model: usb=\(String(describing: model.session.usbDebugging)) "
-                        + "storage=\(String(describing: model.session.storageReady)) available=\(model.filesAvailable)")
+                        + "model: storage=\(String(describing: model.session.storageReady)) available=\(model.filesAvailable)")
                     // Until the model says it is ready nothing is imported or exported.
                     if !model.filesAvailable {
                         browser.received([try bench.pick("fx_early.txt", bytes: 64, seed: 7, modified: .now)])
@@ -671,11 +732,10 @@ struct GuestFilesGuestTests {
 
     private func note(_ text: String) { print("FILEX: \(text)") }
 
-    /// What the person does to have the browser: USB debugging is on in the
-    /// guest and Settings is open, which reads it and the storage. The browser
-    /// takes no import or export before it says they are.
+    /// What the person does to have the browser: Settings is open, which reads
+    /// the guest's storage, whatever its USB debugging setting. The browser
+    /// takes no import or export before it says the storage is up.
     private func openSettingsOnTheFiles(_ model: AppModel, _ operations: AdbGuestOperations) async throws -> Task<Void, Never> {
-        _ = try await operations.shell("settings put global adb_enabled 1", limit: .seconds(60))
         let watcher = Task { await model.watchSettings() }
         do {
             try await waitUntil("the browser is available", seconds: 240) { model.filesAvailable }
