@@ -302,9 +302,10 @@ in Chrome's WebGL under the host's GPU budget, on a guest with Chrome
 installed), the graphics-memory reading and the process list the reclaim
 parses (any guest), Retina memory, the ADB-over-vsock guest
 tests (including Android storage and the touch-cancel path), the side keys'
-pass-through of touches to Android, the ADB-over-network hold and the
+pass-through of touches to Android, the ADB-over-network hold, the
 background disk locks (which also requires a guest that was allocating
-buffers when the GPU was held to suspend). The storage test signs its helper
+buffers when the GPU was held to suspend) and the resume after a save while
+the application is away. The storage test signs its helper
 APK with the AOSP test key, never a release key. When derived data is on a
 removable volume, macOS prompts once for access and the launch hangs until
 answered; build to the internal disk instead.
