@@ -29,8 +29,8 @@ struct SessionSettingsSheet: View {
             ScrollViewReader { proxy in
                 List {
                     if model.capabilities.statistics { stats(session) }
-                    if normalSession, model.capabilities.guestFiles, model.fileBrowser != nil { files }
                     if normalSession, model.capabilities.apkInstall { apps }
+                    if normalSession, model.capabilities.guestFiles, model.fileBrowser != nil { files }
                     if normalSession, model.capabilities.adbOverNetwork { developer(session) }
                     if normalSession, model.capabilities.bugReport { diagnostics }
                 }
