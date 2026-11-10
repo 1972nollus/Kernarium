@@ -10,9 +10,10 @@
  * the table comment) and by the searches in
  * theConservativeDefaultIsTheLargestStepThatLeavesTheFloor and
  * onADeviceThatOffers4GiBTheDefaultKeepsAGibibyteForTheGpu. The range has no
- * top of 4 GiB: aLargerCeilingChangesNoDefaultAndNoSizeUnder4GiB holds every
+ * top of 4 GiB, and B has no cap of half the guest's RAM:
+ * aLargerCeilingAndNoHalfCapChangeNoDefaultAndNoSizeUnder4GiB holds every
  * default, and every size below 4 GiB, to the rules of the range that ended
- * there, copied below.
+ * there and of the cap, copied below.
  */
 #include "named_tests.hpp"
 #include "require.hpp"
@@ -466,10 +467,10 @@ void theDefaultKeepsAGibibyteForTheGpuAtTheTopOfTheRange()
 		DefaultRow{4608, 4608, 4608, 4608, 4608, 4608, 4608, 4608});
 	require(budgetAtDefaultRow(6144 * mib) ==
 		DefaultRow{1383, 1347, 1311, 1275, 1255, 1251, 1215, 1211});
-	/* No limit: the whole range, as before, and B is half of it. */
+	/* No limit: the whole range, as before, and B is the guest's RAM. */
 	for (unsigned executors : {0U, 1U, 4U, 8U})
 		require(budget::default_guest_memory_mib(0, executors) == 4096);
-	require(budget::gpu_budget(0, 4096, 8).bytes == 2048 * mib);
+	require(budget::gpu_budget(0, 4096, 8).bytes == 4096 * mib);
 	require(!budget::gpu_budget(0, 4096, 8).short_of_floor);
 }
 
@@ -477,9 +478,9 @@ void theDefaultKeepsAGibibyteForTheGpuAtTheTopOfTheRange()
  * offers 4096 MiB at one vCPU, at every vCPU count the default is the lesser
  * of the conservative line and the largest multiple of 512 MiB that leaves B
  * at 1024 MiB, searched here from compute_gpu_budget, and is never under 2048
- * MiB (B is at most half the guest). With the launch set's terms the closed
- * form L - A - E_rest - cap(v) - 4 MiB * v - S - 1024 stands for the search,
- * since the cache is then at its cap. */
+ * MiB (such a limit leaves a guest of 2048 more than a gibibyte). With the
+ * launch set's terms the closed form L - A - E_rest - cap(v) - 4 MiB * v - S -
+ * 1024 stands for the search, since the cache is then at its cap. */
 void onADeviceThatOffers4GiBTheDefaultKeepsAGibibyteForTheGpu()
 {
 	unsigned limited = 0;
@@ -583,9 +584,9 @@ void theGpuBudgetRuleIsFlaggedOnlyWhereItLowersTheDefault()
 	static_assert(budget::default_guest_memory(6144 * mib, 6).mib == 4096);
 }
 
-/* A set that leaves no guest a gibibyte for the GPU cannot lower the default
- * further, since B is at most half of a guest under 2048 MiB: the second bound
- * is then left out and the default is the conservative line. */
+/* A set that leaves no guest in the default range a gibibyte for the GPU
+ * cannot lower the default: the second bound is then left out and the default
+ * is the conservative line. */
 void aSetThatLeavesNoGibibyteLeavesTheConservativeDefault()
 {
 	constexpr auto crowded = budget::launch_memory_mib(4000, 0, 0);
@@ -598,8 +599,9 @@ void aSetThatLeavesNoGibibyteLeavesTheConservativeDefault()
 	require(budget::graphics_guest_memory_mib(512 * mib, 4) == 0);
 }
 
-/* B is the evaluation the run makes: half the guest without a limit, the
- * clamp of L - A - G - E - S otherwise, and the sums are those of the run. */
+/* B is the evaluation the run makes: the guest's RAM without a limit, the
+ * larger of the floor and L - A - G - E - S otherwise, and the sums are those
+ * of the run. */
 void theBudgetIsTheEvaluationTheRunMakes()
 {
 	/* An iPad mini 6 at six vCPUs and the default 1536 MiB. */
@@ -614,8 +616,15 @@ void theBudgetIsTheEvaluationTheRunMakes()
 	/* The most the settings offer leaves the floor and the process short. */
 	const auto top = budget::gpu_budget(ipad_limit, 2176, 6);
 	require(top.bytes == 384 * mib && top.short_of_floor);
-	/* Half the guest wins where it is less than the floor. */
-	require(budget::gpu_budget(ipad_limit, 512, 1).bytes == 256 * mib);
+	/* A small guest is no bound: what the limit leaves is all of it. */
+	const auto small = budget::gpu_budget(ipad_limit, 512, 1);
+	require(small.available == (2867 - 64 - 512 - (128 + 4 + 320) - 149) * mib);
+	require(small.bytes == small.available);
+	require(small.bytes == 1690 * mib && !small.short_of_floor);
+	/* Without a limit it is the guest's RAM, whatever the terms. */
+	require(budget::gpu_budget(0, 1536, 6).bytes == 1536 * mib);
+	require(budget::gpu_budget(0, 1536, 6, heavy_set).bytes == 1536 * mib);
+	require(budget::gpu_budget(0, 9152, 1).bytes == 9152 * mib);
 	/* The set is an argument, the launch set the default. */
 	require(budget::gpu_budget(ipad_limit, 1536, 6).bytes ==
 		budget::gpu_budget(ipad_limit, 1536, 6, conservative).bytes);
@@ -641,11 +650,26 @@ void aGuestAboveTheDefaultIsWhatTheApplicationsWarnAbout()
 }
 
 /* The rules of the range that ended at 4096 MiB, as they were before the
- * range lost its top, copied so the sweep below holds the lifted rules to them
- * rather than to themselves. */
+ * range lost its top, and of B as it was while half the guest's RAM bounded
+ * it, copied so the sweep below holds the lifted rules to them rather than to
+ * themselves. */
 namespace before_the_range_lost_its_top {
 
 constexpr std::uint32_t top = 4096;
+
+/* B in bytes while half the guest's RAM bounded it: the remainder between the
+ * floor and G / 2, and G / 2 without a limit. */
+std::uint64_t budgetBytes(std::uint64_t limit, std::uint32_t guest_mib,
+	unsigned executors, const budget::LaunchMemorySet &set)
+{
+	const std::uint64_t half = std::uint64_t{guest_mib} * mib / 2U;
+	if (limit == 0)
+		return half;
+	const auto available =
+		budget::gpu_budget(limit, guest_mib, executors, set).available;
+	return std::min(std::max(available,
+				 uml::platform::gpu_budget_floor_bytes), half);
+}
 
 std::uint32_t maximum(std::uint64_t limit, unsigned executors,
 	const budget::LaunchMemorySet &set)
@@ -671,10 +695,19 @@ std::uint32_t graphics(std::uint64_t limit, unsigned executors,
 	const budget::LaunchMemorySet &set)
 {
 	for (auto size = top; size >= 1024U * 2U; size -= 512)
-		if (budget::gpu_budget(limit, size, executors, set).bytes >=
-			1024 * mib)
+		if (budgetBytes(limit, size, executors, set) >= 1024 * mib)
 			return size;
 	return 0;
+}
+
+bool holdsGpuBudget(std::uint64_t limit, unsigned executors,
+	const budget::LaunchMemorySet &set)
+{
+	if (limit == 0 ||
+	    maximum(limit, 1, budget::maximum_memory_set) != top)
+		return false;
+	const auto graphic = graphics(limit, executors, set);
+	return graphic != 0 && graphic < conservative(limit, executors, set);
 }
 
 std::uint32_t defaults(std::uint64_t limit, unsigned executors,
@@ -692,10 +725,13 @@ std::uint32_t defaults(std::uint64_t limit, unsigned executors,
 
 /* The default does not change on any device, and neither does any size the
  * range offered: for every limit from none through 20 GiB, every vCPU count
- * and the sets, the default, the graphics bound and the 4096-capped maximum
- * and line equal the old rules' for every ceiling, so a larger ceiling only
- * adds sizes above them. */
-void aLargerCeilingChangesNoDefaultAndNoSizeUnder4GiB()
+ * and the sets, the default, whether the graphics rule set it, and the
+ * 4096-capped maximum and line equal the old rules' for every ceiling, so a
+ * larger ceiling only adds sizes above them. The graphics bound is the old one
+ * wherever there was one; the one size the cap kept out of its range, 1536
+ * MiB, may now qualify where nothing above it did, and no default uses it
+ * there (a limit that offers 4096 MiB leaves 2048 a gibibyte). */
+void aLargerCeilingAndNoHalfCapChangeNoDefaultAndNoSizeUnder4GiB()
 {
 	namespace old = before_the_range_lost_its_top;
 	constexpr std::array<std::uint32_t, 5> ceilings{
@@ -714,8 +750,15 @@ void aLargerCeilingChangesNoDefaultAndNoSizeUnder4GiB()
 				require(budget::default_guest_memory_mib(limit, executors,
 						set) == old::defaults(limit, executors, set),
 					std::to_string(limit_mib).c_str());
-				require(budget::graphics_guest_memory_mib(limit, executors,
-						set) == old::graphics(limit, executors, set),
+				require(budget::default_guest_memory(limit, executors,
+						set).holds_gpu_budget ==
+					old::holdsGpuBudget(limit, executors, set),
+					std::to_string(limit_mib).c_str());
+				const auto graphic = budget::graphics_guest_memory_mib(
+					limit, executors, set);
+				const auto before = old::graphics(limit, executors, set);
+				require(before != 0 ? graphic == before :
+						graphic == 0 || graphic == 1536,
 					std::to_string(limit_mib).c_str());
 				for (const auto ceiling : ceilings) {
 					const auto offered = budget::maximum_guest_memory_mib(
@@ -918,8 +961,8 @@ int main()
 		{"no-limit-offers-the-whole-range", noLimitOffersTheWholeRange},
 		{"a-tight-limit-offers-the-smallest-guest",
 			aTightLimitOffersTheSmallestGuest},
-		{"a-larger-ceiling-changes-no-default-and-no-size-under-4-gib",
-			aLargerCeilingChangesNoDefaultAndNoSizeUnder4GiB},
+		{"a-larger-ceiling-and-no-half-cap-change-no-default-and-no-size-under-4-gib",
+			aLargerCeilingAndNoHalfCapChangeNoDefaultAndNoSizeUnder4GiB},
 		{"a-limit-offers-what-the-budget-gives-up-to-the-ceiling",
 			aLimitOffersWhatTheBudgetGivesUpToTheCeiling},
 		{"the-ceiling-is-the-window-and-the-hosts-ram-whichever-is-less",

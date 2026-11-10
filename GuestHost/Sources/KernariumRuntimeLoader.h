@@ -187,7 +187,7 @@ uint32_t kernarium_runtime_loader_conservative_guest_memory_mib_for_limit(
  * at `guest_processor_count` vCPUs gets with `parameters` (zero vCPUs count as
  * one) under the memory limit the system sets this process: the evaluation the
  * run itself makes (kernarium_runtime_plan_gpu_budget_function), rounded down.
- * Half the guest RAM where the system sets no limit. */
+ * The guest RAM where the system sets no limit. */
 uint32_t kernarium_runtime_loader_gpu_budget_mib(
     uint32_t guest_memory_mib,
     uint32_t guest_processor_count,

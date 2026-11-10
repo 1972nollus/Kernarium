@@ -40,7 +40,7 @@ struct EmulatorConfiguration: Equatable {
     static let retinaEnvironmentKey = "KERNARIUM_RETINA_MODE"
     static let autoResizeGuestEnvironmentKey = "KERNARIUM_GPU_AUTO_RESIZE"
     // The three launch parameters of the host GPU's fixed budget
-    // B = clamp(L - A - G - E - S, 384 MiB, G / 2): A, the application's own
+    // B = max(L - A - G - E - S, 384 MiB): A, the application's own
     // expected ceiling; E_rest, the guest side's memory beyond the gadget
     // cache; and S, the headroom left unused. Only the environment states
     // them, for a measurement run.

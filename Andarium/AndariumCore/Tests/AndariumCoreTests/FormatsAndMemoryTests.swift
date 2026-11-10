@@ -220,7 +220,7 @@ struct MemoryPolicyTests {
         let policy = MemoryPolicy(
             processorCount: 2,
             bound: { _ in 9152 }, defaultMemory: { _ in 4096 }, safeMemory: { _ in 8704 },
-            graphicsMemory: { memory, count in memory / 2 - count }
+            graphicsMemory: { memory, count in memory - count }
         )
         #expect(policy.maximumMiB(vCPUs: 1) == 9152)
         #expect(policy.stops(vCPUs: 2).last == 9152)
@@ -230,16 +230,16 @@ struct MemoryPolicyTests {
         #expect(policy.clamped(20_000, vCPUs: 1) == 9152)
         #expect(policy.clamped(6000, vCPUs: 1) == 6016)
         // The existing words: the closing one above the safe size, and no
-        // graphics note where this host's estimate (half the guest) stays
-        // over a gibibyte above the default.
+        // graphics note where this host's estimate (the guest's memory, as
+        // with no limit) stays over a gibibyte above the default.
         #expect(policy.risk(4096, vCPUs: 1) == .none)
         #expect(policy.risk(4160, vCPUs: 1) == .none)
         #expect(policy.risk(8704, vCPUs: 1) == .none)
         #expect(policy.risk(8768, vCPUs: 1) == .closing)
         // The estimate covers every size on the picker, and the edge beyond.
-        #expect(policy.graphicsMemoryMiB(forMemory: 9152, vCPUs: 1) == 9152 / 2 - 1)
-        #expect(policy.graphicsMemoryMiB(forMemory: 6016, vCPUs: 2) == 6016 / 2 - 2)
-        #expect(policy.graphicsMemoryMiB(forMemory: 500_000, vCPUs: 1) == 9152 / 2 - 1)
+        #expect(policy.graphicsMemoryMiB(forMemory: 9152, vCPUs: 1) == 9152 - 1)
+        #expect(policy.graphicsMemoryMiB(forMemory: 6016, vCPUs: 2) == 6016 - 2)
+        #expect(policy.graphicsMemoryMiB(forMemory: 500_000, vCPUs: 1) == 9152 - 1)
         // A new guest takes the default, not the bound.
         let device = host(policy, processors: 2)
         #expect(Guest.fresh(on: device).memoryMiB == 4096)
@@ -502,22 +502,22 @@ struct MemoryPolicyTests {
             processorCount: 3,
             bound: { _ in 4096 }, defaultMemory: { _ in 2048 },
             safeMemory: { safeAsked.append($0); return 3072 },
-            graphicsMemory: { memory, count in graphicsAsked += 1; return memory / 2 - count }
+            graphicsMemory: { memory, count in graphicsAsked += 1; return memory - count }
         )
         #expect(safeAsked == [1, 2, 3])
         #expect(graphicsAsked == 3 * 57, "57 sizes of the runtime's range at 3 counts")
         #expect(policy.safeMemoryMiB(vCPUs: 2) == 3072)
         // The estimate is the table's, for the size and count asked.
-        #expect(policy.graphicsMemoryMiB(forMemory: 2048, vCPUs: 1) == 1023)
-        #expect(policy.graphicsMemoryMiB(forMemory: 4096, vCPUs: 3) == 2045)
-        #expect(policy.graphicsMemoryMiB(forMemory: 512, vCPUs: 2) == 254)
+        #expect(policy.graphicsMemoryMiB(forMemory: 2048, vCPUs: 1) == 2047)
+        #expect(policy.graphicsMemoryMiB(forMemory: 4096, vCPUs: 3) == 4093)
+        #expect(policy.graphicsMemoryMiB(forMemory: 512, vCPUs: 2) == 510)
         // A size between steps takes the step below; one outside the range, its edge.
-        #expect(policy.graphicsMemoryMiB(forMemory: 2080, vCPUs: 1) == 1023)
-        #expect(policy.graphicsMemoryMiB(forMemory: 100, vCPUs: 1) == 255)
-        #expect(policy.graphicsMemoryMiB(forMemory: 9999, vCPUs: 1) == 2047)
+        #expect(policy.graphicsMemoryMiB(forMemory: 2080, vCPUs: 1) == 2047)
+        #expect(policy.graphicsMemoryMiB(forMemory: 100, vCPUs: 1) == 511)
+        #expect(policy.graphicsMemoryMiB(forMemory: 9999, vCPUs: 1) == 4095)
         // A count above the host's takes the last row; zero counts as one.
-        #expect(policy.graphicsMemoryMiB(forMemory: 2048, vCPUs: 9) == 1021)
-        #expect(policy.graphicsMemoryMiB(forMemory: 2048, vCPUs: 0) == 1023)
+        #expect(policy.graphicsMemoryMiB(forMemory: 2048, vCPUs: 9) == 2045)
+        #expect(policy.graphicsMemoryMiB(forMemory: 2048, vCPUs: 0) == 2047)
         // A policy that is not given the host's answer has none.
         #expect(phone.graphicsMemoryMiB(forMemory: 2048, vCPUs: 1) == nil)
         #expect(MemoryPolicy(maximumsMiB: [4096]).graphicsMemoryMiB(forMemory: 2048, vCPUs: 1) == nil)
@@ -531,10 +531,10 @@ struct MemoryPolicyTests {
 
     /// The graphics memory (B) of a device that offers 4 GiB but leaves the
     /// GPU only what the process limit does after the guest, as the runtime's
-    /// formula does: it falls by the guest's size and by 64 MiB per vCPU, is
-    /// at least 384 MiB, and is at most half the guest.
+    /// formula does: it falls by the guest's size and by 64 MiB per vCPU, and
+    /// is at least 384 MiB.
     private static func fallingGraphics(_ memory: Int, _ count: Int) -> Int {
-        min(memory / 2, max(384, 4300 - memory - 64 * count))
+        max(384, 4300 - memory - 64 * count)
     }
 
     /// A device whose default the runtime did not lower for the GPU (the
@@ -594,7 +594,7 @@ struct MemoryPolicyTests {
     private static func runtimeB(limit: Int, memory: Int, count: Int) -> Int {
         let caps = [128, 160, 192, 224, 240, 240, 272, 272]
         let engine = 320 + caps[min(max(count, 1), caps.count) - 1] + 4 * count
-        return min(max(limit - 64 - memory - engine - 149, 384), memory / 2)
+        return max(limit - 64 - memory - engine - 149, 384)
     }
 
     /// A limit of 5120 MiB: 4544 to 4416 offered, a new guest of 3 GiB because
@@ -665,14 +665,14 @@ struct MemoryPolicyTests {
     }
 
     /// A device with little room, whose B is under a gibibyte at the default
-    /// and falls from there, and a Mac with no limit, whose B is half the
-    /// guest: the first warns from the first size above the default as it
+    /// and falls from there, and a Mac with no limit, whose B is the guest's
+    /// memory: the first warns from the first size above the default as it
     /// did, the second never does.
     @Test func theGraphicsWarningKeepsTightDevicesAndDropsRoomyOnes() {
         let mini = MemoryPolicy(
             processorCount: 6,
             bound: { _ in 2176 }, defaultMemory: { _ in 1536 }, safeMemory: { _ in 1536 },
-            graphicsMemory: { memory, count in min(memory / 2, max(384, 2600 - memory - 128 * count)) }
+            graphicsMemory: { memory, count in max(384, 2600 - memory - 128 * count) }
         )
         let reference = MemoryPolicy(
             maximumsMiB: Array(repeating: 2176, count: 6), defaultsMiB: Array(repeating: 1536, count: 6)
@@ -686,7 +686,7 @@ struct MemoryPolicyTests {
         let roomy = MemoryPolicy(
             processorCount: 8,
             bound: { _ in 65536 }, defaultMemory: { _ in 4096 }, safeMemory: { _ in 65536 },
-            graphicsMemory: { memory, _ in memory / 2 }
+            graphicsMemory: { memory, _ in memory }
         )
         for count in 1...8 {
             #expect(roomy.graphicsLineMiB(vCPUs: count) == roomy.safeMemoryMiB(vCPUs: count))
