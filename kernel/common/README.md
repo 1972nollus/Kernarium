@@ -73,8 +73,9 @@ it. The bridge fields used below are defined by the comments in
 - A carrier reports each host signal it takes, with its pc and, for a fault,
   its address and ESR, except a fault a nofault accessor recovers
   (`guest-kernel-nofault`). A host thread that carries no vCPU takes the host's
-  default action for SIGSEGV and SIGBUS, and SIGALRM never runs a guest tick
-  there; embedders should keep SIGALRM blocked on their own threads.
+  default action for SIGSEGV, SIGBUS, SIGTRAP, SIGILL and SIGFPE, and SIGALRM
+  never runs a guest tick there (`guest-run-end-stop`); embedders should keep
+  SIGALRM blocked on their own threads.
 - An embedded run returns to its host only once no kernel thread can execute
   the image: the run end joins every carrier and stops the RTC alarm helper
   itself, since a host stop skips Linux exitcalls. A public stop reaches every
