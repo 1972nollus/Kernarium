@@ -9,6 +9,10 @@ import UniformTypeIdentifiers
 /// them the transfer or the question an import is waiting on.
 struct FilesBar: View {
     static let height: CGFloat = 50
+    /// How far the fade behind the glass reaches above it. The reach is part
+    /// of the bar's layout, which the pages leave free at the end of a scroll
+    /// (`filesBarHeight`): content fades under the glass only while it moves.
+    static let scrimReach: CGFloat = 28
 
     @Bindable var browser: FileBrowserModel
     /// USB debugging is on, so the guest can be browsed: the trail and Import
@@ -35,9 +39,13 @@ struct FilesBar: View {
             }
         }
         .padding(.horizontal, 16)
+        .padding(.top, Self.scrimReach)
         // The sheet's own margin from the bottom edge, as at the sides.
         .padding(.bottom, 16 - bottomInset)
         .background(alignment: .bottom) { scrim }
+        .background {
+            GeometryReader { Color.clear.preference(key: FilesBarHeightKey.self, value: $0.size.height) }
+        }
         .animation(.snappy, value: browser.selection.isEmpty)
         .animation(.snappy, value: browser.route)
         .animation(.snappy, value: browser.transfer?.id)
@@ -45,7 +53,8 @@ struct FilesBar: View {
         .modifier(ImportPickerPresenter(browser: browser))
     }
 
-    /// Rows fade out under the glass, so a name never reads through it.
+    /// Rows fade out under the glass, so a name never reads through it. It
+    /// fills the bar's frame, whose top `scrimReach` is its own.
     private var scrim: some View {
         LinearGradient(
             stops: [
@@ -55,7 +64,6 @@ struct FilesBar: View {
             ],
             startPoint: .top, endPoint: .bottom
         )
-        .padding(.top, -28)
         .ignoresSafeArea(edges: .bottom)
         .allowsHitTesting(false)
     }
@@ -189,6 +197,37 @@ struct FilesBar: View {
             .labelStyle(.titleAndIcon)
             .frame(height: Self.height - 16)
             .frame(minWidth: 76)
+    }
+}
+
+/// The bar's layout height, with its fade; there is no value while the bar is
+/// not shown.
+private struct FilesBarHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+extension EnvironmentValues {
+    /// How much of the sheet's bottom the bar covers, 0 without a bar. The
+    /// bar's safe area does not reach the lists on the sheet's navigation
+    /// stack, so each ends above the bar by this margin, on top of its own
+    /// safe area.
+    @Entry var filesBarHeight: CGFloat = 0
+}
+
+extension View {
+    /// Reads the height of the bar shown within `self`, 0 while there is none.
+    func readFilesBarHeight(into height: Binding<CGFloat>) -> some View {
+        onPreferenceChange(FilesBarHeightKey.self) { height.wrappedValue = $0 }
+    }
+
+    /// Ends a list's content above the bar, and leaves the list's own bottom
+    /// margin alone while there is no bar.
+    func endingAboveFilesBar(_ height: CGFloat) -> some View {
+        contentMargins(.bottom, height > 0 ? height : nil, for: .scrollContent)
     }
 }
 
