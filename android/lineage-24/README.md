@@ -177,7 +177,9 @@ into an ALSA ring of four such periods (route `p0005` and the
 `ro.hardware.audio.tinyalsa.*` vendor properties); the boot command line lowers
 the Virtio sound driver's minimum period to 5 ms for it. The output reports its
 position from its ALSA device, less the frames in the ring and the latency the
-host reports for its output (route `p0005`). A low-latency AAudio
+host reports for its output (route `p0005`). The input's ALSA read alone
+paces its I/O thread, and a read waits 100 to 250 ms for its frames rather
+than making silence up (route `p0005`). A low-latency AAudio
 stream with a data callback that leaves its capacity unspecified starts with a
 two-burst buffer and grows it by one burst per underrun until the app sets a
 size (route `p0028`). A Virtio battery device reports the Apple host's
