@@ -28,11 +28,11 @@ struct WhatsNewTests {
         AppModel(
             guest: Guest.fresh(on: host), host: host,
             system: SystemInfo(
-                version: "17", release: "test", kernel: "Linux", architecture: "arm64", appVersion: "1.0 (7)"),
+                version: "17", release: "test", kernel: "Linux", architecture: "arm64", appVersion: "1.0 (8)"),
             capabilities: .device, createRequirementBytes: 1)
     }
 
-    private func entry(announces: Bool, build: Int? = 7, defaults: UserDefaults) -> AppEntry {
+    private func entry(announces: Bool, build: Int? = 8, defaults: UserDefaults) -> AppEntry {
         var entry = AppEntry(overrides: LaunchOverrides())
         entry.announcesWhatsNew = announces
         entry.build = build
@@ -42,22 +42,26 @@ struct WhatsNewTests {
 
     // MARK: The bundled notes
 
-    @Test func theBundledNotesDecodeAndStartWithBuildSeven() throws {
+    @Test func theBundledNotesDecodeAndStartWithBuildEight() throws {
         let url = try #require(Bundle.main.url(forResource: "WhatsNew", withExtension: "json"))
         let releases = try WhatsNewCatalog.decode(Data(contentsOf: url))
-        #expect(releases.map(\.build) == [7])
-        #expect(releases.first?.version == "1.0 (7)")
+        #expect(releases.map(\.build) == [8])
+        #expect(releases.first?.version == "1.0 (8)")
         #expect(WhatsNewCatalog.load() == releases)
         let entries = try #require(releases.first?.entries)
-        #expect(entries.map(\.id) == ["file-browser", "more-memory"])
+        #expect(entries.map(\.id) == ["file-browser", "more-memory", "stability-fixes"])
         #expect(entries.first?.title == "File browser")
+        // The fixes are five points under a title, with no sentence of their own.
+        let fixes = try #require(entries.last)
+        #expect(fixes.title == "Stability fixes" && fixes.text == nil && fixes.points.count == 5)
+        #expect(fixes.place == nil && fixes.requirement == nil)
     }
 
     @Test func everyEntryHasWordsASymbolAndARequirementTheCodeKnows() throws {
         for release in WhatsNewCatalog.load() {
             #expect(!release.version.isEmpty)
             for entry in release.entries {
-                #expect(!entry.title.isEmpty && !entry.text.isEmpty, "\(entry.id)")
+                #expect(!entry.title.isEmpty && (entry.text != nil || !entry.points.isEmpty), "\(entry.id)")
                 #expect(UIImage(systemName: entry.symbol) != nil, "\(entry.id): \(entry.symbol)")
                 // A requirement the code does not know fails to decode, so the
                 // entry would not be here; the memory one is the notes' own.
@@ -68,9 +72,13 @@ struct WhatsNewTests {
         #expect(memory.requirement == WhatsNewRequirement(memoryAboveMiB: 4096))
     }
 
-    @Test func theRibbonNamesBothBundledFeaturesWithNoMore() throws {
+    @Test func theRibbonNamesTheBundledEntriesAndCountsTheRest() throws {
         let titles = try #require(WhatsNewCatalog.load().first).entries.map(\.title)
-        #expect(WhatsNewRibbon.summary(titles, naming: titles.count) == "File browser \u{00B7} More memory")
+        #expect(titles == ["File browser", "More memory", "Stability fixes"])
+        #expect(WhatsNewRibbon.summary(titles, naming: 3)
+            == "File browser \u{00B7} More memory \u{00B7} Stability fixes")
+        #expect(WhatsNewRibbon.summary(titles, naming: 2) == "File browser \u{00B7} More memory \u{00B7} 1 more")
+        #expect(WhatsNewRibbon.summary(titles, naming: 0) == "3 new features")
     }
 
     // MARK: The person's launch
@@ -82,10 +90,10 @@ struct WhatsNewTests {
             let model = model(on: host)
             entry(announces: true, defaults: defaults).announceWhatsNew(on: model, hasGuest: true, vCPUs: 6)
             #expect(model.whatsNew.showsRibbon)
-            #expect(model.whatsNew.pendingEntries.map(\.id) == ["file-browser", "more-memory"])
+            #expect(model.whatsNew.pendingEntries.map(\.id) == ["file-browser", "more-memory", "stability-fixes"])
             #expect(WhatsNewStore(defaults: defaults).record
-                == WhatsNewRecord(seenBuild: 5, ribbonBuild: 7, ribbonLaunches: 1))
-            #expect(model.whatsNew.releases.map(\.build) == [7])
+                == WhatsNewRecord(seenBuild: 5, ribbonBuild: 8, ribbonLaunches: 1))
+            #expect(model.whatsNew.releases.map(\.build) == [8])
         }
     }
 
@@ -101,9 +109,9 @@ struct WhatsNewTests {
         withDefaults { defaults in
             let model = model(on: host(maximumMiB: 4096))
             entry(announces: true, defaults: defaults).announceWhatsNew(on: model, hasGuest: true, vCPUs: 6)
-            #expect(model.whatsNew.pendingEntries.map(\.id) == ["file-browser"])
+            #expect(model.whatsNew.pendingEntries.map(\.id) == ["file-browser", "stability-fixes"])
             // Info lists the notes as written.
-            #expect(model.whatsNew.releases.first?.entries.count == 2)
+            #expect(model.whatsNew.releases.first?.entries.count == 3)
         }
     }
 
@@ -112,7 +120,7 @@ struct WhatsNewTests {
             let model = model(on: host(maximumMiB: 6144))
             entry(announces: true, defaults: defaults).announceWhatsNew(on: model, hasGuest: false, vCPUs: 6)
             #expect(!model.whatsNew.showsRibbon)
-            #expect(WhatsNewStore(defaults: defaults).record == WhatsNewRecord(seenBuild: 7))
+            #expect(WhatsNewStore(defaults: defaults).record == WhatsNewRecord(seenBuild: 8))
         }
     }
 
@@ -125,24 +133,23 @@ struct WhatsNewTests {
         }
     }
 
-    /// A development build still numbered 6 bundles the notes written for
-    /// build 7: it offers none of them and records itself, so build 7 then
-    /// announces them.
-    @Test func buildSixAnnouncesNothingOfBuildSevensNotesAndBuildSevenAnnouncesThem() {
+    /// A build numbered 7 that bundles the notes written for build 8 offers
+    /// none of them and records itself, so build 8 then announces them.
+    @Test func buildSevenAnnouncesNothingOfBuildEightsNotesThenBuildEightAnnouncesThem() {
         withDefaults { defaults in
             WhatsNewStore(defaults: defaults).keep(WhatsNewRecord(seenBuild: 5))
-            let six = model(on: host(maximumMiB: 6144))
-            entry(announces: true, build: 6, defaults: defaults).announceWhatsNew(on: six, hasGuest: true, vCPUs: 6)
-            #expect(!six.whatsNew.showsRibbon)
-            #expect(WhatsNewStore(defaults: defaults).record == WhatsNewRecord(seenBuild: 6))
-            // Info lists the notes as bundled.
-            #expect(six.whatsNew.releases.map(\.build) == [7])
-
             let seven = model(on: host(maximumMiB: 6144))
-            entry(announces: true, defaults: defaults).announceWhatsNew(on: seven, hasGuest: true, vCPUs: 6)
-            #expect(seven.whatsNew.pendingEntries.map(\.id) == ["file-browser", "more-memory"])
+            entry(announces: true, build: 7, defaults: defaults).announceWhatsNew(on: seven, hasGuest: true, vCPUs: 6)
+            #expect(!seven.whatsNew.showsRibbon)
+            #expect(WhatsNewStore(defaults: defaults).record == WhatsNewRecord(seenBuild: 7))
+            // Info lists the notes as bundled.
+            #expect(seven.whatsNew.releases.map(\.build) == [8])
+
+            let eight = model(on: host(maximumMiB: 6144))
+            entry(announces: true, defaults: defaults).announceWhatsNew(on: eight, hasGuest: true, vCPUs: 6)
+            #expect(eight.whatsNew.pendingEntries.map(\.id) == ["file-browser", "more-memory", "stability-fixes"])
             #expect(WhatsNewStore(defaults: defaults).record
-                == WhatsNewRecord(seenBuild: 6, ribbonBuild: 7, ribbonLaunches: 1))
+                == WhatsNewRecord(seenBuild: 7, ribbonBuild: 8, ribbonLaunches: 1))
         }
     }
 
@@ -161,11 +168,11 @@ struct WhatsNewTests {
             let model = model(on: host(maximumMiB: 6144))
             entry(announces: true, defaults: defaults).announceWhatsNew(on: model, hasGuest: true, vCPUs: 6)
             model.whatsNew.read()
-            #expect(WhatsNewStore(defaults: defaults).record == WhatsNewRecord(seenBuild: 7))
+            #expect(WhatsNewStore(defaults: defaults).record == WhatsNewRecord(seenBuild: 8))
             #expect(model.whatsNew.showsRibbon)
             model.whatsNew.putAway()
             #expect(!model.whatsNew.showsRibbon)
-            #expect(WhatsNewStore(defaults: defaults).record == WhatsNewRecord(seenBuild: 7))
+            #expect(WhatsNewStore(defaults: defaults).record == WhatsNewRecord(seenBuild: 8))
 
             // The next launch of the same build offers nothing.
             let next = self.model(on: host(maximumMiB: 6144))
@@ -188,7 +195,7 @@ struct WhatsNewTests {
             model.whatsNew.putAway()
             #expect(WhatsNewStore(defaults: defaults).record == WhatsNewRecord(seenBuild: 5))
             // Info still lists the notes.
-            #expect(model.whatsNew.releases.map(\.build) == [7])
+            #expect(model.whatsNew.releases.map(\.build) == [8])
 
             // The record of an install that has none stays none.
             withDefaults { fresh in
@@ -223,7 +230,7 @@ struct WhatsNewTests {
         #expect(!AppEntry.fromArguments().announcesWhatsNew)
         let model = AndariumProcess.shared.model
         #expect(!model.whatsNew.showsRibbon)
-        #expect(model.whatsNew.releases.map(\.build) == [7])
+        #expect(model.whatsNew.releases.map(\.build) == [8])
     }
     #endif
 }

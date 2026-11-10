@@ -295,8 +295,8 @@ whatever the device's tip store says, except in an `ANDARIUM_HOLD_SECONDS`
 harness launch, which hides it.
 
 The opt-in suites each need a `TEST_RUNNER_ANDARIUM_*` switch that the suite's
-header names: rotation, motion compatibility and over-vsock, shutdown flow,
-low-space pause (a real guest paused through a free-space number the test
+header names: rotation, motion compatibility, power-off and over-vsock,
+shutdown flow, low-space pause (a real guest paused through a free-space number the test
 sets, its CPU time standing still), the graphics-memory notice (a real refusal
 in Chrome's WebGL under the host's GPU budget, on a guest with Chrome
 installed), the graphics-memory reading and the process list the reclaim

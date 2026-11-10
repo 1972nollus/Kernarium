@@ -83,7 +83,7 @@ struct WhatsNewNotesList: View {
     }
 }
 
-/// "Version 1.0 (7)" and the day it came out, when the notes give one, side
+/// "Version 1.0 (8)" and the day it came out, when the notes give one, side
 /// by side, or stacked when the text is too large for one line.
 struct WhatsNewReleaseHeading: View {
     let release: WhatsNewRelease
@@ -122,7 +122,7 @@ struct WhatsNewReleaseHeading: View {
     }
 }
 
-/// One new feature: its tile, name and words, and where to find it when it
+/// One entry: its tile, name, words and points, and where to find it when it
 /// is not on Home.
 struct WhatsNewEntryRow: View {
     let entry: WhatsNewEntry
@@ -134,10 +134,15 @@ struct WhatsNewEntryRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(entry.title)
                     .font(.body.weight(.semibold))
-                Text(entry.text)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let text = entry.text {
+                    Text(text)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !entry.points.isEmpty {
+                    WhatsNewPoints(points: entry.points)
+                }
                 if let place = entry.place {
                     Label(place.words, systemImage: place.symbol)
                         .font(.footnote)
@@ -152,5 +157,27 @@ struct WhatsNewEntryRow: View {
         .padding(.vertical, 14)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("whats-new-\(entry.id)")
+    }
+}
+
+/// An entry's points as a compact bulleted list. A point that wraps lines up
+/// under its first word, at every text size; VoiceOver skips the bullets and
+/// reads the points one after another.
+struct WhatsNewPoints: View {
+    let points: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(points.enumerated()), id: \.offset) { _, point in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("\u{2022}")
+                        .accessibilityHidden(true)
+                    Text(point)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
     }
 }
