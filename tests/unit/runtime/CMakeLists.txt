@@ -190,6 +190,20 @@ uml_add_unit_test(
 set_tests_properties(runtime-thread-fence
     runtime-thread-fence-registry-overflow PROPERTIES RUN_SERIAL TRUE)
 
+# The session record's checkpoint thread is held by the fence, and keeps its
+# cadence.
+add_executable(uml_runtime_session_record_fence_tests
+    session_record_fence_tests.cpp)
+target_link_libraries(uml_runtime_session_record_fence_tests PRIVATE
+    UML::RuntimeGuestStatistics
+    UML::RuntimeSessionRecord
+    UML::RuntimeThreadFence)
+uml_add_unit_test(
+    NAME runtime-session-record-fence
+    COMMAND uml_runtime_session_record_fence_tests
+    TIMEOUT 120)
+set_tests_properties(runtime-session-record-fence PROPERTIES RUN_SERIAL TRUE)
+
 # The order of a hibernation against recording steps, and a real one against
 # real kernel threads and guest RAM.
 add_executable(uml_runtime_guest_hibernation_tests guest_hibernation_tests.cpp)
