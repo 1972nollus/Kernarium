@@ -24,9 +24,10 @@ import java.util.Locale;
  * <ul>
  *   <li>`report` (default): print only.
  *   <li>`none`: neither package is installed.
- *   <li>`own`: every installed one reports the signer of this probe (the AOSP test key that signs
- *       the decoys too) and nothing else: a package that is not signed by microG's key is not
- *       spoofed whatever its name and meta-data say.
+ *   <li>`own`: every installed one carries Google's certificate as its fake-signature and reports
+ *       the signer of this probe (the AOSP test key that signs the decoys too) and nothing else:
+ *       a package that is not signed by microG's key is not spoofed whatever its name and
+ *       meta-data say.
  *   <li>`google`: every installed one reports Google's certificate, and only it, in both lists
  *       (microG's own packages on a build that spoofs).
  *   <li>`notgoogle`: no installed one reports Google's certificate in either list (microG's own
@@ -36,7 +37,8 @@ import java.util.Locale;
  * A mode other than `report` and `none` needs both packages installed. The result is
  * `INSTRUMENTATION_RESULT: verdict=PASS` or `verdict=FAIL` with the reasons; each package also
  * gets one status block of `package`, `installed`, `signatures`, `signing_info`, `history`
- * (comma separated SHA-256 digests, each named by who owns it).
+ * (comma separated SHA-256 digests, each named by who owns it) and `fake_signature` (the digest of
+ * the certificate in its `fake-signature` meta-data).
  */
 public final class MicrogSpoofingProbe extends Instrumentation {
     private static final String TAG = "AndariumMicrogProbe";
@@ -76,11 +78,12 @@ public final class MicrogSpoofingProbe extends Instrumentation {
                     status.putString("signatures", describe(found.signatures));
                     status.putString("signing_info", describe(found.signers));
                     status.putString("history", describe(found.history));
+                    status.putString("fake_signature", found.fake);
                 }
                 sendStatus(0, status);
                 Log.i(TAG, name + " " + (installed ? "signatures=" + describe(found.signatures)
                         + " signingInfo=" + describe(found.signers) + " history="
-                        + describe(found.history) : "not installed"));
+                        + describe(found.history) + " fakeSignature=" + found.fake : "not installed"));
                 judge(name, found, own, failures);
             }
         } catch (RuntimeException e) {
@@ -124,6 +127,12 @@ public final class MicrogSpoofingProbe extends Instrumentation {
         }
         switch (mExpect) {
             case "own":
+                // The check means something only if the decoy would be spoofed but for its signer:
+                // it must carry Google's certificate as a string in its fake-signature meta-data.
+                if (!GOOGLE.equals(found.fake)) {
+                    failures.add(name + " does not carry Google's certificate as fake-signature ("
+                            + found.fake + ")");
+                }
                 // The decoys are signed by the AOSP test key, like this probe.
                 for (List<String> list : found.all()) {
                     if (!list.equals(own)) {
@@ -152,6 +161,8 @@ public final class MicrogSpoofingProbe extends Instrumentation {
         final List<String> signatures = new ArrayList<>();
         final List<String> signers = new ArrayList<>();
         final List<String> history = new ArrayList<>();
+        // SHA-256 of the DER certificate in the `fake-signature` meta-data, or "none" or "invalid".
+        String fake = "none";
 
         List<List<String>> all() {
             return Arrays.asList(signatures, signers, history);
@@ -164,8 +175,8 @@ public final class MicrogSpoofingProbe extends Instrumentation {
         PackageManager pm = getContext().getPackageManager();
         PackageInfo info;
         try {
-            info = pm.getPackageInfo(name,
-                    PackageManager.GET_SIGNATURES | PackageManager.GET_SIGNING_CERTIFICATES);
+            info = pm.getPackageInfo(name, PackageManager.GET_SIGNATURES
+                    | PackageManager.GET_SIGNING_CERTIFICATES | PackageManager.GET_META_DATA);
         } catch (PackageManager.NameNotFoundException e) {
             if (failures != null) {
                 failures.add(name + " is not installed");
@@ -173,6 +184,9 @@ public final class MicrogSpoofingProbe extends Instrumentation {
             return null;
         }
         Certs result = new Certs();
+        if (info.applicationInfo != null && info.applicationInfo.metaData != null) {
+            result.fake = fakeDigest(info.applicationInfo.metaData.getString("fake-signature"));
+        }
         if (info.signatures != null) {
             for (Signature signature : info.signatures) {
                 result.signatures.add(sha256(signature.toByteArray()));
@@ -194,6 +208,20 @@ public final class MicrogSpoofingProbe extends Instrumentation {
             }
         }
         return result;
+    }
+
+    private static String fakeDigest(String hex) {
+        if (hex == null || hex.isEmpty()) {
+            return "none";
+        }
+        if (hex.length() % 2 != 0 || !hex.matches("[0-9a-f]+")) {
+            return "invalid";
+        }
+        byte[] der = new byte[hex.length() / 2];
+        for (int i = 0; i < der.length; i++) {
+            der[i] = (byte) Integer.parseInt(hex.substring(2 * i, 2 * i + 2), 16);
+        }
+        return sha256(der);
     }
 
     private static String describe(List<String> digests) {

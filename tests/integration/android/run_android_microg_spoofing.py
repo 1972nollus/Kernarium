@@ -145,7 +145,7 @@ def run_probe(device, expect: str) -> tuple[list[dict[str, str]], dict[str, str]
     for block in blocks:
         installed = block.get("installed")
         detail = (f" signatures={block.get('signatures')} signingInfo={block.get('signing_info')} "
-                  f"history={block.get('history')}") if installed == "true" else ""
+                  f"history={block.get('history')} fakeSignature={block.get('fake_signature')}") if installed == "true" else ""
         print(f"  {block.get('package')}: installed={installed}{detail}")
     problems = verdict_problems(blocks, outcome, code, expect)
     if problems:

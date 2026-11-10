@@ -98,6 +98,12 @@ class ProbeSourceTests(unittest.TestCase):
         self.assertEqual(self.manifest.get("package"), runner.PROBE_PACKAGE)
         self.assertEqual(instrumentation.get(ANDROID + "name"), runner.PROBE_RUNNER.split("/", 1)[1])
 
+    def test_the_own_mode_requires_the_decoys_fake_signature(self) -> None:
+        # Without it a decoy would not be spoofed whatever the build does and the check would prove nothing.
+        self.assertIn('getString("fake-signature")', self.java)
+        self.assertIn("GET_META_DATA", self.java)
+        self.assertRegex(self.java, r"GOOGLE\.equals\(found\.fake\)")
+
     def test_every_mode_the_runner_uses_exists_in_the_probe(self) -> None:
         for mode in ("none", "own", "google", "notgoogle", "report"):
             self.assertIn(f'case "{mode}":', self.java)
@@ -225,7 +231,8 @@ class FakeDevice:
             if here:
                 certificate = GOOGLE_SHA256 if self.spoofs_decoys else "11" * 32
                 lines.append(f"INSTRUMENTATION_STATUS: signatures={certificate}\n"
-                             f"INSTRUMENTATION_STATUS: signing_info={certificate}\nINSTRUMENTATION_STATUS: history={certificate}")
+                             f"INSTRUMENTATION_STATUS: signing_info={certificate}\nINSTRUMENTATION_STATUS: history={certificate}\n"
+                             f"INSTRUMENTATION_STATUS: fake_signature={GOOGLE_SHA256}")
                 if expect == "own" and self.spoofs_decoys:
                     problems.append(f"{package} reports Google's certificate")
             elif expect == "own":
