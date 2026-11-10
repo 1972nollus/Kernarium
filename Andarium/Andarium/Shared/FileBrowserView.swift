@@ -8,6 +8,7 @@ import SwiftUI
 /// can do here, so selecting needs no mode.
 struct FolderPage: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.filesBarHeight) private var barHeight
     let browser: FileBrowserModel
     let route: FolderRoute
     let close: () -> Void
@@ -111,6 +112,7 @@ struct FolderPage: View {
         }
         .listSectionSpacing(.compact)
         .contentMargins(.top, wide ? 0 : 6, for: .scrollContent)
+        .endingAboveFilesBar(barHeight)
     }
 
     @ViewBuilder private func row(_ file: GuestFile) -> some View {
@@ -186,6 +188,7 @@ struct FolderPage: View {
         }
         .listSectionSpacing(.compact)
         .contentMargins(.top, wide ? 0 : 6, for: .scrollContent)
+        .endingAboveFilesBar(barHeight)
         .redacted(reason: .placeholder)
         .allowsHitTesting(false)
     }

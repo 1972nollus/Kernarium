@@ -194,8 +194,9 @@ final class MockGuestFiles: GuestFilesBackend {
             browser.selection = (photos.map { GuestPath.child($0, of: camera) } + [GuestPath.child("Boarding pass.pdf", of: download)])
                 .compactMap(files.file(at:))
             browser.reviewingSelection = false
-        case "files-transfer", "files-transfer-open":
-            route = folder("Download")
+        case "files-transfer", "files-transfer-open", "files-transfer-long":
+            // The long one stays in the root, which scrolls on a phone.
+            route = screen == "files-transfer-long" ? folder() : folder("Download")
             let transfer = held(.importing, download, [
                 item("Lisbon walk, full.mov", 4 * gib + 716 * mib, moved: 2 * gib + 100 * mib, state: .moving),
                 item("Tram 28.mov", 812 * mib),
@@ -253,8 +254,8 @@ final class MockGuestFiles: GuestFilesBackend {
             transfer.stage = .failed
             browser.transfer = transfer
             files.add(["Harbour.jpg"], to: download)
-        case "files-conflict":
-            route = folder("Download")
+        case "files-conflict", "files-conflict-long":
+            route = screen == "files-conflict-long" ? folder() : folder("Download")
             browser.conflict = ImportConflict(
                 picks: [
                     FilePick(name: "Boarding pass.pdf", size: 182_000),
