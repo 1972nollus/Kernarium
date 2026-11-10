@@ -19,21 +19,30 @@ and returns an error. The sync and ring dispatch loops name that
 context to it, per thread. An entry the device exposes is called as
 before, so a command pays nothing for the check.
 
+Two handlers answer a missing entry point themselves, because a guest
+sends the command on hosts that lack it: the Apple host has no DRM
+format modifiers, and the host image copy refuses a memcpy copy when
+the driver has no vkGetImageSubresourceLayout2. They now test
+vkr_proc_is_missing() where they tested for NULL, so the answer and the
+live context stay as they were.
+
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
- src/venus/vkr_context.c         | 41 +++++++++++++++++++++++++++++++++
- src/venus/vkr_context.h         | 16 +++++++++++++
+ src/venus/vkr_context.c         | 47 +++++++++++++++++++++++++++++++++
+ src/venus/vkr_context.h         | 24 +++++++++++++++++
  src/venus/vkr_device.c          |  1 +
+ src/venus/vkr_host_copy.c       |  2 +-
+ src/venus/vkr_image.c           |  2 +-
  src/venus/vkr_instance.c        |  1 +
  src/venus/vkr_physical_device.c |  1 +
  src/venus/vkr_ring.c            |  2 ++
- 6 files changed, 62 insertions(+)
+ 8 files changed, 78 insertions(+), 2 deletions(-)
 
 diff --git a/src/venus/vkr_context.c b/src/venus/vkr_context.c
-index 623486be6fe5b6ce9408afa532781cb0a9a07203..a569d649216e0269b4dea817ded600a0d6488e07 100644
+index 623486be6fe5b6ce9408afa532781cb0a9a07203..c7e3b8d467009fb62fb9ec99ffb2f33f53a440a5 100644
 --- a/src/venus/vkr_context.c
 +++ b/src/venus/vkr_context.c
-@@ -128,12 +128,50 @@ vkr_context_init_dispatch(struct vkr_context *ctx)
+@@ -128,12 +128,56 @@ vkr_context_init_dispatch(struct vkr_context *ctx)
     vkr_context_init_acceleration_structure_dispatch(ctx);
  }
  
@@ -56,6 +65,12 @@ index 623486be6fe5b6ce9408afa532781cb0a9a07203..a569d649216e0269b4dea817ded600a0
 +   if (vkr_dispatching_context)
 +      vkr_context_set_fatal(vkr_dispatching_context);
 +   return VK_ERROR_FEATURE_NOT_PRESENT;
++}
++
++bool
++vkr_proc_is_missing(PFN_vkVoidFunction proc)
++{
++   return proc == (PFN_vkVoidFunction)vkr_missing_proc;
 +}
 +
 +void
@@ -84,7 +99,7 @@ index 623486be6fe5b6ce9408afa532781cb0a9a07203..a569d649216e0269b4dea817ded600a0
  }
  
  bool
-@@ -172,15 +210,18 @@ vkr_context_submit_cmd(struct vkr_context *ctx, const void *buffer, size_t size)
+@@ -172,15 +216,18 @@ vkr_context_submit_cmd(struct vkr_context *ctx, const void *buffer, size_t size)
  
     vkr_cs_decoder_set_buffer_stream(&ctx->decoder, buffer, size);
  
@@ -104,10 +119,10 @@ index 623486be6fe5b6ce9408afa532781cb0a9a07203..a569d649216e0269b4dea817ded600a0
     vkr_cs_decoder_reset(&ctx->decoder);
     return true;
 diff --git a/src/venus/vkr_context.h b/src/venus/vkr_context.h
-index c19ca2daf9bf7fa7b0373141683a8a8e39fcf6a3..1510666d4f67dd7197e180ce9184603cf5a0f4fd 100644
+index c19ca2daf9bf7fa7b0373141683a8a8e39fcf6a3..3974ea49eb80c49884576576967e18ba822281fb 100644
 --- a/src/venus/vkr_context.h
 +++ b/src/venus/vkr_context.h
-@@ -197,6 +197,22 @@ vkr_context_get_fatal(struct vkr_context *ctx)
+@@ -197,6 +197,30 @@ vkr_context_get_fatal(struct vkr_context *ctx)
     return ctx->cs_fatal_error;
  }
  
@@ -127,6 +142,14 @@ index c19ca2daf9bf7fa7b0373141683a8a8e39fcf6a3..1510666d4f67dd7197e180ce9184603c
 +#define VKR_PROC_TABLE_FILL_MISSING(table)                                               \
 +   vkr_proc_table_fill_missing((table), sizeof(*(table)))
 +
++/* Whether a proc table entry stands for an entry point the driver does not
++ * expose. A handler that answers a missing entry point itself, instead of
++ * ending the context, tests for it with this. */
++bool
++vkr_proc_is_missing(PFN_vkVoidFunction proc);
++
++#define VKR_PROC_IS_MISSING(proc) vkr_proc_is_missing((PFN_vkVoidFunction)(proc))
++
  static inline bool
  vkr_context_validate_object_id_locked(struct vkr_context *ctx, vkr_object_id id)
  {
@@ -142,6 +165,32 @@ index 9343e4d77c5433eff6aeca41c135622bed6ac74f..3e538229d5aa79f25ef2b0aa8fae18cf
  }
  
  /* Look up the entry points of the extensions the renderer enabled for its own
+diff --git a/src/venus/vkr_host_copy.c b/src/venus/vkr_host_copy.c
+index c0d08075939ae191816a9c5a3922d74ad7b4e408..791565b50a8717600347897c9add5f88c280338a 100644
+--- a/src/venus/vkr_host_copy.c
++++ b/src/venus/vkr_host_copy.c
+@@ -589,7 +589,7 @@ vkr_host_copy_footprint(const struct vkr_host_copy_target *target,
+    }
+ 
+    if (target->flags & VK_HOST_IMAGE_COPY_MEMCPY_BIT) {
+-      if (!target->vk->GetImageSubresourceLayout2)
++      if (VKR_PROC_IS_MISSING(target->vk->GetImageSubresourceLayout2))
+          return false;
+ 
+       size_t memcpy_reach = 0;
+diff --git a/src/venus/vkr_image.c b/src/venus/vkr_image.c
+index a4bc30c7655fd9517802d337285984f52021cf7e..56efcc3189cd41867b88e4be2cd5e7de4b54ded6 100644
+--- a/src/venus/vkr_image.c
++++ b/src/venus/vkr_image.c
+@@ -339,7 +339,7 @@ vkr_dispatch_vkGetImageDrmFormatModifierPropertiesEXT(
+ 
+    /* An Apple host has no DRM format modifiers, so the entry point is not
+     * loaded and calling through the table would fault. */
+-   if (!vk->GetImageDrmFormatModifierPropertiesEXT) {
++   if (VKR_PROC_IS_MISSING(vk->GetImageDrmFormatModifierPropertiesEXT)) {
+       args->ret = VK_ERROR_EXTENSION_NOT_PRESENT;
+       return;
+    }
 diff --git a/src/venus/vkr_instance.c b/src/venus/vkr_instance.c
 index 3536deaa1815b1ff5d82a601a2da6ffa5dd85134..c6c7ff10ce16eb6c6ca183e0c6262d93a4d34126 100644
 --- a/src/venus/vkr_instance.c
