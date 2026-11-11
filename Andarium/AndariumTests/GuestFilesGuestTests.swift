@@ -137,16 +137,10 @@ struct GuestFilesGuestTests {
             #expect(Set(afterImport) == ["It's a note (1).txt", "fx_photo.jpg", "blob.bin", "Empty"], "\(afterImport)")
             await browser.load(work)
             #expect(Set(browser.entries(in: work).map(\.name)) == Set(afterImport))
-            // The gallery's index knows the photo, and the Files app lists it.
-            let indexed = await guest.waitFor(
-                "content query --uri content://media/external/images/media --projection _display_name:_size --where \"_display_name='fx_photo.jpg'\"",
-                contains: "_display_name=fx_photo.jpg", seconds: 30)
-            #expect(indexed, "the media index has no row for the imported photo")
-            let shown = await guest.filesAppShows(folder: "Download/FilexTest", names: ["fx_photo.jpg", "blob.bin"])
-            note("the Files app lists the imports: \(shown)")
-            #expect(shown, "the guest's Files app does not list the imported files")
             // Every import, of whatever type, has a finished row: the guest's
-            // apps see only those.
+            // apps see only those. On a guest that has just booted the media
+            // provider's first scan of storage can complete a row itself, so
+            // the imports made later (Replace, Skip) are the ones that tell.
             let indexedAll = await guest.waitFor(guest.finishedRows(in: "Download/FilexTest/"), contains: "_display_name=blob.bin, _size=\(3 * Int(mib) + 17)", seconds: 30)
             let finished = try await guest.run(guest.finishedRows(in: "Download/FilexTest/")).text
             note("rows of the imports: \(finished)")
@@ -156,6 +150,14 @@ struct GuestFilesGuestTests {
             }
             let unfinished = try await guest.run(GuestFiles.unfinishedIndexQuery).text
             #expect(!unfinished.contains("FilexTest"), "an import is left pending: \(unfinished)")
+            // The gallery's index knows the photo, and the Files app lists it.
+            let indexed = await guest.waitFor(
+                "content query --uri content://media/external/images/media --projection _display_name:_size --where \"_display_name='fx_photo.jpg'\"",
+                contains: "_display_name=fx_photo.jpg", seconds: 30)
+            #expect(indexed, "the media index has no row for the imported photo")
+            let shown = await guest.filesAppShows(folder: "Download/FilexTest", names: ["fx_photo.jpg", "blob.bin"])
+            note("the Files app lists the imports: \(shown)")
+            #expect(shown, "the guest's Files app does not list the imported files")
 
             // MARK: Keep Both
             let again = [
@@ -221,6 +223,9 @@ struct GuestFilesGuestTests {
             try await settle(transfer)
             #expect(transfer.items.map(\.name) == ["fx_skip.txt"])
             #expect(try await guest.names(work).contains("fx_skip.txt"))
+            let skipped = await guest.waitFor(
+                guest.finishedRows(in: "Download/FilexTest/"), contains: "_display_name=fx_skip.txt, _size=7", seconds: 30)
+            #expect(skipped, "the row of the file imported last is not finished")
             #expect(try await guest.sha256(GuestPath.child("fx_new.txt", of: work)) == bench.sha256(again[1]), "Skip leaves the file alone")
 
             // MARK: Cancel an import
