@@ -137,6 +137,19 @@ struct GuestFilesGuestTests {
             #expect(Set(afterImport) == ["It's a note (1).txt", "fx_photo.jpg", "blob.bin", "Empty"], "\(afterImport)")
             await browser.load(work)
             #expect(Set(browser.entries(in: work).map(\.name)) == Set(afterImport))
+            // Every import, of whatever type, has a finished row: the guest's
+            // apps see only those. On a guest that has just booted the media
+            // provider's first scan of storage can complete a row itself, so
+            // the imports made later (Replace, Skip) are the ones that tell.
+            let indexedAll = await guest.waitFor(guest.finishedRows(in: "Download/FilexTest/"), contains: "_display_name=blob.bin, _size=\(3 * Int(mib) + 17)", seconds: 30)
+            let finished = try await guest.run(guest.finishedRows(in: "Download/FilexTest/")).text
+            note("rows of the imports: \(finished)")
+            #expect(indexedAll, "the media index has no finished row for blob.bin: \(finished)")
+            for name in ["It's a note (1).txt", "fx_photo.jpg", "blob.bin"] {
+                #expect(finished.contains("_display_name=\(name),"), "no finished row for \(name): \(finished)")
+            }
+            let unfinished = try await guest.run(GuestFiles.unfinishedIndexQuery).text
+            #expect(!unfinished.contains("FilexTest"), "an import is left pending: \(unfinished)")
             // The gallery's index knows the photo, and the Files app lists it.
             let indexed = await guest.waitFor(
                 "content query --uri content://media/external/images/media --projection _display_name:_size --where \"_display_name='fx_photo.jpg'\"",
@@ -180,9 +193,27 @@ struct GuestFilesGuestTests {
             let blob = GuestPath.child("blob.bin", of: work)
             #expect(try await guest.sha256(blob) == bench.sha256(replacement), "Replace puts the new file in place")
             #expect(try await guest.size(blob) == replacement.size)
+            // The replaced file's row is finished again, at the new size.
+            let replaced = await guest.waitFor(
+                guest.finishedRows(in: "Download/FilexTest/"), contains: "_display_name=blob.bin, _size=\(replacement.size)", seconds: 30)
+            #expect(replaced, "the replaced file's row did not come back finished")
             #expect(try await guest.run("cat '\(work)/Clash/inside.txt'").text == "keep\n", "a folder is never replaced")
             #expect(try await guest.sha256(GuestPath.child("Clash (1)", of: work)) == bench.sha256(overFolder), "the file goes beside the folder")
             await guest.expectNoPartials(work, "after Replace")
+
+            // MARK: Rows that earlier builds left unfinished
+            // A file the shell writes has a pending row, as an import of an
+            // earlier build left it. The first read of storage in a run
+            // finishes it.
+            _ = try await guest.run("echo old > '\(work)/Older import.cia'")
+            let pending = try await guest.run(GuestFiles.unfinishedIndexQuery).text
+            #expect(pending.contains("Older import.cia"), "the file has a pending row: \(pending)")
+            browser.reset()
+            browser.route = [FolderRoute(path: GuestPath.root), FolderRoute(path: work)]
+            await browser.load(work)
+            let recovered = await guest.waitFor(
+                guest.finishedRows(in: "Download/FilexTest/"), contains: "_display_name=Older import.cia,", seconds: 90)
+            #expect(recovered, "the first read of storage did not finish the older row")
 
             // MARK: Skip
             browser.received([try bench.pick("fx_new.txt", bytes: 7, seed: 31, modified: .now), try bench.pick("fx_skip.txt", bytes: 7, seed: 32, modified: .now)])
@@ -192,6 +223,9 @@ struct GuestFilesGuestTests {
             try await settle(transfer)
             #expect(transfer.items.map(\.name) == ["fx_skip.txt"])
             #expect(try await guest.names(work).contains("fx_skip.txt"))
+            let skipped = await guest.waitFor(
+                guest.finishedRows(in: "Download/FilexTest/"), contains: "_display_name=fx_skip.txt, _size=7", seconds: 30)
+            #expect(skipped, "the row of the file imported last is not finished")
             #expect(try await guest.sha256(GuestPath.child("fx_new.txt", of: work)) == bench.sha256(again[1]), "Skip leaves the file alone")
 
             // MARK: Cancel an import
@@ -809,6 +843,13 @@ struct GuestFilesGuestTests {
                 try? await Task.sleep(for: .seconds(2))
             }
             return false
+        }
+
+        /// The files of a folder (as `relative_path`, with its trailing slash)
+        /// whose rows the media provider has finished.
+        func finishedRows(in relativePath: String) -> String {
+            "content query --uri content://media/external/file --projection _display_name:_size "
+                + "--where \"relative_path='\(relativePath)' AND is_pending=0\""
         }
 
         func waitFor(_ command: String, contains needle: String, seconds: Int) async -> Bool {

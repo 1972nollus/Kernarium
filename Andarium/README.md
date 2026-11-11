@@ -383,7 +383,11 @@ is on. `AndariumCore/Adb` speaks the protocol.
   at a time; Install APK and Create bug report wait for it. An import is
   written to a hidden `.andarium-*.part` name beside its destination and moved
   into place, so a stopped or failed one leaves nothing and a Replace keeps the
-  original until the new file is whole; the guest's media index is then told.
+  original until the new file is whole. The move's own shell command then has
+  the guest's media index complete the file's row (a file the shell user
+  writes has only a pending one, which MediaStore keeps from other apps),
+  and the first time the browser reads storage in a run, rows that earlier
+  builds left that way are completed (`GuestFiles.unfinishedIndexQuery`).
   A transfer stops when the application leaves the foreground, and its files
   say so. Turning USB debugging off restarts adbd, which ends a transfer in
   flight: it fails, and Try Again runs it whole. Android reports its boot done
