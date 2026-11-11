@@ -34,7 +34,6 @@ struct FileBrowserModelTests {
         private(set) var sent: [Sent] = []
         private(set) var received: [String] = []
         private(set) var cancelled: [String] = []
-        private(set) var indexCompletions = 0
         private(set) var started: [String] = []
 
         func list(_ folder: String) async throws -> [GuestFile] {
@@ -91,8 +90,6 @@ struct FileBrowserModelTests {
             return url
         }
 
-        func completeIndex() async { indexCompletions += 1 }
-
         func importPickerStandIn(deliver: @escaping ([FilePick]) -> Void) -> AnyView? { nil }
     }
 
@@ -142,55 +139,6 @@ struct FileBrowserModelTests {
         #expect(backend.sent.map(\.path) == [GuestPath.child("new.txt", of: download)])
         #expect(backend.sent.map(\.replacing) == [false])
         #expect(browser.fresh == [GuestPath.child("new.txt", of: download)])
-    }
-
-    // MARK: The media index
-
-    @Test func theIndexIsCompletedOnceWhenStorageIsFirstRead() async throws {
-        let (browser, backend) = await makeBrowser()
-        try await waitUntil { backend.indexCompletions == 1 }
-        // Neither another folder, a reload nor an import asks again.
-        browser.received([pick("a.txt")])
-        try await settle(try #require(browser.transfer))
-        await browser.load(download)
-        await browser.load(root)
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(backend.indexCompletions == 1)
-    }
-
-    @Test func aNewRunCompletesTheIndexAgain() async throws {
-        let (browser, backend) = await makeBrowser()
-        try await waitUntil { backend.indexCompletions == 1 }
-        browser.reset()
-        browser.route = [FolderRoute(path: root), FolderRoute(path: download)]
-        await browser.load(download)
-        try await waitUntil { backend.indexCompletions == 2 }
-    }
-
-    @Test func aFolderThatCannotBeReadDoesNotUseUpTheCompletion() async throws {
-        let backend = ScriptedBackend()
-        backend.listingFailure = ScriptedBackend.Failure(errorDescription: "The guest is not up.")
-        let (browser, _) = await makeBrowser(backend: backend)
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(backend.indexCompletions == 0)
-        backend.listingFailure = nil
-        await browser.load(download)
-        try await waitUntil { backend.indexCompletions == 1 }
-    }
-
-    @Test func aTransferInProgressHoldsTheCompletionBack() async throws {
-        let backend = ScriptedBackend()
-        backend.holding = ["held.bin"]
-        let browser = FileBrowserModel(backend: backend, center: NotificationCenter())
-        browser.route = [FolderRoute(path: root), FolderRoute(path: download)]
-        browser.received([pick("held.bin")])
-        try await waitUntil { backend.started.contains("held.bin") }
-        await browser.load(download)
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(backend.indexCompletions == 0)
-        // When the transfer is closed its folder is read again, and that asks.
-        browser.closeTransfer()
-        try await waitUntil { backend.indexCompletions == 1 }
     }
 
     @Test func picksOfOneNameAreToldApartAsTheFilesAppDoes() async throws {

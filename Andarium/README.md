@@ -233,7 +233,7 @@ control out.
 - **Backup.** The guest is left out of iCloud and computer backups unless the
   user turns on Back up guest data.
 - **Release notes.** `Shared/WhatsNew.json` bundles the notes per build,
-  from build 8 (build 5, the first public release, and builds 6 and 7 have
+  from build 9 (build 5, the first public release, and builds 6 to 8 have
   none).
   The first launch of an update that carries notes shows a ribbon above Start,
   on at most three launches, that opens them; a build shows the notes up to its
@@ -385,9 +385,7 @@ is on. `AndariumCore/Adb` speaks the protocol.
   into place, so a stopped or failed one leaves nothing and a Replace keeps the
   original until the new file is whole. The move's own shell command then has
   the guest's media index complete the file's row (a file the shell user
-  writes has only a pending one, which MediaStore keeps from other apps),
-  and the first time the browser reads storage in a run, rows that earlier
-  builds left that way are completed (`GuestFiles.unfinishedIndexQuery`).
+  writes has only a pending one, which MediaStore keeps from other apps).
   A transfer stops when the application leaves the foreground, and its files
   say so. Turning USB debugging off restarts adbd, which ends a transfer in
   flight: it fails, and Try Again runs it whole. Android reports its boot done

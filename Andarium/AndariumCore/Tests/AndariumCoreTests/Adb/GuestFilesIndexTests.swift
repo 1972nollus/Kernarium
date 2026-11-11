@@ -7,8 +7,7 @@ import Testing
 
 private let root = GuestFilePath.root
 
-/// The media index's side of an import: the scan that follows the move, and
-/// the recovery of rows that earlier builds left incomplete.
+/// The media index's side of an import: the scan that follows the move.
 struct GuestFilesIndexTests {
     @Test func theScanNamesTheFileAsAnEncodedUri() {
         #expect(GuestFiles.scanCommand(for: root + "/Download/Clip.mov")
@@ -167,57 +166,5 @@ struct GuestFilesIndexTests {
         #expect(try harness.finish(replacing: false, amExit: 1) == 0)
         #expect(harness.read("final.cia") == "body")
         #expect(harness.scans.count == 1)
-    }
-
-    // MARK: Recovery
-
-    @Test func theQueryAsksForTheShellsPendingRowsUnderInternalStorage() {
-        let query = GuestFiles.unfinishedIndexQuery
-        #expect(query.hasPrefix("content query --uri content://media/external/file --projection _data --where '"))
-        #expect(query.contains("is_pending=1 AND owner_package_name="))
-        #expect(query.contains("com.android.shell"))
-        #expect(query.contains("_data LIKE "))
-        #expect(query.contains("\(root)/%"))
-        #expect(query.hasSuffix(" | head -n 2000"))
-    }
-
-    @Test func theFilesToCompleteComeOutOfTheQueryOutput() {
-        let output = """
-            Row: 0 _data=\(root)/Download/Captain Toad-Treasure Tracker(USA).cia
-            Row: 1 _data=\(root)/Download/Winlator_11.2.apk
-            Row: 2 _data=\(root)/Download/.andarium-c88d7783.part
-            Row: 3 _data=/data/media/0/elsewhere.bin
-            Row: 4 _data=\(root)/Download/a, b=c.zip
-            Row: 5 _data=\(root)/../escape.bin
-            a continuation line
-            Row: 6 _data=\(root)/Music/song.mp3
-
-            """
-        #expect(GuestFiles.filesWithUnfinishedIndex(in: output) == [
-            root + "/Download/Captain Toad-Treasure Tracker(USA).cia",
-            root + "/Download/Winlator_11.2.apk",
-            root + "/Download/a, b=c.zip",
-            root + "/Music/song.mp3",
-        ])
-        #expect(GuestFiles.filesWithUnfinishedIndex(in: "No result found.\n").isEmpty)
-        #expect(GuestFiles.filesWithUnfinishedIndex(in: "").isEmpty)
-    }
-
-    @Test func aRecoveryCompletesOnlyAsManyFilesAsItsLimit() {
-        let output = (0..<(GuestFiles.unfinishedIndexLimit + 50))
-            .map { "Row: \($0) _data=\(root)/Download/f\($0).bin" }.joined(separator: "\n")
-        let files = GuestFiles.filesWithUnfinishedIndex(in: output)
-        #expect(files.count == GuestFiles.unfinishedIndexLimit)
-        #expect(files.first == root + "/Download/f0.bin")
-    }
-
-    @Test func theScansGoInBatchesOfFiles() {
-        let paths = (0..<60).map { "\(root)/Download/f\($0).bin" }
-        let batches = GuestFiles.scanBatches(for: paths)
-        #expect(batches.count == 3)
-        #expect(batches.map { $0.components(separatedBy: "; ").count } == [25, 25, 10])
-        #expect(batches[0].hasPrefix(GuestFiles.scanCommand(for: paths[0]) + "; "))
-        #expect(GuestFiles.scanBatches(for: []).isEmpty)
-        #expect(GuestFiles.scanBatches(for: [paths[0]]) == [GuestFiles.scanCommand(for: paths[0])])
     }
 }

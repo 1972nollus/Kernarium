@@ -128,11 +128,6 @@ protocol GuestFilesBackend: AnyObject {
         progress: @escaping @Sendable (_ moved: UInt64, _ total: UInt64) -> Void
     ) async throws -> URL
 
-    /// Has the guest's media index complete the rows that imports of earlier
-    /// builds left in part, so that the guest's apps see those files (an
-    /// import completes its own file's row). Best effort.
-    func completeIndex() async
-
     /// What Import opens instead of the system's document picker: the
     /// Simulator has no documents to pick. Nil on a device.
     func importPickerStandIn(deliver: @escaping ([FilePick]) -> Void) -> AnyView?
