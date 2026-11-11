@@ -25,7 +25,8 @@
           "Fixed a crash when returning to Andarium from the background",
           "Fixed crashes in some 3D games and apps",
           "Fixed a crash when using the gyroscope",
-          "Fixed high CPU use and heat after a network connection drops"
+          "Fixed high CPU use and heat after a network connection drops",
+          "Reduced stutters and sound dropouts under load"
         ],
         "symbol": "wrench.and.screwdriver.fill"
       }

@@ -51,9 +51,9 @@ struct WhatsNewTests {
         let entries = try #require(releases.first?.entries)
         #expect(entries.map(\.id) == ["file-browser", "more-memory", "stability-fixes"])
         #expect(entries.first?.title == "File browser")
-        // The fixes are five points under a title, with no sentence of their own.
+        // The fixes are six points under a title, with no sentence of their own.
         let fixes = try #require(entries.last)
-        #expect(fixes.title == "Stability fixes" && fixes.text == nil && fixes.points.count == 5)
+        #expect(fixes.title == "Stability fixes" && fixes.text == nil && fixes.points.count == 6)
         #expect(fixes.place == nil && fixes.requirement == nil)
     }
 
