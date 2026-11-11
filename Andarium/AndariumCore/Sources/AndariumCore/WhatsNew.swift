@@ -11,7 +11,7 @@ public struct WhatsNewRelease: Identifiable, Hashable, Decodable, Sendable {
     /// TestFlight builds share one marketing version, so the build orders
     /// releases; every archive's is above the one before.
     public let build: Int
-    /// The version as Info shows it: "1.0 (8)".
+    /// The version as Info shows it: "1.0 (9)".
     public let version: String
     /// The day the release came out, "2026-11-12"; left out where the day is
     /// not known when the notes are written.
