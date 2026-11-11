@@ -1015,7 +1015,10 @@ final class AppModel {
     }
 
     /// Starts the guest in `mode`. Start on an update that did not finish
-    /// tries the update again.
+    /// tries the update again. The start carries any storage growth the
+    /// person chose: the lifecycle applies it as the start begins, and the
+    /// guest is saved with the new capacity before the runtime, which grows
+    /// the data disk in every kind of start, is handed it.
     func start(_ mode: StartMode) {
         switch lifecycle.start(mode, host: host, plan: plan) {
         case let .allowed(kind):
@@ -1089,6 +1092,7 @@ final class AppModel {
             session.showStats = showStats
         }
         lifecycle.phase = end.phase
+        lifecycle.grewFromGiB = nil
         // The run changed the data disk: what Home states of the storage is
         // what the disk holds now, not what it held when the guest loaded.
         if let driver { lifecycle.guest?.usedBytes = driver.measuredUsedBytes() }
