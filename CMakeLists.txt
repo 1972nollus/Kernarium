@@ -97,6 +97,12 @@ option(UML_KERNARIUM_AUTOMATION_HARNESS
 option(UML_APP_STORE_RUNTIME
     "Build the App Store Kernarium runtime: it reads no environment variable that tunes, observes or drives a run, and carries no debugging or automation support"
     OFF)
+option(UML_IOS26_DIAGNOSTIC
+    "Return detailed experimental startup-stage errors instead of the generic runtime error"
+    OFF)
+if(UML_IOS26_DIAGNOSTIC)
+    add_compile_definitions(UML_IOS26_DIAGNOSTIC)
+endif()
 option(UML_BUILD_NETWORK_PROVIDER
     "Build the optional SLiRP network provider"
     ${UML_BUILD_KERNEL_RUNNER})

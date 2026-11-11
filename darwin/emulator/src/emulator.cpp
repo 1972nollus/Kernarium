@@ -69,6 +69,19 @@ constexpr unsigned int guest_trim_wait_ms = 3000U;
  * now is not coming soon, and the caller is not held longer for it. */
 constexpr std::chrono::milliseconds guest_memory_wait {500};
 
+/* The public API deliberately has one generic runtime error. Experimental
+ * iOS builds need to distinguish failures that happen before the guest can
+ * print a console line, so their UI can report the exact startup gate. */
+[[nodiscard]] constexpr int startup_runtime_error(int stage) noexcept
+{
+#ifdef UML_IOS26_DIAGNOSTIC
+	return -1000 - stage;
+#else
+	(void)stage;
+	return -UML_EMULATOR_RUNTIME_ERROR;
+#endif
+}
+
 /* A line written with write(2) alone: it takes no lock and allocates
  * nothing, so it can be written while the guest's threads are held. */
 void write_line(const char *before, unsigned number,
@@ -423,7 +436,7 @@ public:
 		 */
 		TranslationCacheRunScope translation_cache_run;
 		if (!run_scope.entered())
-			return -UML_EMULATOR_RUNTIME_ERROR;
+			return startup_runtime_error(41);
 		clear_run_end();
 		/* A process runs one guest, and that guest may restart itself: this
 		 * handle's guest, after a run that ended with a restart, goes back to
@@ -455,7 +468,7 @@ public:
 		    !::uml::runtime::set_translation_cache_budget(
 				prepared.jit_cache_budget, prepared.guest_cpus,
 				prepared.jit_executor_cache_budget))
-			return -UML_EMULATOR_RUNTIME_ERROR;
+			return startup_runtime_error(42);
 		/* Before any gadget executor exists, for the same reason; an
 		 * x86-64 address space starts on the gadget engine in a JIT run
 		 * too. The limit the launch states for a host that sets none comes
@@ -470,7 +483,7 @@ public:
 		}
 		/* A JIT run activates the managed multi-vCPU executor pool. */
 		if (!translation_cache_run.enter(jit_run))
-			return -UML_EMULATOR_RUNTIME_ERROR;
+			return startup_runtime_error(43);
 		auto &arguments = prepared.arguments;
 		std::vector<char *> argument_pointers;
 		argument_pointers.reserve(arguments.size() + 1);
@@ -489,7 +502,7 @@ public:
 			environment_pointers.push_back(entry.data());
 		environment_pointers.push_back(nullptr);
 		if (!process_admission.enter(runtime_))
-			return -UML_EMULATOR_RUNTIME_ERROR;
+			return startup_runtime_error(44);
 		/* Another run may have claimed the guest while this one waited for
 		 * admission. */
 		if (restartable_) {
@@ -506,12 +519,12 @@ public:
 			prepared.guest_memory_bytes);
 		if (!native_layout.valid)
 			return native_layout.reservation_failed ?
-				-UML_EMULATOR_RUNTIME_ERROR :
+				startup_runtime_error(45) :
 				-UML_EMULATOR_INVALID_ARGUMENT;
 		const ::uml::runtime::NativeKernelLayoutScope layout_scope{
 			native_layout};
 		if (!layout_scope.entered())
-			return -UML_EMULATOR_RUNTIME_ERROR;
+			return startup_runtime_error(46);
 		/* Where the host sets no limit and the launch stated one, a Mac run
 		 * says when its footprint goes past it: the line iOS would have
 		 * ended the process at. It ends with the run. */

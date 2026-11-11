@@ -164,7 +164,15 @@ public struct RunEnd: Equatable, Sendable {
         } else if restartedInALoop {
             "the guest kept restarting"
         } else {
-            "runtime result \(result)"
+            switch result {
+            case -1041: "diagnostic: runtime admission failed (-1041)"
+            case -1042: "diagnostic: JIT cache budget failed (-1042)"
+            case -1043: "diagnostic: JIT executor pool failed (-1043)"
+            case -1044: "diagnostic: process admission failed (-1044)"
+            case -1045: "diagnostic: guest address-space reservation failed (-1045)"
+            case -1046: "diagnostic: guest address-space activation failed (-1046)"
+            default: "runtime result \(result)"
+            }
         }
         if let uptimeSeconds {
             lines.append("Guest ended: \(reason) after \(Formats.elapsed(uptimeSeconds))")

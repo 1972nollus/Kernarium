@@ -31,12 +31,13 @@ public enum Limits {
     /// (`MemoryPolicy`).
     public static let runtimeMemoryRangeMiB = 512...(1 << 20)
     public static let runtimeMemoryStepMiB = 64
-    /// The least memory the application offers Android, the size below which
-    /// Android is not usable. The memory ruler starts here and counts in
+    /// The least memory this experimental application offers Android. The
+    /// upstream application uses 1.5 GiB; 1 GiB is exposed here to diagnose
+    /// startup failures on memory-constrained iPhones. The ruler counts in
     /// `memoryStepMiB`; its top at a vCPU count comes from `MemoryPolicy`,
     /// which also takes the bottom down to that top on a device that cannot
     /// give this much.
-    public static let minimumMemoryMiB = 1536
+    public static let minimumMemoryMiB = 1024
     public static let memoryStepMiB = runtimeMemoryStepMiB
     /// The range a new guest's memory is held within, in half gibibytes:
     /// `MemoryPolicy.defaultMemoryMiB` states the figure, from the runtime's

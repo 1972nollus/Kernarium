@@ -77,7 +77,7 @@ jobs:
 
       - name: Build and package the Android runtime
         run: |
-          cmake --preset kernarium-ios-device-android
+          cmake --preset kernarium-ios-device-android -DUML_IOS26_DIAGNOSTIC=ON
           cmake --build --preset kernarium-ios-device-android --parallel 3
           Kernarium/scripts/package-ios-frameworks.sh --runtimes android
           Andarium/scripts/stage-system-image.py
@@ -102,17 +102,17 @@ jobs:
           mkdir -p .build/ipa/Payload
           cp -R "$APP" .build/ipa/Payload/
           ditto -c -k --sequesterRsrc --keepParent .build/ipa/Payload \
-            .build/Andarium-iOS26-experimental-unsigned.ipa
-          shasum -a 256 .build/Andarium-iOS26-experimental-unsigned.ipa \
-            > .build/Andarium-iOS26-experimental-unsigned.ipa.sha256
+            .build/Andarium-iOS26-diagnostic-unsigned.ipa
+          shasum -a 256 .build/Andarium-iOS26-diagnostic-unsigned.ipa \
+            > .build/Andarium-iOS26-diagnostic-unsigned.ipa.sha256
 
       - name: Upload experimental IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Andarium-iOS26-experimental-unsigned
+          name: Andarium-iOS26-diagnostic-unsigned
           path: |
-            .build/Andarium-iOS26-experimental-unsigned.ipa
-            .build/Andarium-iOS26-experimental-unsigned.ipa.sha256
+            .build/Andarium-iOS26-diagnostic-unsigned.ipa
+            .build/Andarium-iOS26-diagnostic-unsigned.ipa.sha256
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -128,15 +128,16 @@ jobs:
             echo 'Unsigned IPA: signing through SideStore or another compatible signer is required.'
             echo 'Confirmed: installation through SideStore and successful launch on iOS 26.6.1.'
             echo 'Other app functionality remains experimental and has not been fully verified.'
+            echo 'Diagnostic build: guest RAM can be lowered to 1 GiB and early startup failures show a specific -1041 through -1046 code.'
             echo
             echo 'Source code: https://github.com/1972nollus/Kernarium/tree/ios26-experiment'
             echo 'Original project: https://github.com/imxieyi/Kernarium'
             echo 'License: GNU GPL v2.'
           } > .build/release-notes.md
-          gh release create andarium-ios26-experimental-1 \
-            .build/Andarium-iOS26-experimental-unsigned.ipa \
-            .build/Andarium-iOS26-experimental-unsigned.ipa.sha256 \
+          gh release create andarium-ios26-diagnostic-2 \
+            .build/Andarium-iOS26-diagnostic-unsigned.ipa \
+            .build/Andarium-iOS26-diagnostic-unsigned.ipa.sha256 \
             --target "$GITHUB_SHA" \
-            --title "Andarium iOS 26 experimental build 1" \
+            --title "Andarium iOS 26 diagnostic build 2" \
             --prerelease \
             --notes-file .build/release-notes.md
