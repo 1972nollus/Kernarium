@@ -279,7 +279,7 @@
       "UML_APP_STORE_APPLICATION=1",
       "$(inherited)",
     ],
-    "IPHONEOS_DEPLOYMENT_TARGET": "27.0",
+    "IPHONEOS_DEPLOYMENT_TARGET": "26.0",
     "ONLY_ACTIVE_ARCH[config=Debug]": "YES",
     "SDKROOT": "iphoneos",
     "SWIFT_ACTIVE_COMPILATION_CONDITIONS[config=AppStore]": "APP_STORE $(inherited)",

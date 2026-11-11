@@ -1,0 +1,115 @@
+name: Build experimental Andarium for iOS 26
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ios26-experiment
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 360
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+      UML_APPLE_GPU_DEPENDENCY_JOBS: "3"
+      UML_IOS_NETWORK_DEPENDENCY_JOBS: "3"
+      UML_IOS_STORAGE_DEPENDENCY_JOBS: "3"
+      UML_IOS_ZSTD_DEPENDENCY_JOBS: "3"
+
+    steps:
+      - name: Check out the iOS 26 experiment
+        uses: actions/checkout@v4
+
+      - name: Show build environment
+        run: |
+          uname -a
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          df -h /
+
+      - name: Install build tools
+        run: |
+          brew install autoconf automake cmake gettext gperf libtool meson ninja pkg-config
+          git config --global user.name "Andarium iOS 26 Builder"
+          git config --global user.email "actions@users.noreply.github.com"
+
+      - name: Install the Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: Download accepted kernel and Android system
+        run: |
+          mkdir -p .build/kernel/artifacts .build/release-download
+          curl --fail --location --retry 3 \
+            --output .build/kernel.tar.gz \
+            https://github.com/imxieyi/Kernarium/releases/download/1.0b9-beta/android-6.18-arm64-4k-20261111-6.18.60-mc2.tar.gz
+          curl --fail --location --retry 3 \
+            --output .build/system.tar.gz \
+            https://github.com/imxieyi/Kernarium/releases/download/1.0b9-beta/lineage24-mainline6.18-4k-20261110-los24-r22.tar.gz
+          echo "79fc3acb85a347736fb27192c3a1c26ccfc21ba8ffbcc1a256f53b274b79856b  .build/kernel.tar.gz" | shasum -a 256 -c -
+          echo "0ba8a67798d79260221349cb9b749dd1bdfc1b679a55428fa1f6d12cd54c3aa2  .build/system.tar.gz" | shasum -a 256 -c -
+          tar -xzf .build/kernel.tar.gz -C .build/kernel/artifacts
+          tar -xzf .build/system.tar.gz -C .build/release-download
+          python3 android/lineage-24/tools/install-release.py \
+            --source "$PWD/.build/release-download/lineage24-mainline6.18-4k-20261110-los24-r22"
+          rm -f .build/kernel.tar.gz .build/system.tar.gz
+          rm -rf .build/release-download
+          df -h /
+
+      - name: Prepare pinned dependency sources
+        run: |
+          dependencies/prepare.sh --product apple-gpu-vulkan-experiment
+          dependencies/prepare.sh --product ios-network
+          dependencies/prepare.sh --product ios-storage
+          dependencies/prepare.sh --product ios-compression
+
+      - name: Build iOS 26 GPU and network dependencies
+        run: |
+          dependencies/build-apple-gpu.sh --platform ios --jobs 3
+          dependencies/build-ios-network.sh --platform ios --jobs 3
+          df -h /
+
+      - name: Build and package the Android runtime
+        run: |
+          cmake --preset kernarium-ios-device-android
+          cmake --build --preset kernarium-ios-device-android --parallel 3
+          Kernarium/scripts/package-ios-frameworks.sh --runtimes android
+          Andarium/scripts/stage-system-image.py
+
+      - name: Build unsigned Andarium app
+        run: |
+          xcodebuild \
+            -project Andarium/Andarium.xcodeproj \
+            -scheme Andarium \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath .build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          APP=.build/DerivedData/Build/Products/Release-iphoneos/Andarium.app
+          test -d "$APP"
+          /usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist"
+          mkdir -p .build/ipa/Payload
+          cp -R "$APP" .build/ipa/Payload/
+          ditto -c -k --sequesterRsrc --keepParent .build/ipa/Payload \
+            .build/Andarium-iOS26-experimental-unsigned.ipa
+          shasum -a 256 .build/Andarium-iOS26-experimental-unsigned.ipa \
+            > .build/Andarium-iOS26-experimental-unsigned.ipa.sha256
+
+      - name: Upload experimental IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Andarium-iOS26-experimental-unsigned
+          path: |
+            .build/Andarium-iOS26-experimental-unsigned.ipa
+            .build/Andarium-iOS26-experimental-unsigned.ipa.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

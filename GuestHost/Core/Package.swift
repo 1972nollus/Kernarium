@@ -9,7 +9,7 @@ import PackageDescription
 // application and is not a package (GuestHost/README.md).
 let package = Package(
     name: "GuestHostCore",
-    platforms: [.macOS("27.0"), .iOS("27.0")],
+    platforms: [.macOS("27.0"), .iOS("26.0")],
     products: [
         .library(name: "GuestHostCore", targets: ["GuestHostCore"]),
     ],

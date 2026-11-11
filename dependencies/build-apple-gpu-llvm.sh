@@ -25,7 +25,7 @@ PREFIX=
 WORK_ROOT=
 JOBS=8
 # Every Apple product, and the build machine's own pass, builds at this floor.
-DEPLOYMENT_TARGET=27.0
+DEPLOYMENT_TARGET=26.0
 
 fail()
 {

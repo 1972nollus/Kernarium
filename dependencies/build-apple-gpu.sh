@@ -102,7 +102,7 @@ arm64|aarch64) ;;
 esac
 
 # Every Apple product, and the build machine's own pass, builds at this floor.
-DEPLOYMENT_TARGET=27.0
+DEPLOYMENT_TARGET=26.0
 
 # The software variant has no Vulkan driver, no Venus protocol and no render
 # server; the other platforms render on KosmicKrisp.

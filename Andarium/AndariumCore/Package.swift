@@ -9,7 +9,7 @@ import PackageDescription
 // applications decide the same way.
 let package = Package(
     name: "AndariumCore",
-    platforms: [.macOS("27.0"), .iOS("27.0")],
+    platforms: [.macOS("27.0"), .iOS("26.0")],
     products: [
         .library(name: "AndariumCore", targets: ["AndariumCore"]),
     ],
