@@ -33,6 +33,38 @@
 namespace uml::audio {
 namespace {
 
+[[nodiscard]] bool connectPlayer(
+    AVAudioEngine* engine,
+    AVAudioPlayerNode* player,
+    AVAudioFormat* format)
+{
+    if (@available(iOS 27.0, macOS 27.0, *)) {
+        NSError* error = nil;
+        return [engine connect:player
+                         to:engine.mainMixerNode
+                     format:format
+                      error:&error];
+    }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    [engine connect:player to:engine.mainMixerNode format:format];
+#pragma clang diagnostic pop
+    return true;
+}
+
+[[nodiscard]] bool playNode(AVAudioPlayerNode* player)
+{
+    if (@available(iOS 27.0, macOS 27.0, *)) {
+        NSError* error = nil;
+        return [player playAndReturnError:&error];
+    }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    [player play];
+#pragma clang diagnostic pop
+    return true;
+}
+
 struct NotificationFlags final {
     explicit NotificationFlags(std::shared_ptr<const Waker> source)
         : wake(std::move(source))
@@ -205,8 +237,9 @@ public:
          * deactivation that carries an interruption context. Every
          * recommendation ends the interruption; whether the sink takes the
          * session back at once depends on its advice (see endInterruption). */
-        deactivationObserver_ = [[NSNotificationCenter defaultCenter]
-            addObserverForName:AVAudioSessionDidBecomeInactiveNotification
+        if (@available(iOS 27.0, *)) {
+            deactivationObserver_ = [[NSNotificationCenter defaultCenter]
+                addObserverForName:AVAudioSessionDidBecomeInactiveNotification
                         object:[AVAudioSession sharedInstance]
                          queue:nil
                     usingBlock:^(NSNotification* notification) {
@@ -219,8 +252,8 @@ public:
                       if (context.interruptionContext != nil)
                           flags->signal(flags->interruptionBegan);
                     }];
-        resumptionObserver_ = [[NSNotificationCenter defaultCenter]
-            addObserverForName:AVAudioSessionResumptionRecommendationNotification
+            resumptionObserver_ = [[NSNotificationCenter defaultCenter]
+                addObserverForName:AVAudioSessionResumptionRecommendationNotification
                         object:[AVAudioSession sharedInstance]
                          queue:nil
                     usingBlock:^(NSNotification* notification) {
@@ -237,6 +270,32 @@ public:
                       }
                       flags->signal(flags->interruptionEnded);
                     }];
+        } else {
+            deactivationObserver_ = [[NSNotificationCenter defaultCenter]
+                addObserverForName:AVAudioSessionInterruptionNotification
+                            object:[AVAudioSession sharedInstance]
+                             queue:nil
+                        usingBlock:^(NSNotification* notification) {
+                          const auto flags = weakNotifications.lock();
+                          if (!flags)
+                              return;
+                          const NSNumber* type = notification.userInfo[
+                              AVAudioSessionInterruptionTypeKey];
+                          if (type.unsignedIntegerValue ==
+                              AVAudioSessionInterruptionTypeBegan) {
+                              flags->signal(flags->interruptionBegan);
+                          } else {
+                              const NSNumber* options = notification.userInfo[
+                                  AVAudioSessionInterruptionOptionKey];
+                              if ((options.unsignedIntegerValue &
+                                   AVAudioSessionInterruptionOptionShouldResume) != 0) {
+                                  flags->resumeRecommended.store(
+                                      true, std::memory_order_release);
+                              }
+                              flags->signal(flags->interruptionEnded);
+                          }
+                        }];
+        }
 #endif
     }
 
@@ -315,11 +374,7 @@ public:
                     return false;
             }
             [engine_ disconnectNodeOutput:player_];
-            NSError* connectError = nil;
-            if (![engine_ connect:player_
-                               to:engine_.mainMixerNode
-                           format:format_
-                            error:&connectError]) {
+            if (!connectPlayer(engine_, player_, format_)) {
                 configured_ = false;
                 prepared_ = false;
                 running_ = false;
@@ -401,7 +456,7 @@ public:
             // Before the player plays, so that its first completion has it.
             if (engineRuns)
                 measureOutputLatency();
-            if (!engineRuns || ![player_ playAndReturnError:&error]) {
+            if (!engineRuns || !playNode(player_)) {
                 deactivateSession();
                 failToStart();
                 return true;
@@ -588,7 +643,7 @@ public:
                     (engine_.isRunning || [engine_ startAndReturnError:&error]);
                 if (engineRuns)
                     measureOutputLatency();
-                if (engineRuns && [player_ playAndReturnError:&error]) {
+                if (engineRuns && playNode(player_)) {
                     faulted_ = false;
                 } else {
                     abortPending();
@@ -834,7 +889,7 @@ private:
                       // the periods handed to it later start at once instead
                       // of after the player's own start-up.
                       if (running) {
-                          (void)[player playAndReturnError:&error];
+                          (void)playNode(player);
                           // The engine reports that it runs well before the
                           // audio hardware delivers its first cycle: a fifth
                           // of a second has been measured on the iPad mini
@@ -900,7 +955,7 @@ private:
             if (engine_.isRunning || [engine_ startAndReturnError:&error]) {
                 measureOutputLatency();
                 leaveMute();
-                playing = [player_ playAndReturnError:&error];
+                playing = playNode(player_);
             }
         } @catch (NSException*) {
         }

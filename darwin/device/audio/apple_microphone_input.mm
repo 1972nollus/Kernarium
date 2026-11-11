@@ -127,14 +127,10 @@ private:
             CaptureRing* destination = ring;
             const std::uint32_t frameBytes =
                 channels * protocol::bytesPerSample;
-            NSError* tapError = nil;
-            const BOOL tapped = [input
-                installTapOnBus:0
-                     bufferSize:static_cast<AVAudioFrameCount>(
-                                    inputFormat.sampleRate * tapSeconds)
-                         format:inputFormat
-                          error:&tapError
-                          block:^(AVAudioPCMBuffer* buffer, AVAudioTime*) {
+            const AVAudioFrameCount tapFrames =
+                static_cast<AVAudioFrameCount>(inputFormat.sampleRate * tapSeconds);
+            AVAudioNodeTapBlock tapBlock =
+                ^(AVAudioPCMBuffer* buffer, AVAudioTime*) {
                                __block BOOL supplied = NO;
                                converted.frameLength = 0;
                                NSError* error = nil;
@@ -164,7 +160,24 @@ private:
                                        std::size_t {converted.frameLength} *
                                            frameBytes));
                                }
-                             }];
+                             };
+            BOOL tapped = YES;
+            if (@available(iOS 27.0, macOS 27.0, *)) {
+                NSError* tapError = nil;
+                tapped = [input installTapOnBus:0
+                                     bufferSize:tapFrames
+                                         format:inputFormat
+                                          error:&tapError
+                                          block:tapBlock];
+            } else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+                [input installTapOnBus:0
+                             bufferSize:tapFrames
+                                 format:inputFormat
+                                  block:tapBlock];
+#pragma clang diagnostic pop
+            }
             if (!tapped) {
                 closeSession();
                 return false;
@@ -233,8 +246,9 @@ public:
          * session when the microphone stops), and the system's resumption
          * recommendation. An interruption is a deactivation that carries an
          * interruption context. */
-        deactivationObserver_ = [NSNotificationCenter.defaultCenter
-            addObserverForName:AVAudioSessionDidBecomeInactiveNotification
+        if (@available(iOS 27.0, *)) {
+            deactivationObserver_ = [NSNotificationCenter.defaultCenter
+                addObserverForName:AVAudioSessionDidBecomeInactiveNotification
                         object:[AVAudioSession sharedInstance]
                          queue:nil
                     usingBlock:^(NSNotification* notification) {
@@ -247,8 +261,8 @@ public:
                       if (context.interruptionContext != nil)
                           capture->interrupt();
                     }];
-        resumptionObserver_ = [NSNotificationCenter.defaultCenter
-            addObserverForName:AVAudioSessionResumptionRecommendationNotification
+            resumptionObserver_ = [NSNotificationCenter.defaultCenter
+                addObserverForName:AVAudioSessionResumptionRecommendationNotification
                         object:[AVAudioSession sharedInstance]
                          queue:nil
                     usingBlock:^(NSNotification* notification) {
@@ -261,6 +275,28 @@ public:
                       capture->resume(context.recommendation ==
                           AVAudioSessionResumptionRecommendationShouldResume);
                     }];
+        } else {
+            deactivationObserver_ = [NSNotificationCenter.defaultCenter
+                addObserverForName:AVAudioSessionInterruptionNotification
+                            object:[AVAudioSession sharedInstance]
+                             queue:nil
+                        usingBlock:^(NSNotification* notification) {
+                          const auto capture = weak.lock();
+                          if (!capture)
+                              return;
+                          const NSNumber* type = notification.userInfo[
+                              AVAudioSessionInterruptionTypeKey];
+                          if (type.unsignedIntegerValue ==
+                              AVAudioSessionInterruptionTypeBegan) {
+                              capture->interrupt();
+                          } else {
+                              const NSNumber* options = notification.userInfo[
+                                  AVAudioSessionInterruptionOptionKey];
+                              capture->resume((options.unsignedIntegerValue &
+                                  AVAudioSessionInterruptionOptionShouldResume) != 0);
+                          }
+                        }];
+        }
 #endif
     }
 
