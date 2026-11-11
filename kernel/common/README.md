@@ -320,11 +320,13 @@ it. The bridge fields used below are defined by the comments in
   XRGB8888 (the first format) and the host ignores the alpha byte; the
   [Android product](../mainline-6.18/README.md#android-product) offers the other
   32-bit RGB orders.
-- An in-band vhost-user kick to a Virtio GPU or sound device asks for no
-  acknowledgement, so the kicking CPU, which holds the device's socket with its
-  interrupts off, never waits for the backend's queue work. Every other
-  request on the socket, any other kick included, is a round trip that serves
-  the backend's requests while it waits.
+- An in-band vhost-user kick asks for no acknowledgement, whatever the device
+  but the console, so the kicking CPU, which holds the device's socket with its
+  interrupts off, never waits for the backend's thread. A console kick waits
+  for its answer and serves the backend's requests meanwhile, as every other
+  request on the socket does: the console driver spins on its queue after a
+  kick, and its backend may be waiting for the guest's answer to a request of
+  its own.
 - The Virtio sound driver runs a substream's elapsed-period work on its
   device's kthread worker (`virtsnd-<device>`) at the lowest real-time
   priority, not on the system workqueue.
@@ -341,8 +343,13 @@ it. The bridge fields used below are defined by the comments in
   bytes, so it answers where a policy keeps the console from `/proc/meminfo`.
 - A command that answers with what the kernel prints (`sysrq`, `stack`)
   sends its client what the consoles write while it runs, whichever vCPU
-  writes it, and nothing after its final reply
-  (`guest-mconsole-console-clients`).
+  writes it, and nothing after its final reply. The final reply names the
+  command and what it did: `sysrq s ok`, `stack ok`, or an error,
+  `sysrq s disabled` when SysRq or the operation is off and `sysrq a failed`
+  for a key without an operation. A client keys on that reply, not on the
+  printed text, which a console may write late or not at all
+  (`guest-mconsole-console-clients`). `sysrq b` replies first, since the guest
+  restarts without another chance.
 - The management console, the UML RTC alarm, VNC input, and a vhost-user device
   whose wakeup is enabled in sysfs wake any suspend. The Darwin network
   interface wakes only a suspend the guest started itself, as a phone's wireless
