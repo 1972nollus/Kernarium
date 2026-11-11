@@ -325,17 +325,6 @@ extension AdbGuestOperations {
             try FileDownloadOperation.run(session: session, file: file, into: directory, progress: throttle.report)
         }
     }
-
-    /// Has the media index complete the rows that earlier imports left in
-    /// part: the files it holds so are asked for, a few at a time, and the
-    /// guest does the scanning on its own time.
-    func completeMediaIndex() async {
-        guard let query = try? await shell(GuestFiles.unfinishedIndexQuery, limit: .seconds(60)),
-              query.exitCode == 0 else { return }
-        for command in GuestFiles.scanBatches(for: GuestFiles.filesWithUnfinishedIndex(in: query.text)) {
-            _ = try? await shell(command, limit: .seconds(60))
-        }
-    }
 }
 
 /// The file browser's backend on the running guest.
@@ -395,10 +384,6 @@ final class LiveGuestFiles: GuestFilesBackend {
         _ file: GuestFile, into directory: URL, progress: @escaping @Sendable (UInt64, UInt64) -> Void
     ) async throws -> URL {
         try await operations().download(file, into: directory, progress: progress)
-    }
-
-    func completeIndex() async {
-        await operations().completeMediaIndex()
     }
 
     func importPickerStandIn(deliver: @escaping ([FilePick]) -> Void) -> AnyView? { nil }

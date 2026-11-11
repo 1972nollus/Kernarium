@@ -148,8 +148,6 @@ struct GuestFilesGuestTests {
             for name in ["It's a note (1).txt", "fx_photo.jpg", "blob.bin"] {
                 #expect(finished.contains("_display_name=\(name),"), "no finished row for \(name): \(finished)")
             }
-            let unfinished = try await guest.run(GuestFiles.unfinishedIndexQuery).text
-            #expect(!unfinished.contains("FilexTest"), "an import is left pending: \(unfinished)")
             // The gallery's index knows the photo, and the Files app lists it.
             let indexed = await guest.waitFor(
                 "content query --uri content://media/external/images/media --projection _display_name:_size --where \"_display_name='fx_photo.jpg'\"",
@@ -200,20 +198,6 @@ struct GuestFilesGuestTests {
             #expect(try await guest.run("cat '\(work)/Clash/inside.txt'").text == "keep\n", "a folder is never replaced")
             #expect(try await guest.sha256(GuestPath.child("Clash (1)", of: work)) == bench.sha256(overFolder), "the file goes beside the folder")
             await guest.expectNoPartials(work, "after Replace")
-
-            // MARK: Rows that earlier builds left unfinished
-            // A file the shell writes has a pending row, as an import of an
-            // earlier build left it. The first read of storage in a run
-            // finishes it.
-            _ = try await guest.run("echo old > '\(work)/Older import.cia'")
-            let pending = try await guest.run(GuestFiles.unfinishedIndexQuery).text
-            #expect(pending.contains("Older import.cia"), "the file has a pending row: \(pending)")
-            browser.reset()
-            browser.route = [FolderRoute(path: GuestPath.root), FolderRoute(path: work)]
-            await browser.load(work)
-            let recovered = await guest.waitFor(
-                guest.finishedRows(in: "Download/FilexTest/"), contains: "_display_name=Older import.cia,", seconds: 90)
-            #expect(recovered, "the first read of storage did not finish the older row")
 
             // MARK: Skip
             browser.received([try bench.pick("fx_new.txt", bytes: 7, seed: 31, modified: .now), try bench.pick("fx_skip.txt", bytes: 7, seed: 32, modified: .now)])

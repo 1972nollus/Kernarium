@@ -306,8 +306,7 @@ public enum GuestFiles {
     /// The shell command that puts a finished upload under its name and then
     /// has the media index look at it. The scan runs only when the move
     /// succeeded, and its own outcome never changes the command's: a file in
-    /// place is an import that worked, and a row that was missed is completed
-    /// by the next recovery (`unfinishedIndexQuery`).
+    /// place is an import that worked.
     static func finishCommand(temporary: String, path: String, replacing: Bool) -> String {
         let from = quotedForShell(temporary)
         let to = quotedForShell(path)
@@ -376,43 +375,6 @@ public enum GuestFiles {
 
     static func uriPath(_ path: String) -> String {
         path.addingPercentEncoding(withAllowedCharacters: uriSafe) ?? path
-    }
-
-    /// Lists the files the shell user wrote whose rows the media provider
-    /// still holds in part, as the imports of earlier builds left them. The
-    /// output is capped, since the shell's is.
-    public static let unfinishedIndexQuery: String = {
-        let condition = "is_pending=1 AND owner_package_name='com.android.shell' AND _data LIKE '\(GuestFilePath.root)/%'"
-        return "content query --uri content://media/external/file --projection _data --where \(quotedForShell(condition))"
-            + " | head -n \(unfinishedIndexRows)"
-    }()
-
-    static let unfinishedIndexRows = 2000
-
-    /// The most files one recovery completes; the rest wait for the next.
-    public static let unfinishedIndexLimit = 1000
-
-    /// The files `unfinishedIndexQuery` lists, up to `unfinishedIndexLimit`.
-    /// The partial files of an import are not among them, and neither is
-    /// anything outside internal storage.
-    public static func filesWithUnfinishedIndex(in output: String) -> [String] {
-        var files: [String] = []
-        for line in output.split(whereSeparator: \.isNewline) {
-            guard line.hasPrefix("Row: "), let marker = line.range(of: " _data=") else { continue }
-            let path = String(line[marker.upperBound...])
-            guard GuestFilePath.isInsideRoot(path), !isPartial(GuestFilePath.name(of: path)) else { continue }
-            files.append(path)
-            if files.count == unfinishedIndexLimit { break }
-        }
-        return files
-    }
-
-    /// `scanCommand` for each of `paths`, in commands of at most `batch`
-    /// files, so that none runs long.
-    public static func scanBatches(for paths: [String], batch: Int = 25) -> [String] {
-        stride(from: 0, to: paths.count, by: batch).map { start in
-            paths[start..<min(start + batch, paths.count)].map(scanCommand(for:)).joined(separator: "; ")
-        }
     }
 }
 

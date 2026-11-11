@@ -68,8 +68,6 @@ final class MockGuestFiles: GuestFilesBackend {
 
     func prepareExport(bytes: UInt64) async throws {}
 
-    func completeIndex() async {}
-
     func measure(_ file: GuestFile) async throws -> UInt64 {
         try await Task.sleep(for: .milliseconds(600))
         return node(at: file.path).map(Self.bytes) ?? 0
