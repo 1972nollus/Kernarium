@@ -71,8 +71,9 @@ nonisolated final class ProgressThrottle: @unchecked Sendable {
     }
 }
 
-/// One import: the file goes to a hidden temporary name in its folder and one
-/// move gives it its own (`GuestFiles.upload`).
+/// One import: the file goes to a hidden temporary name in its folder, and one
+/// move gives it its own and has the media index complete its row
+/// (`GuestFiles.upload`).
 nonisolated enum FileUploadOperation {
     static let idleLimit = Duration.seconds(60)
 
@@ -212,28 +213,6 @@ nonisolated enum FileDownloadOperation {
     }
 }
 
-/// The guest's media index is told about files an import wrote, which it has
-/// no row of its own for until it has looked at them.
-nonisolated enum MediaScan {
-    static let batch = 20
-    static let idleLimit = Duration.seconds(60)
-
-    /// Only what the gallery and the music apps show is worth a look.
-    static func worthScanning(_ path: String) -> Bool {
-        switch GuestFileKind(name: GuestFilePath.name(of: path)) {
-        case .image, .video, .audio: true
-        default: false
-        }
-    }
-
-    static func commands(for paths: [String]) -> [String] {
-        let wanted = paths.filter(worthScanning)
-        return stride(from: 0, to: wanted.count, by: batch).map { start in
-            GuestFiles.scanCommand(for: Array(wanted[start..<min(start + batch, wanted.count)]))
-        }
-    }
-}
-
 /// The operations the file browser asks of Android over adb, each on a
 /// connection of its own, so a listing is never held up by a transfer.
 extension AdbGuestOperations {
@@ -347,10 +326,14 @@ extension AdbGuestOperations {
         }
     }
 
-    /// Asks the media index to look at the media files among `paths`.
-    func scanMedia(_ paths: [String]) async {
-        for command in MediaScan.commands(for: paths) {
-            _ = try? await shell(command, limit: MediaScan.idleLimit)
+    /// Has the media index complete the rows that earlier imports left in
+    /// part: the files it holds so are asked for, a few at a time, and the
+    /// guest does the scanning on its own time.
+    func completeMediaIndex() async {
+        guard let query = try? await shell(GuestFiles.unfinishedIndexQuery, limit: .seconds(60)),
+              query.exitCode == 0 else { return }
+        for command in GuestFiles.scanBatches(for: GuestFiles.filesWithUnfinishedIndex(in: query.text)) {
+            _ = try? await shell(command, limit: .seconds(60))
         }
     }
 }
@@ -414,8 +397,8 @@ final class LiveGuestFiles: GuestFilesBackend {
         try await operations().download(file, into: directory, progress: progress)
     }
 
-    func scan(_ paths: [String]) async {
-        await operations().scanMedia(paths)
+    func completeIndex() async {
+        await operations().completeMediaIndex()
     }
 
     func importPickerStandIn(deliver: @escaping ([FilePick]) -> Void) -> AnyView? { nil }

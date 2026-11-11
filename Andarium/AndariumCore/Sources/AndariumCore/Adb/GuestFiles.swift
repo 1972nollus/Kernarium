@@ -257,9 +257,11 @@ public enum GuestFiles {
     /// Writes `source` at `path`: the bytes go to `temporary` first, and one
     /// move puts them under their name once they have all arrived, so a
     /// transfer that stops leaves nothing at `path` and an earlier file of
-    /// that name whole. Returns the length. Failing leaves `temporary` for the
-    /// caller to remove (`removeCommand`), since the connection it was written
-    /// on may be gone.
+    /// that name whole. The same command then has the guest's media index
+    /// complete the file's row (`scanCommand`), which a file written through
+    /// the storage emulation has only in part. Returns the length. Failing
+    /// leaves `temporary` for the caller to remove (`removeCommand`), since
+    /// the connection it was written on may be gone.
     ///
     /// With `replacing` an earlier file is replaced and a folder of that name
     /// is `folderInTheWay`; otherwise any earlier entry is `exists`.
@@ -301,14 +303,18 @@ public enum GuestFiles {
     static let exitExists: Int = 17
     static let exitFolder: Int = 21
 
-    /// The shell command that puts a finished upload under its name.
+    /// The shell command that puts a finished upload under its name and then
+    /// has the media index look at it. The scan runs only when the move
+    /// succeeded, and its own outcome never changes the command's: a file in
+    /// place is an import that worked, and a row that was missed is completed
+    /// by the next recovery (`unfinishedIndexQuery`).
     static func finishCommand(temporary: String, path: String, replacing: Bool) -> String {
         let from = quotedForShell(temporary)
         let to = quotedForShell(path)
-        if replacing {
-            return "if [ -d \(to) ]; then exit \(exitFolder); fi; mv -f -- \(from) \(to)"
-        }
-        return "if [ -e \(to) ] || [ -L \(to) ]; then exit \(exitExists); fi; mv -- \(from) \(to)"
+        let move = replacing
+            ? "if [ -d \(to) ]; then exit \(exitFolder); fi; mv -f -- \(from) \(to)"
+            : "if [ -e \(to) ] || [ -L \(to) ]; then exit \(exitExists); fi; mv -- \(from) \(to)"
+        return "\(move) && { \(scanCommand(for: path)) >/dev/null 2>&1; true; }"
     }
 
     /// Removes a partial file; the command succeeds when it is not there.
@@ -350,14 +356,63 @@ public enum GuestFiles {
 
     // MARK: Media
 
-    /// Asks the guest's media index to look at new files, so its gallery
-    /// shows them. A file moved in through the storage emulation has only a
-    /// partial index row until it is scanned; the media provider's own scan
-    /// call completes it, which the old scanner broadcast does not.
-    public static func scanCommand(for paths: [String]) -> String {
-        paths.map { path in
-            "content call --uri content://media/external_primary/file --method scan_file --arg \(quotedForShell(path))"
-        }.joined(separator: "; ")
+    /// Has the guest's media index complete the row of the file at `path`.
+    /// The storage emulation indexes a file the shell user writes only in
+    /// part: its row is pending, owned by the shell, and has no size or date,
+    /// so MediaStore keeps the file from the guest's other apps, and a
+    /// replaced file's row goes back to that state. The scanner broadcast
+    /// completes the row, with the type and, for media, the metadata, and
+    /// costs a fraction of the media provider's own `scan_file` call, which
+    /// starts a Java process.
+    ///
+    /// The path travels as a URI, so every byte but the unreserved ones and
+    /// `/` is percent-encoded.
+    public static func scanCommand(for path: String) -> String {
+        "am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d \(quotedForShell("file://" + uriPath(path)))"
+    }
+
+    private static let uriSafe = CharacterSet(
+        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~/")
+
+    static func uriPath(_ path: String) -> String {
+        path.addingPercentEncoding(withAllowedCharacters: uriSafe) ?? path
+    }
+
+    /// Lists the files the shell user wrote whose rows the media provider
+    /// still holds in part, as the imports of earlier builds left them. The
+    /// output is capped, since the shell's is.
+    public static let unfinishedIndexQuery: String = {
+        let condition = "is_pending=1 AND owner_package_name='com.android.shell' AND _data LIKE '\(GuestFilePath.root)/%'"
+        return "content query --uri content://media/external/file --projection _data --where \(quotedForShell(condition))"
+            + " | head -n \(unfinishedIndexRows)"
+    }()
+
+    static let unfinishedIndexRows = 2000
+
+    /// The most files one recovery completes; the rest wait for the next.
+    public static let unfinishedIndexLimit = 1000
+
+    /// The files `unfinishedIndexQuery` lists, up to `unfinishedIndexLimit`.
+    /// The partial files of an import are not among them, and neither is
+    /// anything outside internal storage.
+    public static func filesWithUnfinishedIndex(in output: String) -> [String] {
+        var files: [String] = []
+        for line in output.split(whereSeparator: \.isNewline) {
+            guard line.hasPrefix("Row: "), let marker = line.range(of: " _data=") else { continue }
+            let path = String(line[marker.upperBound...])
+            guard GuestFilePath.isInsideRoot(path), !isPartial(GuestFilePath.name(of: path)) else { continue }
+            files.append(path)
+            if files.count == unfinishedIndexLimit { break }
+        }
+        return files
+    }
+
+    /// `scanCommand` for each of `paths`, in commands of at most `batch`
+    /// files, so that none runs long.
+    public static func scanBatches(for paths: [String], batch: Int = 25) -> [String] {
+        stride(from: 0, to: paths.count, by: batch).map { start in
+            paths[start..<min(start + batch, paths.count)].map(scanCommand(for:)).joined(separator: "; ")
+        }
     }
 }
 

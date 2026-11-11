@@ -292,7 +292,9 @@ struct GuestFilesTransferTests {
         #expect(steps.last == UInt64(body.count))
         #expect(guest.shellCommands == [
             "if [ -e '\(root)/Download/Clip.mov' ] || [ -L '\(root)/Download/Clip.mov' ]; then exit 17; fi; "
-                + "mv -- '\(temporary)' '\(root)/Download/Clip.mov'"
+                + "mv -- '\(temporary)' '\(root)/Download/Clip.mov' && { "
+                + "am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d 'file://\(root)/Download/Clip.mov'"
+                + " >/dev/null 2>&1; true; }"
         ])
     }
 
@@ -305,7 +307,10 @@ struct GuestFilesTransferTests {
             MemorySource(Data(count: 10)), modified: .now, to: root + "/D/it's.txt", temporary: root + "/D/.andarium-1.part",
             replacing: true, on: connection, progress: { _ in })
         #expect(guest.shellCommands == [
-            "if [ -d '\(root)/D/it'\\''s.txt' ]; then exit 21; fi; mv -f -- '\(root)/D/.andarium-1.part' '\(root)/D/it'\\''s.txt'"
+            "if [ -d '\(root)/D/it'\\''s.txt' ]; then exit 21; fi; "
+                + "mv -f -- '\(root)/D/.andarium-1.part' '\(root)/D/it'\\''s.txt' && { "
+                + "am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d 'file://\(root)/D/it%27s.txt'"
+                + " >/dev/null 2>&1; true; }"
         ])
     }
 
@@ -466,12 +471,5 @@ struct GuestFilesHelperTests {
         #expect(!GuestFiles.isPartial("clip.part") && !GuestFiles.isPartial(".andarium-x.txt"))
         #expect(GuestFiles.removeCommand(for: root + "/a/.andarium-1.part") == "rm -f -- '\(root)/a/.andarium-1.part'")
         #expect(GuestFiles.removeStaleCommand(in: root + "/it's") == "rm -f -- '\(root)/it'\\''s'/.andarium-*.part")
-    }
-
-    @Test func theScanNamesEachFile() {
-        let command = GuestFiles.scanCommand(for: [root + "/a b.jpg", root + "/it's.jpg"])
-        #expect(command.contains("--method scan_file --arg '\(root)/a b.jpg'"))
-        #expect(command.contains("--arg '\(root)/it'\\''s.jpg'"))
-        #expect(command.components(separatedBy: "; ").count == 2)
     }
 }

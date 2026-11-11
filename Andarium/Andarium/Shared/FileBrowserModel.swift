@@ -183,6 +183,8 @@ final class FileBrowserModel {
     var fresh: Set<String> = []
     private(set) var freeBytes: UInt64?
     private var listings: [String: FolderListing] = [:]
+    /// Whether this run's media index has been completed (`completeIndex`).
+    @ObservationIgnored private var indexCompleted = false
     @ObservationIgnored private var retry: (() -> Void)?
     @ObservationIgnored private var observer: NSObjectProtocol?
 
@@ -254,6 +256,7 @@ final class FileBrowserModel {
         let free = Task { await backend.freeBytes() }
         do {
             listings[folder] = .loaded(try await backend.list(folder))
+            completeIndexOnce()
         } catch is CancellationError {
         } catch GuestFolderProblem.refused {
             listings[folder] = .refused
@@ -261,6 +264,16 @@ final class FileBrowserModel {
             if case .loaded = listings[folder] {} else { listings[folder] = .failed(error.localizedDescription) }
         }
         freeBytes = await free.value
+    }
+
+    /// The first time a run's storage is read, the guest's media index is
+    /// asked to complete the rows that imports of earlier builds left in part,
+    /// which hid those files from the guest's apps. It takes one query when
+    /// nothing is left, and never waits for a transfer.
+    private func completeIndexOnce() {
+        guard !indexCompleted, !running else { return }
+        indexCompleted = true
+        Task { [backend] in await backend.completeIndex() }
     }
 
     func canImport(into folder: String) -> Bool {
@@ -445,9 +458,7 @@ final class FileBrowserModel {
 
     private func importEnded(_ transfer: FileTransfer, plan: [ImportStep], rerun: @escaping ([Int]) -> Void) {
         guard self.transfer === transfer else { return }
-        let arrived = transfer.items.compactMap { $0.state == .done ? $0.path : nil }
-        fresh = Set(arrived)
-        if !arrived.isEmpty { Task { [backend] in await backend.scan(arrived) } }
+        fresh = Set(transfer.items.compactMap { $0.state == .done ? $0.path : nil })
         Task { await load(transfer.folder) }
         if transfer.items.allSatisfy({ $0.state == .done }) {
             finish(transfer)
@@ -649,14 +660,9 @@ final class FileBrowserModel {
         guard let transfer else { return }
         transfer.task?.cancel()
         Self.removeStaged(transfer)
-        let arrived = transfer.direction == .importing
-            ? transfer.items.compactMap { $0.state == .done ? $0.path : nil } : []
         self.transfer = nil
         retry = nil
-        if transfer.direction == .importing {
-            if !arrived.isEmpty { Task { [backend] in await backend.scan(arrived) } }
-            Task { await load(transfer.folder) }
-        }
+        if transfer.direction == .importing { Task { await load(transfer.folder) } }
     }
 
     // MARK: Lifetime
@@ -688,6 +694,7 @@ final class FileBrowserModel {
         }
         transfer = nil
         retry = nil
+        indexCompleted = false
         sheetClosed()
     }
 }
