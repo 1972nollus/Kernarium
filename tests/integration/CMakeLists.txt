@@ -573,8 +573,9 @@ uml_add_guest_integration_test(
 
 # A management-console command that sends what the kernel prints to its client,
 # "sysrq s" as the host asks for it before a suspend, ends with its final reply
-# again and again while three other vCPUs keep printing, and the guest runs on
-# with no fault.
+# again and again while three other vCPUs keep printing, that reply names the
+# command and says it ran, and the guest runs on with no fault. A guest booted
+# with SysRq off ends the same command with an error that says so.
 uml_add_guest_integration_test(
     NAME guest-mconsole-console-clients
     SCRIPT kernel/run_guest_mconsole_console_clients.py
