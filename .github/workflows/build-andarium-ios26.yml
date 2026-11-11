@@ -121,19 +121,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          {
+            echo 'Unofficial experimental build from the ios26-experiment branch.'
+            echo
+            echo 'Minimum iOS version: 26.0'
+            echo 'Unsigned IPA: signing through SideStore or another compatible signer is required.'
+            echo 'Confirmed: installation through SideStore and successful launch on iOS 26.6.1.'
+            echo 'Other app functionality remains experimental and has not been fully verified.'
+            echo
+            echo 'Source code: https://github.com/1972nollus/Kernarium/tree/ios26-experiment'
+            echo 'Original project: https://github.com/imxieyi/Kernarium'
+            echo 'License: GNU GPL v2.'
+          } > .build/release-notes.md
           gh release create andarium-ios26-experimental-1 \
             .build/Andarium-iOS26-experimental-unsigned.ipa \
             .build/Andarium-iOS26-experimental-unsigned.ipa.sha256 \
             --target "$GITHUB_SHA" \
             --title "Andarium iOS 26 experimental build 1" \
             --prerelease \
-            --notes "Unofficial experimental build from the ios26-experiment branch.
-
-Minimum iOS version: 26.0
-Unsigned IPA: signing through SideStore or another compatible signer is required.
-Confirmed: installation through SideStore and successful launch on iOS 26.6.1.
-Other app functionality remains experimental and has not been fully verified.
-
-Source code: https://github.com/1972nollus/Kernarium/tree/ios26-experiment
-Original project: https://github.com/imxieyi/Kernarium
-License: GNU GPL v2."
+            --notes-file .build/release-notes.md
