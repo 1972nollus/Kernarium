@@ -176,7 +176,9 @@ struct AppEntry {
         case "busy-erase":
             model.busy = BusyState(title: "Erasing guest", detail: "Deleting everything the guest stored.", progress: 0.65)
         case "boot":
-            model.guest?.pendingCapacityGiB = 24
+            // The start applied the growth as it began.
+            model.guest?.setCapacity(24)
+            model.lifecycle.grewFromGiB = model.guest?.applyPendingGrowth()
             boot(.normal, stage: 3, seconds: 9)
         case "boot-single-vcpu":
             model.guest?.cores = 1

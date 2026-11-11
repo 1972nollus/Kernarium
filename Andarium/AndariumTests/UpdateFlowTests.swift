@@ -9,6 +9,9 @@ import Testing
 final class StubDriver: RuntimeDriver {
     var plan: StartPlan?
     var begun: [(mode: StartMode, kind: BootKind)] = []
+    /// The guest each start handed over, and the guest saved by then.
+    private(set) var begunGuests: [Guest] = []
+    private(set) var savedWhenBegun: [Guest?] = []
     var restored = 0
     var restoreFails = false
 
@@ -28,6 +31,8 @@ final class StubDriver: RuntimeDriver {
     func measuredUsedBytes() -> UInt64 { diskUsedBytes }
     func begin(guest: Guest, mode: StartMode, kind: BootKind) {
         begun.append((mode, kind))
+        begunGuests.append(guest)
+        savedWhenBegun.append(savedGuest)
     }
     func restoreUpdate() throws {
         if restoreFails { throw InstanceError.refused("No update is pending.") }
