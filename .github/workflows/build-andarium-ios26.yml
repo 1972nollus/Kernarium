@@ -34,6 +34,7 @@ jobs:
       - name: Install build tools
         run: |
           brew install autoconf automake cmake gettext gperf libtool meson ninja pkg-config
+          python3 -m pip install --user mako packaging pyyaml
           git config --global user.name "Andarium iOS 26 Builder"
           git config --global user.email "actions@users.noreply.github.com"
 
