@@ -15,7 +15,9 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bitset>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -24,6 +26,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -268,6 +271,22 @@ Events liftOfSlotZero()
     return {key(protocol::buttonTouch, 0), slot(0), lift(), synchronize()};
 }
 
+// A guest that reads part of a full queue leaves room without draining it.
+// Then the host sends `next`. The guest must go on to read what was queued
+// before, then `release`, then `next`. Returns what was queued before.
+Events readAround(Harness& h, const Events& release, const Events& next)
+{
+    constexpr std::size_t readBefore = 64;
+    auto all = h.take(readBefore);
+    h.send(next);
+    const auto rest = h.drainAll();
+    all.insert(all.end(), rest.begin(), rest.end());
+    const auto tail = concat({release, next});
+    require(all.size() == queueCapacity + tail.size());
+    requireStream(Events(all.end() - tail.size(), all.end()), tail);
+    return Events(all.begin(), all.end() - tail.size());
+}
+
 void aDroppedLiftIsReleasedBeforeTheNextReport()
 {
     Harness h;
@@ -276,22 +295,17 @@ void aDroppedLiftIsReleasedBeforeTheNextReport()
     h.fill();
     h.reject(touchEvents(screen.touch(0, 100, 200, false)));
 
-    // The guest reads everything the queue held and still has the touch.
-    const auto stale = h.drainAll();
-    require(stale.size() == queueCapacity);
+    const auto next = touchEvents(screen.touch(0, 300, 400, true));
+    const auto stale = readAround(h, liftOfSlotZero(), next);
+
+    // Without the release the guest would still have the touch.
     Guest guest;
     guest.apply(stale);
     require(guest.contacts.test(0));
     require(guest.keys.test(protocol::buttonTouch));
-
-    const auto next = touchEvents(screen.touch(0, 300, 400, true));
-    h.send(next);
-    const auto after = h.drainAll();
-    requireStream(after, concat({liftOfSlotZero(), next}));
-
-    guest.apply(Events(after.begin(), after.begin() + 4));
+    guest.apply(liftOfSlotZero());
     require(guest.idle());
-    guest.apply(Events(after.begin() + 4, after.end()));
+    guest.apply(next);
     require(guest.contacts.test(0));
 }
 
@@ -302,23 +316,20 @@ void aDroppedMoveStillReleasesTheContactItHeld()
     h.send(touchEvents(screen.touch(1, 100, 200, true)));
     h.fill();
     h.reject(touchEvents(screen.touch(1, 150, 250, true)));
-    Guest guest;
-    guest.apply(h.drainAll());
-    require(guest.contacts.test(1));
 
     // The contact stays down on the host. The guest is told it lifted
     // before the report that follows, which moves it.
     const auto move = touchEvents(screen.touch(1, 500, 600, true));
-    h.send(move);
     const Events released {
         key(protocol::buttonTouch, 0), slot(1), lift(), synchronize()};
-    const auto after = h.drainAll();
-    requireStream(after, concat({released, move}));
+    Guest guest;
+    guest.apply(readAround(h, released, move));
+    require(guest.contacts.test(1));
+    guest.apply(released);
+    require(guest.idle());
     // The move names no tracking ID, so it does not start the contact
     // again; the report still sets BTN_TOUCH, which the contact's real lift
     // clears.
-    guest.apply(Events(after.begin(), after.begin() + released.size()));
-    require(guest.idle());
     guest.apply(move);
     require(guest.contacts.none());
 
@@ -341,15 +352,6 @@ void severalContactsAreAllReleasedInSlotOrder()
     h.reject(touchEvents(screen.touch(0, 100, 100, false)));
     h.reject(touchEvents(screen.touch(7, 310, 310, true)));
 
-    Guest guest;
-    guest.apply(h.drainAll());
-    require(guest.contacts.test(0));
-    require(!guest.contacts.test(3));
-    require(guest.contacts.test(7));
-    require(guest.slot == 3);
-
-    const auto next = touchEvents(screen.touch(3, 50, 60, true));
-    h.send(next);
     // BTN_TOUCH is held until the last contact lifts. The slot the guest
     // had selected is selected again, so the report that follows reads as
     // it was written.
@@ -360,11 +362,15 @@ void severalContactsAreAllReleasedInSlotOrder()
         slot(3),
         synchronize(),
     };
-    const auto after = h.drainAll();
-    requireStream(after, concat({releases, next}));
+    const auto next = touchEvents(screen.touch(3, 50, 60, true));
+    Guest guest;
+    guest.apply(readAround(h, releases, next));
+    require(guest.contacts.test(0));
+    require(!guest.contacts.test(3));
+    require(guest.contacts.test(7));
+    require(guest.slot == 3);
 
-    guest = {};
-    guest.apply(Events(after.begin(), after.begin() + releases.size()));
+    guest.apply(releases);
     require(guest.idle());
     require(guest.slot == 3);
 }
@@ -373,17 +379,19 @@ void aDroppedKeyReleaseReachesTheGuestThroughTheDevice()
 {
     auto queue = std::make_shared<EventQueue>();
     VirtioInputDevice device(DeviceKind::keyboard, queue);
-    const auto readAll = [&device] {
+    // Reads up to `limit` events, as many as the guest posts buffers for.
+    const auto read = [&device](std::size_t limit) {
         Events events;
-        for (;;) {
+        while (events.size() < limit) {
             const auto result =
                 device.processQueue(protocol::eventQueue, 1, {}, 8);
             if (result.action != uml::virtio::VhostUserQueueAction::complete)
-                return events;
+                break;
             events.push_back(
                 uml::testing::loadExact<protocol::InputEvent>(
                     result.response));
         }
+        return events;
     };
 
     queue->enqueue(Events {key(keyA, 1), synchronize()});
@@ -391,18 +399,20 @@ void aDroppedKeyReleaseReachesTheGuestThroughTheDevice()
         queue->enqueue(Events {synchronize()});
     queue->enqueue(Events {key(keyA, 0), synchronize()}); // dropped
 
-    Guest guest;
-    const auto stale = readAll();
-    require(stale.size() == queueCapacity);
-    guest.apply(stale);
-    require(guest.keys.test(keyA));
-
+    auto all = read(64);
+    require(all.size() == 64);
     queue->enqueue(Events {key(keyB, 1), synchronize()});
-    const auto after = readAll();
-    requireStream(
-        after,
-        {key(keyA, 0), synchronize(), key(keyB, 1), synchronize()});
-    guest.apply(Events(after.begin(), after.begin() + 2));
+    const auto rest = read(queueCapacity);
+    all.insert(all.end(), rest.begin(), rest.end());
+    const Events tail {
+        key(keyA, 0), synchronize(), key(keyB, 1), synchronize()};
+    require(all.size() == queueCapacity + tail.size());
+    requireStream(Events(all.end() - tail.size(), all.end()), tail);
+
+    Guest guest;
+    guest.apply(Events(all.begin(), all.end() - tail.size()));
+    require(guest.keys.test(keyA));
+    guest.apply(Events(tail.begin(), tail.begin() + 2));
     require(guest.idle());
 }
 
@@ -417,17 +427,12 @@ void aDroppedMouseButtonReleaseIsReleasedWithoutTouchKnowledge()
     h.fill();
     h.reject({key(buttonLeft, 0), synchronize()});
 
+    const Events motion {{eventRelative, relativeX, -3}, synchronize()};
     Guest guest;
-    guest.apply(h.drainAll());
+    guest.apply(readAround(
+        h, Events {key(buttonLeft, 0), synchronize()}, motion));
     require(guest.keys.test(buttonLeft));
     require(!guest.keys.test(buttonRight));
-
-    const Events motion {{eventRelative, relativeX, -3}, synchronize()};
-    h.send(motion);
-    const auto after = h.drainAll();
-    requireStream(
-        after,
-        concat({Events {key(buttonLeft, 0), synchronize()}, motion}));
 }
 
 void everyHeldKeyIsReleasedInCodeOrder()
@@ -441,17 +446,13 @@ void everyHeldKeyIsReleasedInCodeOrder()
     h.send({key(keyA, 1), synchronize()});
     h.fill();
     h.reject({key(keyB, 0), synchronize()});
-    (void)h.drainAll();
 
     const Events next {key(keyA, 0), synchronize()};
-    h.send(next);
-    requireStream(
-        h.drainAll(),
-        concat({
-            Events {
-                key(keyA, 0), key(keyB, 0), key(buttonLeft, 0),
-                synchronize()},
-            next}));
+    (void)readAround(
+        h,
+        Events {
+            key(keyA, 0), key(keyB, 0), key(buttonLeft, 0), synchronize()},
+        next);
 }
 
 void nothingIsSynthesizedWithoutAnOverflow()
@@ -577,6 +578,171 @@ void theOverflowIsReportedOnce()
                 "dropping input because the virtio queue is full") == 1);
 }
 
+void aDroppedFinalLiftIsReleasedAtDrainWithoutAFurtherReport()
+{
+    Harness h;
+    Touchscreen screen;
+    h.send(touchEvents(screen.touch(0, 100, 200, true)));
+    h.fill();
+    h.reject(touchEvents(screen.touch(0, 100, 200, false)));
+
+    // The person has lifted and sends nothing more. The guest reads
+    // everything and then the release, so it holds nothing.
+    const auto all = h.drainAll();
+    const auto release = liftOfSlotZero();
+    require(all.size() == queueCapacity + release.size());
+    requireStream(Events(all.end() - release.size(), all.end()), release);
+    Guest guest;
+    guest.apply(Events(all.begin(), all.end() - release.size()));
+    require(guest.contacts.test(0));
+    guest.apply(release);
+    require(guest.idle());
+
+    protocol::InputEvent event {};
+    require(!h.queue.take(event));
+}
+
+void everyDroppedFinalReleaseIsReleasedAtDrain()
+{
+    // Two contacts and a button: the guest holds all three when the queue
+    // fills, and the lifts are dropped.
+    Harness h;
+    Touchscreen screen;
+    h.send(touchEvents(screen.touch(2, 100, 100, true)));
+    h.send(touchEvents(screen.touch(5, 200, 200, true)));
+    h.send({key(buttonLeft, 1), synchronize()});
+    h.fill();
+    h.reject(touchEvents(screen.touch(5, 200, 200, false)));
+    h.reject(touchEvents(screen.touch(2, 100, 100, false)));
+    h.reject({key(buttonLeft, 0), synchronize()});
+
+    const auto all = h.drainAll();
+    const Events release {
+        key(buttonLeft, 0), key(protocol::buttonTouch, 0),
+        slot(2), lift(),
+        slot(5), lift(),
+        synchronize(),
+    };
+    require(all.size() == queueCapacity + release.size());
+    requireStream(Events(all.end() - release.size(), all.end()), release);
+    Guest guest;
+    guest.apply(all);
+    require(guest.idle());
+}
+
+void aDrainWithNothingHeldEmitsNothing()
+{
+    Harness h;
+    Touchscreen screen;
+    h.send(touchEvents(screen.touch(0, 100, 200, true)));
+    h.send(touchEvents(screen.touch(0, 100, 200, false)));
+    h.send({key(keyA, 1), synchronize()});
+    h.send({key(keyA, 0), synchronize()});
+    h.fill();
+    h.reject({{eventRelative, relativeX, 1}, synchronize()});
+
+    require(h.drainAll().size() == queueCapacity);
+    protocol::InputEvent event {};
+    require(!h.queue.take(event));
+
+    // The drop is forgotten with nothing owed, so the next report goes
+    // alone, as does a drain after it.
+    const Events next {key(keyB, 1), synchronize()};
+    h.send(next);
+    requireStream(h.drainAll(), next);
+    require(!h.queue.take(event));
+}
+
+void aReleaseAtDrainIsNotFollowedByASecondOne()
+{
+    Harness h;
+    Touchscreen screen;
+    h.send(touchEvents(screen.touch(0, 100, 200, true)));
+    h.fill();
+    h.reject(touchEvents(screen.touch(0, 100, 200, false)));
+    require(h.drainAll().size() == queueCapacity + liftOfSlotZero().size());
+
+    const auto next = touchEvents(screen.touch(0, 300, 400, true));
+    h.send(next);
+    requireStream(h.drainAll(), next);
+}
+
+void aReleaseWithTheNextReportIsNotFollowedByASecondOneAtDrain()
+{
+    Harness h;
+    Touchscreen screen;
+    h.send(touchEvents(screen.touch(0, 100, 200, true)));
+    h.fill();
+    h.reject(touchEvents(screen.touch(0, 100, 200, false)));
+
+    // The release goes in with the report that follows, and the drain that
+    // empties the queue adds nothing.
+    const auto next = touchEvents(screen.touch(0, 300, 400, true));
+    (void)readAround(h, liftOfSlotZero(), next);
+    protocol::InputEvent event {};
+    require(!h.queue.take(event));
+}
+
+void aReaderRacingTheHostEndsWithNothingHeld()
+{
+    // The host moves one or two contacts at full rate and lifts them; the
+    // reader pauses now and then, so the queue overflows at times, whatever
+    // report the last drop takes. When the host has lifted everything and the
+    // reader has drained the queue, the guest holds nothing, with the release
+    // from the reader's drain and from the host's next report taken in turn
+    // under one lock.
+    EventQueue queue;
+    std::atomic<bool> finished {false};
+    Guest guest;
+    std::size_t read = 0;
+    std::thread reader([&] {
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        protocol::InputEvent event {};
+        for (;;) {
+            if (queue.take(event)) {
+                guest.apply(event);
+                if (++read % 4096 == 0) {
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(2));
+                }
+                continue;
+            }
+            if (finished.load(std::memory_order_acquire))
+                break;
+            require(std::chrono::steady_clock::now() < deadline);
+            std::this_thread::yield();
+        }
+        while (queue.take(event))
+            guest.apply(event);
+    });
+
+    Touchscreen screen;
+    const auto send = [&queue](
+                          const uml::input::virtio::TouchscreenReport& r) {
+        queue.enqueue(r.span());
+    };
+    for (unsigned cycle = 0; cycle < 400; ++cycle) {
+        send(screen.touch(0, 100, 100, true));
+        if (cycle % 2 == 0)
+            send(screen.touch(1, 200, 200, true));
+        for (std::uint32_t step = 1; step <= 300; ++step) {
+            send(screen.touch(0, 100 + step, 100, true));
+            if (cycle % 2 == 0)
+                send(screen.touch(1, 200, 200 + step, true));
+        }
+        send(screen.touch(0, 400, 100, false));
+        if (cycle % 2 == 0)
+            send(screen.touch(1, 200, 500, false));
+    }
+    finished.store(true, std::memory_order_release);
+    reader.join();
+
+    require(guest.idle());
+    protocol::InputEvent event {};
+    require(!queue.take(event));
+}
+
 Events releaseOf(HeldInput& held)
 {
     std::deque<protocol::InputEvent> events;
@@ -689,7 +855,7 @@ void heldInputResetForgetsEverythingAndSelectsTheFirstSlot()
 
 int main(int argc, char** argv)
 {
-    const std::array<uml::testing::NamedTest, 16> tests {{
+    const std::array<uml::testing::NamedTest, 22> tests {{
         {"a-dropped-lift-is-released-before-the-next-report",
          aDroppedLiftIsReleasedBeforeTheNextReport},
         {"a-dropped-move-still-releases-the-contact-it-held",
@@ -711,6 +877,18 @@ int main(int argc, char** argv)
         {"clear-forgets-a-pending-release", clearForgetsAPendingRelease},
         {"clear-forgets-what-the-guest-held", clearForgetsWhatTheGuestHeld},
         {"the-overflow-is-reported-once", theOverflowIsReportedOnce},
+        {"a-dropped-final-lift-is-released-at-drain-without-a-further-report",
+         aDroppedFinalLiftIsReleasedAtDrainWithoutAFurtherReport},
+        {"every-dropped-final-release-is-released-at-drain",
+         everyDroppedFinalReleaseIsReleasedAtDrain},
+        {"a-drain-with-nothing-held-emits-nothing",
+         aDrainWithNothingHeldEmitsNothing},
+        {"a-release-at-drain-is-not-followed-by-a-second-one",
+         aReleaseAtDrainIsNotFollowedByASecondOne},
+        {"a-release-with-the-next-report-is-not-followed-by-a-second-one-at-drain",
+         aReleaseWithTheNextReportIsNotFollowedByASecondOneAtDrain},
+        {"a-reader-racing-the-host-ends-with-nothing-held",
+         aReaderRacingTheHostEndsWithNothingHeld},
         {"held-input-releases-only-what-was-told-held",
          heldInputReleasesOnlyWhatWasToldHeld},
         {"held-input-release-size-is-the-events-appended",

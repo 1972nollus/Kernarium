@@ -98,6 +98,15 @@ void EventQueue::enqueue(
 bool EventQueue::take(protocol::InputEvent& event) noexcept
 {
     std::lock_guard lock(mutex_);
+    if (events_.empty() && dropped_) {
+        /* The guest has read everything and the host may have nothing more
+         * to send: a lift that was dropped must not wait for a later report.
+         * The queue is empty, so the release fits. appendRelease forgets
+         * what it ends, so the report that comes next, and the lock that
+         * orders it with this call, owe no second one. */
+        guestHolds_.appendRelease(events_);
+        dropped_ = false;
+    }
     if (events_.empty())
         return false;
     event = events_.front();

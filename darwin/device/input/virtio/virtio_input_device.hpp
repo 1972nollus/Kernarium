@@ -23,7 +23,8 @@ enum class DeviceKind {
  * bounded number of them. A report that does not fit is dropped whole, and
  * the queue follows what the guest was told is held (HeldInput) so that a
  * dropped lift or key release does not leave a contact or a key down in it:
- * before the next report it accepts, one report ends everything held. */
+ * one report ends everything held, ahead of the next report the queue
+ * accepts or, when the guest reads the queue empty first, at that read. */
 class EventQueue final {
 public:
     EventQueue();
@@ -45,7 +46,8 @@ private:
     /* What the guest was told is held, from the events queued. */
     HeldInput guestHolds_;
     /* A report was dropped since the guest was last released: it may hold
-     * something the host has let go. */
+     * something the host has let go. Cleared, with the release queued, by
+     * whichever of enqueue() and take() comes first. */
     bool dropped_ {};
     bool reportedOverflow_ {};
 };
