@@ -580,7 +580,7 @@ uml_add_guest_integration_test(
     NAME guest-mconsole-console-clients
     SCRIPT kernel/run_guest_mconsole_console_clients.py
     LABELS guest;kernel;smoke
-    TIMEOUT 420
+    TIMEOUT 300
     CPUS 4)
 
 # Removing the Virtio video decoder and encoder by unbind, management-console
